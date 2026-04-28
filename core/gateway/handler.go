@@ -7,11 +7,11 @@
 // binary uses [net/http.ServeMux] for routing; the Caddy adapter checks
 // the path in its module wrapper.
 //
-// The Handler is built up across multiple stories. Story 2.2 establishes
+// The Handler is built up across multiple stories. Story 2.2 established
 // the request lifecycle (method check → content-type check → form parse →
-// transport send → response). Subsequent stories layer in spam protection,
-// rate limiting, validation, templating, retry policy, and structured
-// logging without changing the public API.
+// transport send → response). Story 2.3 added validation. Subsequent
+// stories layer in spam protection, rate limiting, templating, retry
+// policy, and structured logging without changing the public API.
 package gateway
 
 import (
@@ -21,8 +21,14 @@ import (
 	"strings"
 
 	"github.com/craigmccaskill/posthorn/config"
+	"github.com/craigmccaskill/posthorn/response"
 	"github.com/craigmccaskill/posthorn/transport"
+	"github.com/craigmccaskill/posthorn/validate"
 )
+
+// defaultEmailField is the form field name searched for the submitter's
+// email when EndpointConfig.EmailField is unset.
+const defaultEmailField = "email"
 
 // Handler accepts form submissions and forwards them via a Transport.
 //
@@ -30,8 +36,9 @@ import (
 // post-construction mutation is not supported; tests use the constructor
 // and the Option pattern.
 type Handler struct {
-	cfg       config.EndpointConfig
-	transport transport.Transport
+	cfg        config.EndpointConfig
+	transport  transport.Transport
+	emailField string // resolved at construction (cfg.EmailField or default)
 }
 
 // Option configures a Handler at construction time. Reserved for future
@@ -48,9 +55,14 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 	if t == nil {
 		return nil, errors.New("gateway: transport is nil")
 	}
+	emailField := cfg.EmailField
+	if emailField == "" {
+		emailField = defaultEmailField
+	}
 	h := &Handler{
-		cfg:       cfg,
-		transport: t,
+		cfg:        cfg,
+		transport:  t,
+		emailField: emailField,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -60,13 +72,15 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 
 // ServeHTTP implements [net/http.Handler].
 //
-// Pipeline order (Story 2.2 minimum; subsequent stories insert checks
-// at the appropriate ordering points per architecture doc §"Request flow"):
+// Pipeline order (current implementation; subsequent stories insert checks
+// at the appropriate points per architecture doc §"Request flow"):
 //
 //  1. Method check     → POST only          → 405
 //  2. Content-type     → form-encoded only  → 400
 //  3. Parse form       → r.ParseForm        → 400
-//  4. transport.Send   → upstream API       → 200 or 502
+//  4. Required fields  → all required present and non-empty → 422
+//  5. Email format     → submitter email well-formed → 422
+//  6. transport.Send   → upstream API       → 200 or 502
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -80,6 +94,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, fmt.Sprintf("parse form: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Required-field check. Operators see all missing fields at once
+	// rather than fix-and-retry. (FR8)
+	missing := validate.RequiredFields(r.Form, h.cfg.Required)
+
+	// Email format check. Only inspects the field if it's present and
+	// non-empty; missing-and-required would have been caught above. (FR9)
+	fieldErrors := map[string]string{}
+	if v := strings.TrimSpace(r.Form.Get(h.emailField)); v != "" && !validate.Email(v) {
+		fieldErrors[h.emailField] = "invalid email format"
+	}
+
+	if len(missing) > 0 || len(fieldErrors) > 0 {
+		response.WriteJSON(w, http.StatusUnprocessableEntity, response.Validation(missing, fieldErrors))
 		return
 	}
 
@@ -100,9 +130,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// JSON response shape (FR14) and content negotiation (FR15) land in
-	// Stories from Epic 5. For now: bare 200 OK.
-	w.WriteHeader(http.StatusOK)
+	// JSON response shape (FR14) for success. Content negotiation
+	// (FR15: redirect on browser submits) lands in Story 2.5 when the
+	// CLI binary wires up redirect URLs end-to-end.
+	response.WriteJSON(w, http.StatusOK, response.Success{})
 }
 
 // isFormContentType returns true if the Content-Type header indicates a

@@ -3,6 +3,7 @@ package gateway_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"mime/multipart"
 	"net/http"
@@ -290,9 +291,8 @@ func TestHandler_ParseFormError_BadRequest(t *testing.T) {
 }
 
 func TestHandler_EmptyBody_OK(t *testing.T) {
-	// Empty body is technically a valid form (zero fields). Validation in
-	// Story 2.3 will reject this if `required` lists fields, but the bare
-	// handler accepts it.
+	// Empty body is technically a valid form (zero fields). With no
+	// `required` configured, no validation triggers. Bare handler accepts.
 	rt := &recordingTransport{}
 	h := newTestHandler(t, rt)
 	rec := httptest.NewRecorder()
@@ -300,5 +300,215 @@ func TestHandler_EmptyBody_OK(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+// --- Validation: required fields ---
+
+// handlerWithRequired builds a handler with the given required-fields list.
+func handlerWithRequired(t *testing.T, rt transport.Transport, required []string, emailField string) *gateway.Handler {
+	t.Helper()
+	cfg := config.EndpointConfig{
+		Path:       "/test",
+		To:         []string{"to@example.com"},
+		From:       "from@example.com",
+		Subject:    "S",
+		Body:       "B",
+		Required:   required,
+		EmailField: emailField,
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return h
+}
+
+// decodeValidationResponse decodes a 422 body into its parts for assertion.
+type validationResponse struct {
+	Error  string            `json:"error"`
+	Code   string            `json:"code"`
+	Fields map[string]string `json:"fields"`
+}
+
+func decodeValidationResponse(t *testing.T, body *bytes.Buffer) validationResponse {
+	t.Helper()
+	var v validationResponse
+	if err := json.NewDecoder(body).Decode(&v); err != nil {
+		t.Fatalf("decode 422 body: %v\nraw: %s", err, body.String())
+	}
+	return v
+}
+
+func TestHandler_RequiredFieldMissing_422(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, []string{"name", "message"}, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("name=craig"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	v := decodeValidationResponse(t, rec.Body)
+	if v.Code != "validation_failed" {
+		t.Errorf("Code = %q", v.Code)
+	}
+	if v.Fields["message"] != "required" {
+		t.Errorf("Fields[message] = %q, want required", v.Fields["message"])
+	}
+	if _, present := v.Fields["name"]; present {
+		t.Errorf("Fields[name] should not be present (name was provided)")
+	}
+}
+
+func TestHandler_RequiredFieldEmpty_422(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, []string{"name"}, "")
+
+	// name=  (empty value, present-but-empty)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("name="))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+	v := decodeValidationResponse(t, rec.Body)
+	if v.Fields["name"] != "required" {
+		t.Errorf("Fields[name] = %q, want required", v.Fields["name"])
+	}
+}
+
+func TestHandler_MultipleMissing_AllReported(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, []string{"name", "email", "message"}, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest(""))
+
+	v := decodeValidationResponse(t, rec.Body)
+	for _, name := range []string{"name", "email", "message"} {
+		if v.Fields[name] != "required" {
+			t.Errorf("Fields[%s] = %q, want required (every missing field must be reported, not just first)", name, v.Fields[name])
+		}
+	}
+}
+
+func TestHandler_ValidationFailure_DoesNotCallTransport(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, []string{"name"}, "")
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest(""))
+
+	if got := len(rt.sent); got != 0 {
+		t.Errorf("transport called %d times on validation failure; want 0", got)
+	}
+}
+
+// --- Validation: email format ---
+
+func TestHandler_InvalidEmailFormat_422(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, nil, "") // no required list; just email check
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("email=not-a-valid-email"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	v := decodeValidationResponse(t, rec.Body)
+	if v.Fields["email"] != "invalid email format" {
+		t.Errorf("Fields[email] = %q", v.Fields["email"])
+	}
+}
+
+func TestHandler_ValidEmail_OK(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, nil, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("email=craig@example.com"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandler_EmailFieldOverride(t *testing.T) {
+	// EmailField=contact_address means the validator looks at the
+	// "contact_address" field, not "email". A literal "email" field with
+	// junk should NOT trigger validation in this configuration.
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, nil, "contact_address")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("email=junk&contact_address=valid@example.com"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (only contact_address is validated)", rec.Code)
+	}
+}
+
+func TestHandler_EmailFieldOverride_InvalidFormat(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, nil, "contact_address")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("contact_address=not-an-email"))
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422", rec.Code)
+	}
+	v := decodeValidationResponse(t, rec.Body)
+	if v.Fields["contact_address"] != "invalid email format" {
+		t.Errorf("Fields[contact_address] = %q", v.Fields["contact_address"])
+	}
+}
+
+func TestHandler_EmailFieldEmpty_NoEmailValidation(t *testing.T) {
+	// If the configured email field is missing or empty, format validation
+	// should not run — that's RequiredFields' job to catch missing-when-required.
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, nil, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("name=craig"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (no email field present, no validation triggered)", rec.Code)
+	}
+}
+
+func TestHandler_RequiredAndFormatErrorTogether(t *testing.T) {
+	// "email" is required AND has bad format.  Required should win for that
+	// field per response.Validation precedence rule.
+	rt := &recordingTransport{}
+	h := handlerWithRequired(t, rt, []string{"email"}, "")
+
+	// Empty value: required catches first.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("email="))
+
+	v := decodeValidationResponse(t, rec.Body)
+	if v.Fields["email"] != "required" {
+		t.Errorf("Fields[email] = %q, want required (required check should fire before format on empty value)", v.Fields["email"])
+	}
+}
+
+// --- Success response shape ---
+
+func TestHandler_Success_JSONResponse(t *testing.T) {
+	rt := &recordingTransport{}
+	h := newTestHandler(t, rt)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", got)
 	}
 }
