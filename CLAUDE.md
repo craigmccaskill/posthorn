@@ -12,11 +12,20 @@ The full project history (initial scope as a Caddy form handler called `caddy-fo
 
 **Phase:** pre-v1.0 implementation. Spec is locked.
 
-**Repo state:** Project rename in progress. The pre-rename `caddy-formward` repo had completed Epic 1 (module scaffolding) and Stories 2.1 and 2.2 of the prior PRD (Transport interface and Postmark JSON HTTP client). Those code artifacts are correct and reusable but live at the old layout. They migrate into `core/transport/` during Story 1.2 of the new PRD.
+**Repo state:** Two-module workspace established. Core has three packages so far — `transport/` (Transport interface + Postmark client, NFR1/2/3 covered), `config/` (TOML loader with env-var resolution and full validation), `gateway/` (HTTP form handler skeleton). The `caddy/` adapter module is a stub awaiting Epic 6.
 
-**Current story:** Epic 1 Story 1.1 — rename GitHub repo from `caddy-formward` to `posthorn`. After that, Story 1.2 (restructure to two-module workspace) and Story 1.3 (strip Caddy-specific scaffolding from core).
+**Completed stories:**
+- ✅ Epic 1 Story 1.1 — repo renamed `caddy-formward` → `posthorn`
+- ✅ Epic 1 Story 1.2 — two-module workspace + `go.work` + transport migration
+- ✅ Epic 1 Story 1.3 — core has zero Caddy dependency
+- ✅ Epic 2 Story 2.1 — TOML config loader (`core/config/`)
+- ✅ Epic 2 Story 2.2 — HTTP form handler skeleton (`core/gateway/`)
+
+**Current story:** Epic 2 Story 2.3 — required-fields and email-format validation in `core/validate/`. Pure functions, returns lists of failed fields. Wires into the gateway handler in Epic 3.
 
 After each story ships, update this "Current story" pointer.
+
+**Architecture deviation:** original spec said `core/http/`; implementation uses `core/gateway/` (package `gateway`) to avoid shadowing stdlib `net/http`. Architecture and PRD updated for consistency.
 
 ## Read the spec before touching code
 
