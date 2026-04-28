@@ -198,7 +198,8 @@ func runValidate(args []string) error {
 // --- shared plumbing ---
 
 // buildMux constructs an http.ServeMux mapping each configured endpoint
-// path to its gateway.Handler. Endpoints share no state.
+// path to its gateway.Handler. Endpoints share no state. Each handler
+// gets the logger so per-request submission_id propagation works.
 func buildMux(cfg *config.Config, logger *slog.Logger) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 	for i, ep := range cfg.Endpoints {
@@ -206,7 +207,7 @@ func buildMux(cfg *config.Config, logger *slog.Logger) (*http.ServeMux, error) {
 		if err != nil {
 			return nil, fmt.Errorf("endpoints[%d] (%s): transport: %w", i, ep.Path, err)
 		}
-		h, err := gateway.New(ep, t)
+		h, err := gateway.New(ep, t, gateway.WithLogger(logger))
 		if err != nil {
 			return nil, fmt.Errorf("endpoints[%d] (%s): %w", i, ep.Path, err)
 		}

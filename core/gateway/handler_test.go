@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -808,6 +809,273 @@ func TestHandler_RateLimit_DifferentIPsIndependent(t *testing.T) {
 	h.ServeHTTP(rec, req2)
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200 (different IP, own budget)", rec.Code)
+	}
+}
+
+// --- Retry policy (Story 4.1) ---
+
+// scriptedTransport returns a sequence of pre-set errors.
+type scriptedTransport struct {
+	calls    int
+	results  []error // index = call number (0-based); past end = nil
+}
+
+func (s *scriptedTransport) Send(_ context.Context, _ transport.Message) error {
+	defer func() { s.calls++ }()
+	if s.calls < len(s.results) {
+		return s.results[s.calls]
+	}
+	return nil
+}
+
+func TestHandler_TransientError_RetriesOnce(t *testing.T) {
+	restore := gateway.SetRetryDelaysForTest(1*time.Millisecond, 1*time.Millisecond, 10*time.Second)
+	t.Cleanup(restore)
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTransient, Status: 502},
+			// second call: nil → success
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, err := gateway.New(cfg, st)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (second attempt succeeds)", rec.Code)
+	}
+	if st.calls != 2 {
+		t.Errorf("transport calls = %d, want 2 (one initial + one retry)", st.calls)
+	}
+}
+
+func TestHandler_RateLimitedError_RetriesOnce(t *testing.T) {
+	restore := gateway.SetRetryDelaysForTest(1*time.Millisecond, 1*time.Millisecond, 10*time.Second)
+	t.Cleanup(restore)
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrRateLimited, Status: 429},
+			// second call: nil → success
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, _ := gateway.New(cfg, st)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if st.calls != 2 {
+		t.Errorf("calls = %d, want 2", st.calls)
+	}
+}
+
+func TestHandler_TerminalError_NoRetry(t *testing.T) {
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTerminal, Status: 401},
+			// even if there's a second result, it shouldn't be reached
+			nil,
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, _ := gateway.New(cfg, st)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+	if st.calls != 1 {
+		t.Errorf("calls = %d, want 1 (no retry on terminal)", st.calls)
+	}
+}
+
+func TestHandler_BothAttemptsFail_502(t *testing.T) {
+	restore := gateway.SetRetryDelaysForTest(1*time.Millisecond, 1*time.Millisecond, 10*time.Second)
+	t.Cleanup(restore)
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTransient, Status: 502},
+			&transport.TransportError{Class: transport.ErrTransient, Status: 502},
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, _ := gateway.New(cfg, st)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+	if st.calls != 2 {
+		t.Errorf("calls = %d, want 2 (initial + retry, both fail)", st.calls)
+	}
+}
+
+func TestHandler_RequestTimeout_HardCutoff(t *testing.T) {
+	// Set request timeout to 50ms and retry delay to 200ms. The retry
+	// should be skipped because the timeout fires first.
+	restore := gateway.SetRetryDelaysForTest(200*time.Millisecond, 5*time.Second, 50*time.Millisecond)
+	t.Cleanup(restore)
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTransient, Status: 502},
+			nil, // would succeed if reached
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, _ := gateway.New(cfg, st)
+
+	start := time.Now()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("x=1"))
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+	if st.calls != 1 {
+		t.Errorf("calls = %d, want 1 (retry skipped due to timeout)", st.calls)
+	}
+	if elapsed > 150*time.Millisecond {
+		t.Errorf("elapsed %v; should have terminated at the timeout", elapsed)
+	}
+}
+
+// --- Structured logging (Story 4.2) ---
+
+func TestHandler_LogsSubmissionID(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		Path:    "/api/contact",
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, err := gateway.New(cfg, rt, gateway.WithLogger(logger))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("x=1"))
+
+	logs := logBuf.String()
+	if !strings.Contains(logs, "submission_received") {
+		t.Errorf("missing submission_received: %s", logs)
+	}
+	if !strings.Contains(logs, "submission_sent") {
+		t.Errorf("missing submission_sent: %s", logs)
+	}
+	if !strings.Contains(logs, "submission_id") {
+		t.Errorf("missing submission_id: %s", logs)
+	}
+	if !strings.Contains(logs, "/api/contact") {
+		t.Errorf("missing endpoint path: %s", logs)
+	}
+}
+
+func TestHandler_LogsTerminalFailure_WithPayload(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTerminal, Status: 401, Message: "unauthorized"},
+		},
+	}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+		// LogFailedSubmissions left nil → defaults to true
+	}
+	h, _ := gateway.New(cfg, st, gateway.WithLogger(logger))
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("name=craig&message=hello"))
+
+	logs := logBuf.String()
+	if !strings.Contains(logs, "submission_failed") {
+		t.Errorf("missing submission_failed: %s", logs)
+	}
+	if !strings.Contains(logs, "craig") {
+		t.Errorf("payload should be in failure log when log_failed_submissions=true: %s", logs)
+	}
+}
+
+func TestHandler_LogsTerminalFailure_RedactedPayload(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+
+	st := &scriptedTransport{
+		results: []error{
+			&transport.TransportError{Class: transport.ErrTerminal, Status: 401},
+		},
+	}
+	disabled := false
+	cfg := config.EndpointConfig{
+		To:                   []string{"to@example.com"},
+		From:                 "from@example.com",
+		Subject:              "S",
+		Body:                 "B",
+		LogFailedSubmissions: &disabled,
+	}
+	h, _ := gateway.New(cfg, st, gateway.WithLogger(logger))
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("name=craig&message=secret"))
+
+	logs := logBuf.String()
+	if !strings.Contains(logs, "submission_failed") {
+		t.Errorf("missing submission_failed: %s", logs)
+	}
+	if strings.Contains(logs, "secret") {
+		t.Errorf("payload value 'secret' should NOT appear when log_failed_submissions=false: %s", logs)
+	}
+	if !strings.Contains(logs, "form_fields") {
+		t.Errorf("expected form_fields metadata when payload disabled: %s", logs)
 	}
 }
 
