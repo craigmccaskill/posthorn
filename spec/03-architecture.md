@@ -27,7 +27,7 @@ HTTP request ─────────▶│   Standalone deployment          
                        │   posthorn binary (cmd/posthorn) │
                        │     │                            │
                        │     ▼                            │
-                       │   core/http handler              │
+                       │   core/gateway handler              │
                        │     │                            │
                        └─────┼────────────────────────────┘
                              │
@@ -38,7 +38,7 @@ HTTP request ─────────▶│   Standalone deployment          
                              ▲
                        ┌─────┼────────────────────────────┐
                        │     │                            │
-                       │   core/http handler              │
+                       │   core/gateway handler              │
                        │     ▲                            │
                        │     │                            │
                        │   caddy adapter                  │
@@ -50,7 +50,7 @@ HTTP request ─────────▶│                                  
                        └──────────────────────────────────┘
 ```
 
-Both deployment shapes hand identical inputs to the same `core/http` handler, so behavior is identical by construction. Tests assert this parity (see Test architecture).
+Both deployment shapes hand identical inputs to the same `core/gateway` handler, so behavior is identical by construction. Tests assert this parity (see Test architecture).
 
 ## File layout
 
@@ -86,8 +86,8 @@ posthorn/
 │   ├── config/
 │   │   ├── config.go             # Config struct, TOML parser, env resolution
 │   │   └── config_test.go
-│   ├── http/
-│   │   ├── handler.go            # core.Handler (http.Handler implementor)
+│   ├── gateway/
+│   │   ├── handler.go            # gateway.Handler (http.Handler implementor)
 │   │   ├── pipeline.go           # ordered pipeline: spam → validate → render → send
 │   │   └── handler_test.go
 │   ├── transport/
@@ -276,7 +276,7 @@ Unchanged in behavior from the prior design:
 - Status mapping: 200/202 → success; 429 → ErrRateLimited; 5xx/network → ErrTransient; 4xx (non-429) → ErrTerminal
 - Package-level `*http.Client` with 5s per-request timeout (caller's context handles overall deadline)
 
-### HTTP handler (`core/http`)
+### Gateway handler (`core/gateway`)
 
 `core.Handler` is a plain `http.Handler` that wraps the per-endpoint pipeline:
 
@@ -448,7 +448,7 @@ This is the load-bearing artifact for security review. Every in-scope threat fro
 | Drive-by scraper bots | Honeypot field | `core/spam/spam.go::CheckHoneypot` | `core/spam/spam_test.go::TestHoneypot_*` |
 | Direct-POST bots that skip the form page | Origin/Referer with fail-closed | `core/spam/spam.go::CheckOrigin` | `core/spam/spam_test.go::TestOrigin_*` |
 | Basic targeted abuse | Token bucket rate limit, proxy-aware | `core/ratelimit/ratelimit.go::Allow`, `core/ratelimit/clientip.go` | `core/ratelimit/ratelimit_test.go` |
-| Postmark quota burn | Rate limit + max body size | `core/ratelimit/` + `http.MaxBytesReader` in handler | as above + `core/http/handler_test.go::TestBodySizeLimit` |
+| Postmark quota burn | Rate limit + max body size | `core/ratelimit/` + `http.MaxBytesReader` in handler | as above + `core/gateway/handler_test.go::TestBodySizeLimit` |
 | Email header injection | Header fields passed as JSON struct fields, never string-concat | `core/transport/postmark.go::Send` (struct → `json.Marshal`) | `core/transport/postmark_test.go::TestNoHeaderInjection_*` |
 | API key theft from logs | Key set in HTTP header at construction time, never passed to logger | `core/transport/postmark.go::Send`, `core/log/*` | `core/log/log_test.go::TestNoAPIKeyInLogs` |
 

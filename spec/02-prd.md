@@ -195,7 +195,7 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 - **Story 2.1:** Implement TOML config loader in `core/config/`. Schema mirrors the architecture doc's config sketch: top-level `[[endpoints]]` array of tables, each with `path`, `to`, `from`, `[endpoints.transport]`, etc. Support `${env.VAR}` placeholder resolution.
   - Acceptance: Tests cover successful parse, missing required fields (returns clear error), env-var resolution, invalid TOML.
 
-- **Story 2.2:** Implement HTTP form handler in `core/http/`. Accepts POST submissions on configured paths, parses the body, hands off to the configured transport. Standalone struct implements `http.Handler`.
+- **Story 2.2:** Implement HTTP form handler in `core/gateway/`. Accepts POST submissions on configured paths, parses the body, hands off to the configured transport. Standalone struct implements `http.Handler`.
   - Acceptance: Tests cover successful POST, non-POST methods (405), wrong content-type (400), unknown path (404 falls through).
 
 - **Story 2.3:** Implement validation in `core/validate/`. Required-fields and email-format checks, returning structured 422 responses.
@@ -244,7 +244,7 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 
 **Definition of done:** Caddy adapter module wraps the core HTTP form handler as `http.handlers.posthorn`. Caddyfile parsing works. xcaddy build produces a working Caddy with the module loaded.
 
-- **Story 6.1:** Implement adapter module in `caddy/`. Register `http.handlers.posthorn` with Caddy. Implement `caddy.Provisioner`, `caddy.Validator`, `caddyhttp.MiddlewareHandler`. Wraps `core/http.Handler`.
+- **Story 6.1:** Implement adapter module in `caddy/`. Register `http.handlers.posthorn` with Caddy. Implement `caddy.Provisioner`, `caddy.Validator`, `caddyhttp.MiddlewareHandler`. Wraps `core/gateway.Handler`.
   - Acceptance: `xcaddy build --with .` produces a binary; `caddy list-modules` includes `http.handlers.posthorn`.
 
 - **Story 6.2:** Implement Caddyfile unmarshaler matching the directive grammar in the architecture doc. Parse to the same internal config struct that TOML produces (single source of truth in `core/config`).
