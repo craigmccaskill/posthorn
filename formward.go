@@ -12,10 +12,6 @@ func init() {
 	caddy.RegisterModule(Module{})
 }
 
-type Module struct {
-	Path string `json:"path,omitempty"`
-}
-
 func (Module) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.formward",
@@ -31,6 +27,8 @@ func (m *Module) ServeHTTP(w http.ResponseWriter, _ *http.Request, _ caddyhttp.H
 
 var (
 	_ caddy.Module                = (*Module)(nil)
+	_ caddy.Provisioner           = (*Module)(nil)
+	_ caddy.Validator             = (*Module)(nil)
 	_ caddyhttp.MiddlewareHandler = (*Module)(nil)
 	_ caddyfile.Unmarshaler       = (*Module)(nil)
 )

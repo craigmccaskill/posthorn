@@ -12,9 +12,9 @@ The full project history (rename from "caddy-mailout", why v1.0 is Postmark-only
 
 **Phase:** pre-v1.0 implementation. Spec is locked.
 
-**Repo state:** Stories 1.1 and 1.2 complete (module scaffolding, Caddyfile unmarshaler with path matcher, minimal handler returning 200 OK).
+**Repo state:** Epic 1 complete. Stories 1.1-1.3 done (module scaffolding, Caddyfile unmarshaler with path matcher, minimal 200 OK handler, JSON config support, Provision/Validate stubs, round-trip tests).
 
-**Current story:** Story 1.3 — JSON config support and Caddyfile-to-JSON round-trip via `caddy adapt`. See [`spec/02-prd.md`](./spec/02-prd.md) §"Epic 1".
+**Current story:** Story 2.1 — Transport interface and Message/error types in `transport.go`. See [`spec/02-prd.md`](./spec/02-prd.md) §"Epic 2".
 
 After each story ships, update this "Current story" pointer.
 
