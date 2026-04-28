@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/craigmccaskill/posthorn/config"
 	"github.com/craigmccaskill/posthorn/gateway"
@@ -566,5 +567,282 @@ func TestHandler_Success_JSONResponse(t *testing.T) {
 	}
 	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+}
+
+// --- Spam protection (Story 3.1 wiring) ---
+
+// handlerWithSpam constructs a handler with spam-protection settings.
+func handlerWithSpam(t *testing.T, rt transport.Transport, honeypot string, allowedOrigins []string, maxBodySize string) *gateway.Handler {
+	t.Helper()
+	cfg := config.EndpointConfig{
+		Path:           "/test",
+		To:             []string{"to@example.com"},
+		From:           "from@example.com",
+		Subject:        "S",
+		Body:           "B",
+		Honeypot:       honeypot,
+		AllowedOrigins: allowedOrigins,
+		MaxBodySize:    maxBodySize,
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return h
+}
+
+func TestHandler_Honeypot_Triggered_Silent200(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "_gotcha", nil, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("name=craig&_gotcha=bot"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (silent reject)", rec.Code)
+	}
+	if got := len(rt.sent); got != 0 {
+		t.Errorf("transport called %d times when honeypot triggered; want 0", got)
+	}
+}
+
+func TestHandler_Honeypot_NotTriggered_Pass(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "_gotcha", nil, "")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, urlencodedRequest("name=craig"))
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+	if got := len(rt.sent); got != 1 {
+		t.Errorf("transport called %d times; want 1", got)
+	}
+}
+
+func TestHandler_OriginAllowed(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", []string{"https://example.com"}, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandler_OriginDenied_403(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", []string{"https://example.com"}, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Origin", "https://attacker.example")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+	if got := len(rt.sent); got != 0 {
+		t.Errorf("transport called %d times for denied origin; want 0", got)
+	}
+}
+
+func TestHandler_OriginBothMissing_403_FailClosed(t *testing.T) {
+	// NFR4: with allowed_origins configured, a request missing both
+	// Origin AND Referer is rejected (fail-closed).
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", []string{"https://example.com"}, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// no Origin, no Referer
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 (fail-closed when allowed_origins set)", rec.Code)
+	}
+}
+
+func TestHandler_OriginUnconfigured_NoCheck(t *testing.T) {
+	// FR6: with no allowed_origins, the check doesn't run — even if
+	// both Origin and Referer are missing, request passes.
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", nil, "")
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (no allow-list, fail-open)", rec.Code)
+	}
+}
+
+func TestHandler_BodySize_Exceeded_413(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", nil, "100B")
+
+	// Build a body larger than 100 bytes
+	body := strings.Repeat("x=", 50) + "a=" + strings.Repeat("y", 200) // ~250 bytes
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", rec.Code)
+	}
+}
+
+func TestHandler_BodySize_Within_OK(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", nil, "1KB")
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("name=craig"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
+	}
+}
+
+func TestHandler_BodySize_Unset_NoLimit(t *testing.T) {
+	// Empty MaxBodySize means no limit — large body still passes.
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "", nil, "")
+
+	body := strings.Repeat("x=", 5000) + "y=z" // ~10K bytes
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (no limit)", rec.Code)
+	}
+}
+
+// --- Rate limiting (Story 3.2 wiring) ---
+
+// makeDuration creates a config.Duration via JSON-equivalent path so the
+// test reads naturally. Avoids importing internal Duration helpers.
+func makeDuration(d time.Duration) config.Duration { return config.Duration(d) }
+
+func TestHandler_RateLimit_BurstThenDenied(t *testing.T) {
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+		RateLimit: &config.RateLimitConfig{
+			Count:    2,
+			Interval: makeDuration(time.Minute),
+		},
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// First 2 requests pass.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.RemoteAddr = "203.0.113.5:12345"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Errorf("request %d: status = %d, want 200", i+1, rec.Code)
+		}
+	}
+
+	// 3rd request from same IP exceeds burst.
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "203.0.113.5:12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("status = %d, want 429", rec.Code)
+	}
+}
+
+func TestHandler_RateLimit_DifferentIPsIndependent(t *testing.T) {
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+		RateLimit: &config.RateLimitConfig{
+			Count:    1,
+			Interval: makeDuration(time.Minute),
+		},
+	}
+	h, _ := gateway.New(cfg, rt)
+
+	// IP 1 exhausts its budget.
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = "1.1.1.1:12345"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	// IP 2 has its own budget.
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.RemoteAddr = "2.2.2.2:12345"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 (different IP, own budget)", rec.Code)
+	}
+}
+
+func TestHandler_RateLimit_TrustedProxy(t *testing.T) {
+	// Request comes via 10.0.0.1 (trusted) with X-F-F naming the real
+	// client. Rate limit should key on the X-F-F IP, not the proxy.
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+		RateLimit: &config.RateLimitConfig{
+			Count:    1,
+			Interval: makeDuration(time.Minute),
+		},
+		TrustedProxies: []string{"10.0.0.0/8"},
+	}
+	h, _ := gateway.New(cfg, rt)
+
+	// Real client A through proxy: budget exhausted.
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Forwarded-For", "203.0.113.5")
+	req.RemoteAddr = "10.0.0.1:55555"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	// Real client B through SAME proxy: should still pass — keyed on real IP.
+	req2 := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader("x=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("X-Forwarded-For", "198.51.100.1")
+	req2.RemoteAddr = "10.0.0.1:55556" // same proxy, different downstream
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req2)
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d; rate limit should key on X-F-F when proxy is trusted", rec.Code)
 	}
 }

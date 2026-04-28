@@ -18,10 +18,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/craigmccaskill/posthorn/config"
+	"github.com/craigmccaskill/posthorn/ratelimit"
 	"github.com/craigmccaskill/posthorn/response"
+	"github.com/craigmccaskill/posthorn/spam"
 	"github.com/craigmccaskill/posthorn/template"
 	"github.com/craigmccaskill/posthorn/transport"
 	"github.com/craigmccaskill/posthorn/validate"
@@ -37,10 +40,13 @@ const defaultEmailField = "email"
 // post-construction mutation is not supported; tests use the constructor
 // and the Option pattern.
 type Handler struct {
-	cfg        config.EndpointConfig
-	transport  transport.Transport
-	renderer   *template.Renderer
-	emailField string // resolved at construction (cfg.EmailField or default)
+	cfg            config.EndpointConfig
+	transport      transport.Transport
+	renderer       *template.Renderer
+	limiter        *ratelimit.Limiter // nil if rate_limit not configured
+	trustedProxies []netip.Prefix
+	emailField     string // resolved at construction (cfg.EmailField or default)
+	maxBodySize    int64  // 0 = no cap
 }
 
 // Option configures a Handler at construction time. Reserved for future
@@ -79,11 +85,32 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 		return nil, fmt.Errorf("gateway: %w", err)
 	}
 
+	maxBody, err := spam.ParseSize(cfg.MaxBodySize)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: max_body_size: %w", err)
+	}
+
+	prefixes, err := ratelimit.ParsePrefixes(cfg.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("gateway: trusted_proxies: %w", err)
+	}
+
+	var limiter *ratelimit.Limiter
+	if cfg.RateLimit != nil {
+		limiter, err = ratelimit.New(cfg.RateLimit.Count, cfg.RateLimit.Interval.Std(), 0)
+		if err != nil {
+			return nil, fmt.Errorf("gateway: rate_limit: %w", err)
+		}
+	}
+
 	h := &Handler{
-		cfg:        cfg,
-		transport:  t,
-		renderer:   renderer,
-		emailField: emailField,
+		cfg:            cfg,
+		transport:      t,
+		renderer:       renderer,
+		limiter:        limiter,
+		trustedProxies: prefixes,
+		emailField:     emailField,
+		maxBodySize:    maxBody,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -93,16 +120,27 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 
 // ServeHTTP implements [net/http.Handler].
 //
-// Pipeline order (current implementation; subsequent stories insert checks
-// at the appropriate points per architecture doc §"Request flow"):
+// Pipeline order (current implementation; rate limit slots in at step 5
+// in Story 3.2):
 //
-//  1. Method check     → POST only          → 405
-//  2. Content-type     → form-encoded only  → 400
-//  3. Parse form       → r.ParseForm        → 400
-//  4. Required fields  → all required present and non-empty → 422
-//  5. Email format     → submitter email well-formed → 422
-//  6. transport.Send   → upstream API       → 200 or 502
+//  1. Body size cap    → http.MaxBytesReader (if configured)
+//  2. Method check     → POST only          → 405
+//  3. Content-type     → form-encoded only  → 400
+//  4. Origin check     → fail-closed if allowed_origins set → 403
+//  5. (Rate limit)     → token bucket per IP → 429 (Story 3.2)
+//  6. Parse form       → r.ParseForm        → 413/400
+//  7. Honeypot check   → silent 200 if filled → 200 (silent)
+//  8. Required fields  → all required present and non-empty → 422
+//  9. Email format     → submitter email well-formed → 422
+// 10. Render subject/body, transport.Send → 200 or 502
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Body size cap (FR7) — wrapped before any read so even malicious
+	// chunked-encoding senders can't exceed the cap. The actual rejection
+	// fires when ParseForm tries to read past the limit.
+	if h.maxBodySize > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, h.maxBodySize)
+	}
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -113,8 +151,43 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Origin/Referer check (FR6, NFR4). Runs before ParseForm because
+	// it doesn't need the body — saves CPU on direct-POST bots.
+	if len(h.cfg.AllowedOrigins) > 0 {
+		origin, referer := spam.ExtractOriginAndReferer(r)
+		if result, _ := spam.CheckOrigin(origin, referer, h.cfg.AllowedOrigins); result == spam.HardReject {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	// Rate limit check (FR8, FR9). Per-IP, with proxy-aware extraction.
+	// Runs before ParseForm because it's O(1) and prevents body-parse
+	// CPU exhaustion attacks.
+	if h.limiter != nil {
+		clientIP := ratelimit.ClientIP(r, h.trustedProxies)
+		if !h.limiter.Allow(clientIP) {
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
+	}
+
 	if err := r.ParseForm(); err != nil {
+		// Distinguish body-size-limit errors from other parse failures so
+		// operators get the right status code (FR7 → 413).
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, fmt.Sprintf("parse form: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Honeypot check (FR5) — silent 200 if triggered so bots can't
+	// distinguish honeypot rejection from success.
+	if spam.CheckHoneypot(r.Form, h.cfg.Honeypot) == spam.SilentReject {
+		response.WriteJSON(w, http.StatusOK, response.Success{})
 		return
 	}
 
