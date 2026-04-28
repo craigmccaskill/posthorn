@@ -12,9 +12,9 @@ The full project history (rename from "caddy-mailout", why v1.0 is Postmark-only
 
 **Phase:** pre-v1.0 implementation. Spec is locked.
 
-**Repo state:** Story 1.1 complete (module scaffolding, registration). Working from Epic 1.
+**Repo state:** Stories 1.1 and 1.2 complete (module scaffolding, Caddyfile unmarshaler with path matcher, minimal handler returning 200 OK).
 
-**Current story:** Story 1.2 — Caddyfile unmarshaler + minimal handler returning 200 OK. See [`spec/02-prd.md`](./spec/02-prd.md) §"Epic 1".
+**Current story:** Story 1.3 — JSON config support and Caddyfile-to-JSON round-trip via `caddy adapt`. See [`spec/02-prd.md`](./spec/02-prd.md) §"Epic 1".
 
 After each story ships, update this "Current story" pointer.
 

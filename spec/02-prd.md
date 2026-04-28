@@ -258,7 +258,7 @@ These do not block the brief but need answers during implementation. None should
 
 1. **`trusted_proxies` syntax.** Does it accept a CIDR list, named presets (`cloudflare`), both? Recommend: CIDR list initially, with optional named presets if 30 minutes is available. Decide during Story 3.2.
 
-2. **Body parsing — multipart vs urlencoded.** v1.0 should accept both `application/x-www-form-urlencoded` and `multipart/form-data` (without file attachments — fail with 400 if multipart contains non-text parts). Decide during Story 1.2.
+2. **Body parsing — multipart vs urlencoded.** *(Decided in Story 1.2.)* v1.0 accepts both `application/x-www-form-urlencoded` and `multipart/form-data`. Multipart submissions with non-text parts (file uploads) fail with 400; file attachments are deferred to v2. Implementation lands when validation/templating reads form fields (Epic 4). Story 1.2's handler stub does not parse bodies.
 
 3. **JSON request bodies.** Out of scope for v1.0 — only form-encoded bodies are accepted. Document explicitly.
 
