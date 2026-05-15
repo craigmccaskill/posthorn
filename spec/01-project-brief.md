@@ -13,14 +13,17 @@ The project's Obsidian dashboard retains the broader project roadmap and v2/v3 s
 
 ## Executive Summary
 
-Posthorn is a self-hosted email gateway for cloud platforms that block outbound SMTP. It accepts mail through pluggable ingress modes (HTTP form submissions in v1.0; SMTP listener in v1.x) and delivers it via pluggable HTTP API transports (Postmark in v1.0). It runs as a standalone Go binary or Docker container, with an optional Caddy module adapter for operators who already run Caddy.
+Posthorn is the **unified outbound mail layer for self-hosted projects**. Nobody wants to run a mail server in 2026 — self-hosted operators use Postmark, Resend, Mailgun, or AWS SES for the deliverability + bounce-handling reasons that have always favored managed providers. But every app a self-hoster runs has to integrate with that provider independently, duplicating credentials, integration code, and operational concerns across the stack. Posthorn is the single gateway that all those apps point at.
 
-The audience is indie developers and homelab operators on DigitalOcean, AWS, and similar hosts that block port 25/465/587 outbound. For these operators, traditional SMTP-based mail relays don't work; the only sanctioned path is HTTP API. Posthorn is the bridge.
+It accepts mail through pluggable ingress modes (HTTP form submissions in v1.0; JSON API in v1.1; SMTP listener in v1.3) and delivers it via pluggable HTTP API transports (Postmark in v1.0; Resend / Mailgun / AWS SES / outbound-SMTP relay in v1.2). It runs as a standalone Go binary or Docker container, with an optional Caddy module adapter for operators who already run Caddy.
+
+The cloud-blocks-SMTP problem is the canonical entry point — DigitalOcean, AWS Lightsail, Linode, and most cloud hosts block ports 25/465/587 outbound, breaking both web-form-to-email patterns and SMTP-emitting apps simultaneously. Posthorn solves that. But the broader value is the unified outbound layer pattern, which applies even when SMTP isn't blocked: self-hosters running multiple apps benefit from centralizing the outbound mail concern regardless of underlying infrastructure.
 
 ## Status log
 
 - **2026-04-27** — Project named *caddy-formward* and scoped as a Caddy v2 HTTP handler module replacing the dead `SchumacherFM/mailout` plugin. Spec locked.
 - **2026-04-27** — Scope expanded to email gateway (two ingress modes: HTTP form, SMTP listener) after analyzing the broader audience experiencing the same DigitalOcean SMTP-block pain. Project renamed to *Posthorn*. Repo renamed in place from `caddy-formward` to `posthorn`. Caddy module status changed from primary deliverable to optional adapter. Spec rewritten from scratch (this document); previous brief, PRD, and architecture documents replaced.
+- **2026-05-15** — Positioning sharpened from "gateway for cloud platforms that block outbound SMTP" to "unified outbound mail layer for self-hosted projects" after triaging 10 incoming GitHub issues (most from the Pensum integration POV). The cloud-SMTP-block wedge is preserved as the canonical discovery entry point; the broader unified-layer framing is the durable value proposition. v1.x roadmap restructured (v1.1 API mode, v1.2 multi-transport + ops polish, v1.3 SMTP ingress) to support this positioning.
 
 ## Problem Statement
 
@@ -79,7 +82,13 @@ This is the author. The Ghost dogfooding case covers both ingress modes once v1.
 
 ### Secondary (v1.0)
 
-**Caddy users running it as the front door for one or more sites.** v1.0 ships an optional Caddy adapter so they can configure form ingress in their existing Caddyfile rather than running a separate `posthorn` container. They get the same core gateway, with Caddyfile ergonomics. v1.x SMTP ingress will not be exposed through the Caddy adapter (different deployment shape — see architecture).
+**Caddy users running it as the front door for one or more sites.** v1.0 ships an optional Caddy adapter so they can configure form ingress in their existing Caddyfile rather than running a separate `posthorn` container. They get the same core gateway, with Caddyfile ergonomics. v1.3 SMTP ingress will not be exposed through the Caddy adapter (different deployment shape — see architecture).
+
+### Secondary, emerging (v1.1+)
+
+**Indie developers building multi-project stacks who want one centralized outbound mail gateway across all their apps.** Concrete example: a single operator running a blog (Ghost), a SaaS project on Cloudflare Workers (Pensum), and a couple of internal tools. Each has its own outbound mail need; without Posthorn, each needs its own Postmark integration. With Posthorn (v1.1 API mode + v1.0 form ingress), all of them point at one Posthorn instance — one set of credentials, one set of logs, one set of bounce-handling decisions.
+
+This audience is shape-distinct from the original "homelab operator with a contact form" audience — they care more about the API-mode shape (Cloudflare Workers calling Posthorn server-to-server with `Authorization: Bearer`) than the form-ingress shape. They were not anticipated by the original v1.0 spec; their requirements drove the v1.1 reshuffle on 2026-05-15.
 
 ### Future audiences (post-v1, named to constrain architecture)
 

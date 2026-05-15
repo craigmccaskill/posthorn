@@ -5,19 +5,27 @@
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 [![Go version](https://img.shields.io/badge/go-1.25%2B-00ADD8.svg)](https://go.dev)
 
-A self-hosted email gateway for cloud platforms that block outbound SMTP. Accepts mail through HTTP form ingress and delivers it via Postmark's HTTP API.
+**The unified outbound mail layer for self-hosted projects.** One gateway between your apps and your transactional mail provider — Postmark today; Resend, Mailgun, AWS SES, and outbound-SMTP relay coming in v1.2. Self-hosted, no mail server required.
 
 > *Not related to [PostHog](https://posthog.com). PostHog is product analytics. Posthorn is an email gateway. Different categories, zero functional overlap.*
 
 ## Why
 
-DigitalOcean, AWS Lightsail, Linode, Vultr, and most cloud hosts block outbound SMTP on ports 25, 465, and 587 by default. The block is policy, not configurable — providers explicitly recommend an HTTP API service like Postmark, Resend, or Mailgun instead.
+Nobody wants to run a mail server in 2026. Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about SPF / DKIM / DMARC / bounces / sender reputation.
 
-That breaks two patterns at once: web forms that send email (contact forms, signups) and self-hosted apps that emit SMTP for transactional mail (Ghost, Gitea, Mastodon, et al. for admin emails and magic links).
+But every app you self-host has to integrate with that service **independently.** Your contact form. Your Ghost blog's admin emails. Your Gitea magic links. Your Mastodon notifications. Your worker that fires a license-delivery email when someone pays. Each one needs its own copy of the API key, its own integration code, its own quirks around retry and bounce handling. **The same outbound concern duplicated five times across your stack.**
 
-The current options are bad: pay for SaaS form services, rewrite app configs to use API SDKs (rarely supported), run Postfix as a relay with custom HTTP glue, or move to a host that doesn't block SMTP. There is no actively maintained, self-hosted, HTTP-API-first email gateway in 2026.
+And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Linode, Vultr — the SMTP-only apps don't work at all without a workaround.
 
-Posthorn is the bridge.
+Posthorn is the bridge. One container, one config, one set of credentials. Your apps point at Posthorn. Posthorn talks to your transactional mail provider.
+
+| Where you connect | Where Posthorn routes to | Today |
+|---|---|---|
+| HTTP form (contact forms, signups, webhooks) | Postmark | **v1.0** |
+| JSON API (workers, cron, payment handlers, internal services) | Postmark | **v1.1** |
+| SMTP (Ghost, Gitea, Mastodon, Matrix, NextCloud, Authentik) | Postmark + Resend / Mailgun / SES / SMTP relay | **v1.3** |
+
+The full trajectory is on the [roadmap page](https://posthorn.dev/roadmap/).
 
 ## Documentation
 

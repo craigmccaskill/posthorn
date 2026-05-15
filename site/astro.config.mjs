@@ -8,7 +8,7 @@ export default defineConfig({
     starlight({
       title: 'Posthorn',
       description:
-        'Self-hosted email gateway for cloud platforms that block outbound SMTP. HTTP form ingress, Postmark transport, Docker or Caddy adapter.',
+        'The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark today; Resend, Mailgun, SES coming. Self-hosted, no mail server required.',
       logo: {
         src: './src/assets/logo.svg',
         replacesTitle: false,

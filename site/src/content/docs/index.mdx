@@ -1,9 +1,9 @@
 ---
 title: Posthorn
-description: Self-hosted email gateway for cloud platforms that block outbound SMTP. HTTP form ingress, Postmark transport, Docker or Caddy adapter.
+description: The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark today; Resend, Mailgun, SES coming. Self-hosted, no mail server required.
 template: splash
 hero:
-  tagline: A self-hosted email gateway for cloud platforms that block outbound SMTP. Run it next to your apps in Docker, or load it as a Caddy module.
+  tagline: Self-hosted mail without the mail server. One outbound layer between every app you run and your transactional provider — Postmark today, Resend / Mailgun / AWS SES / outbound-SMTP coming.
   image:
     file: ../../assets/logo.svg
   actions:
@@ -11,58 +11,128 @@ hero:
       link: /getting-started/installation/
       icon: right-arrow
       variant: primary
-    - text: View on GitHub
+    - text: View the roadmap
+      link: /roadmap/
+      icon: right-arrow
+      variant: secondary
+    - text: GitHub
       link: https://github.com/craigmccaskill/posthorn
       icon: external
       variant: minimal
 ---
 
-import { Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+import { Card, CardGrid, Code, LinkCard, Aside } from '@astrojs/starlight/components';
 
 ## Why Posthorn?
 
-DigitalOcean, AWS Lightsail, Linode, and most cloud hosts block outbound SMTP on ports 25, 465, and 587. The block is policy, not configurable — providers explicitly recommend an HTTP API service like Postmark instead.
+**Nobody wants to run a mail server in 2026.** Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about SPF, DKIM, DMARC, bounces, and sender reputation.
 
-That breaks two patterns at once:
+But every app you self-host has to integrate with that service **independently.** Your contact form. Your Ghost blog's admin emails. Your Gitea magic links. Your Mastodon notifications. Your worker that fires a license-delivery email when someone pays. Each one needs its own copy of the API key, its own integration code, its own quirks around retry and bounce handling. **The same outbound concern duplicated five times across your stack.**
 
-1. **Web forms that send email** — contact forms, signups, alert webhooks.
-2. **Self-hosted apps that emit SMTP for transactional mail** — Ghost, Gitea, Mastodon, Matrix, NextCloud, Authentik. Magic links, password resets, admin notifications.
+And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Linode, Vultr — the SMTP-only apps don't work at all without a workaround.
 
-Posthorn is the bridge. Drop it in as a container, point your forms at it (v1.0) or your apps' SMTP config at it (v1.2), and it relays through Postmark over HTTP.
+**Posthorn is the bridge.** One container, one config, one set of credentials. Your apps point at Posthorn. Posthorn talks to your transactional mail provider.
+
+```text
+┌──────────────────┐
+│ Your apps        │
+│ ────────         │      one HTTP / SMTP-net hop
+│ contact form     │
+│ Ghost            │  ──────────────────┐
+│ Gitea            │                    │
+│ Mastodon         │                    ▼
+│ payment worker   │              ┌──────────┐         ┌─────────────┐
+│ launch script    │              │ Posthorn │ ───────▶│  Postmark   │
+└──────────────────┘              └──────────┘   one   │  (or Resend │
+                                                  key  │  Mailgun,   │
+                                                       │  SES, SMTP) │
+                                                       └─────────────┘
+```
+
+## What you connect → what you route to
+
+**Three ingress shapes,** growing across v1.x. Pick the one that fits each of your apps; one Posthorn instance handles all of them.
 
 <CardGrid>
   <Card title="HTTP form ingress" icon="rocket">
-    Accepts `application/x-www-form-urlencoded` and `multipart/form-data` POSTs
-    on configured paths. Templates the body, validates the fields, sends the
-    mail.
+    **v1.0 — today.** Contact forms, signup forms, alert webhooks.
+    `application/x-www-form-urlencoded` and `multipart/form-data` POSTs on
+    configured paths. Drop the form on your static site or behind your
+    reverse proxy, point its `action` at Posthorn.
   </Card>
-  <Card title="Postmark transport" icon="email">
-    Bespoke ~80-line HTTP client. No third-party SDK. API keys never appear in
-    logs. Headers pass through Postmark's structured JSON API — no string
-    concatenation, no injection vector.
+  <Card title="JSON API ingress" icon="seti:json">
+    **v1.1 — in flight.** Server-to-server callers: workers, cron jobs,
+    payment handlers, internal services. Standard `Authorization: Bearer`
+    auth. Idempotency keys for safe retries. Batch send for bulk
+    notifications.
   </Card>
+  <Card title="SMTP ingress" icon="email">
+    **v1.3 — on the roadmap.** For apps that only speak SMTP: Ghost, Gitea,
+    Mastodon, Matrix, NextCloud, Authentik. Posthorn accepts SMTP on your
+    local network and forwards via your configured HTTP API transport.
+  </Card>
+</CardGrid>
+
+**Pluggable transports,** growing across v1.x. Swap providers without rewriting your apps' integrations — they all talk to Posthorn the same way.
+
+<CardGrid>
+  <Card title="Postmark" icon="email">
+    **v1.0 — today.** Bespoke ~80-line HTTP client. No third-party SDK
+    overhead. Headers pass through Postmark's structured JSON API — no
+    string concatenation, no injection vector. API keys never appear in
+    logs.
+  </Card>
+  <Card title="Resend, Mailgun, AWS SES, SMTP relay" icon="puzzle">
+    **v1.2 — next.** Same endpoint config shape across all four. Swap your
+    transactional provider without changing app code or operator runbooks.
+  </Card>
+  <Card title="Webhook delivery" icon="random">
+    **v2 — later.** Point Posthorn at any URL for non-email delivery
+    (Slack, internal HTTP processors, analytics pipelines). Fan out one
+    submission across email + webhook + log archive.
+  </Card>
+</CardGrid>
+
+## Built for self-hosted, built for production
+
+<CardGrid>
   <Card title="Defense in depth" icon="shield">
     Honeypot, Origin/Referer fail-closed, token-bucket rate limit with LRU
     eviction at 10K IPs, max body size, required-field validation, email
-    syntax check.
+    syntax check. CSRF + time-based tokens in v1.2. API-key auth for
+    server-to-server callers in v1.1.
   </Card>
   <Card title="Two deployment shapes" icon="puzzle">
-    Standalone Docker container (primary) or a Caddy v2 module for operators
-    already running Caddy. Both run the same pipeline — identical behavior by
-    construction.
+    Standalone Docker container (primary) or a Caddy v2 module for
+    operators already running Caddy. Both run the same pipeline —
+    identical behavior by construction.
   </Card>
-  <Card title="Structured logging" icon="document">
-    Every event emits JSON with a UUIDv4 submission ID, endpoint, transport,
-    and latency. Failed submissions log the full payload so you can recover
-    from terminal errors.
+  <Card title="Structured for ops" icon="document">
+    JSON logs with UUIDv4 submission IDs. Hard 10-second request timeout.
+    `/healthz` + Prometheus `/metrics` in v1.2. SQLite-backed retry queue
+    across restarts in v2. Designed to drop into your existing logging
+    pipeline, not replace it.
+  </Card>
+  <Card title="No mail-server skills required" icon="approve-check">
+    You don't run Postfix. You don't manage DKIM rotation. You bring an
+    API key from your transactional provider and a TOML config. Posthorn
+    handles the gateway logic.
   </Card>
   <Card title="Retry that respects deadlines" icon="random">
     One retry on transient/5xx (1s backoff), one retry on 429 (5s backoff),
-    no retry on 4xx config errors, hard 10-second timeout including retries.
+    no retry on 4xx config errors, hard 10-second timeout including
+    retries. Failed submissions log the full payload so you can recover.
+  </Card>
+  <Card title="Public roadmap, locked spec" icon="open-book">
+    [Roadmap](/roadmap/) is public, milestones track in GitHub, every
+    feature traces back to a versioned spec. v1.0 is locked; v1.x grows
+    deliberately.
   </Card>
 </CardGrid>
 
 ## Five-minute setup
+
+The v1.0 path: a contact form on a static site, behind a reverse proxy.
 
 ```yaml
 # docker-compose.yml
@@ -74,7 +144,7 @@ services:
     environment:
       POSTMARK_API_KEY: ${POSTMARK_API_KEY}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 ```
 
 ```toml
@@ -104,7 +174,9 @@ count = 5
 interval = "1m"
 ```
 
-Reverse-proxy `/api/contact` from your front door (Caddy, nginx, Traefik) at `https://posthorn:8080`. Point your form's `action` at `/api/contact`. Done.
+Reverse-proxy `/api/contact` from your front door (Caddy, nginx, Traefik) to `http://posthorn:8080`. Point your form's `action` at `/api/contact`. Done.
+
+Full walkthrough: [posthorn.dev/getting-started/quick-start](/getting-started/quick-start/).
 
 <LinkCard
   title="Installation guide"
@@ -118,10 +190,16 @@ Reverse-proxy `/api/contact` from your front door (Caddy, nginx, Traefik) at `ht
   href="/getting-started/quick-start/"
 />
 
+<LinkCard
+  title="Roadmap"
+  description="The trajectory through v1.1 (API mode), v1.2 (multi-transport), v1.3 (SMTP ingress), v2 (platform maturity). Linked to open GitHub milestones."
+  href="/roadmap/"
+/>
+
 ## Not related to PostHog
 
 PostHog is product analytics. Posthorn is an email gateway. Similar names, different categories, zero functional overlap.
 
 ## License & status
 
-Apache-2.0. Currently pre-v1.0 — [spec is locked](https://github.com/craigmccaskill/posthorn/tree/main/spec), implementation is in flight. Track progress on the [GitHub project board](https://github.com/craigmccaskill/posthorn).
+Apache-2.0. v1.0.0 is the current target — see the [GitHub releases page](https://github.com/craigmccaskill/posthorn/releases) for ship status. The full v1.0 specification is [locked in `spec/`](https://github.com/craigmccaskill/posthorn/tree/main/spec); v1.x trajectory lives on the [roadmap page](/roadmap/) and in the [open milestones](https://github.com/craigmccaskill/posthorn/milestones).
