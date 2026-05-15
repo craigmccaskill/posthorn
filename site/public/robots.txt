@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://posthorn.dev/sitemap-index.xml

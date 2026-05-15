@@ -1,0 +1,138 @@
+---
+title: Endpoints
+description: How to configure multiple endpoints for different forms or transactional flows.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+An **endpoint** is a path Posthorn serves, together with the transport, recipients, templates, and protections that apply to submissions on that path.
+
+You can configure as many endpoints as you want in a single config file. Each is fully independent — separate rate-limit counters, separate templates, separate honeypot field names, separate Postmark accounts if you want.
+
+## One endpoint per form
+
+If you have one contact form, one endpoint is enough:
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+to = ["you@example.com"]
+from = "Contact Form <noreply@example.com>"
+required = ["name", "email", "message"]
+subject = "Contact: {{.name}}"
+body = "From: {{.name}} <{{.email}}>\n\n{{.message}}"
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+## Multiple endpoints, shared transport
+
+Several forms relaying through the same Postmark server. They share a key via env var; the rate limit is per-endpoint so they don't interfere with each other.
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+to = ["alerts@example.com"]
+from = "Contact <noreply@example.com>"
+subject = "Contact: {{.name}}"
+body = "..."
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+
+# -----
+
+[[endpoints]]
+path = "/api/feedback"
+to = ["product@example.com"]
+from = "Feedback <noreply@example.com>"
+subject = "Feedback: {{.subject}}"
+body = "..."
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+
+[endpoints.rate_limit]
+count = 20
+interval = "1m"
+```
+
+## Multiple endpoints, separate transports
+
+Routing transactional and marketing mail to separate Postmark servers — different DKIM signatures, different bounce policies, different per-server tokens.
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+# ...
+[endpoints.transport]
+type = "postmark"
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_TRANSACTIONAL_KEY}"
+
+[[endpoints]]
+path = "/api/newsletter"
+# ...
+[endpoints.transport]
+type = "postmark"
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_BROADCAST_KEY}"
+```
+
+## What endpoints share
+
+| Concern | Scope |
+|---|---|
+| Rate limit counters | Per-endpoint, per-IP |
+| Templates | Per-endpoint |
+| Recipients | Per-endpoint |
+| Transport | Per-endpoint |
+| Honeypot field name | Per-endpoint |
+| Allowed origins | Per-endpoint |
+| `trusted_proxies` | Per-endpoint |
+| Logging level / format | Global (via `[logging]`) |
+| HTTP listener port | Global (Posthorn process) |
+
+This means a malicious actor flooding `/api/contact` will hit your contact rate limit but won't affect submissions to `/api/feedback`. They run as independent token buckets.
+
+## Path conflicts
+
+Two endpoints cannot share the same `path`. The config loader rejects this at validation time:
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+
+[[endpoints]]
+path = "/api/contact"   # ← rejected: duplicate path
+```
+
+Path matching is exact, not prefix-based. `/api/contact` does **not** match `/api/contact/`.
+
+<Aside type="note">
+Paths are matched against the request URL **as Posthorn sees it after your reverse proxy.** If you proxy with a path-stripping rule (e.g., `nginx`'s `rewrite ^/posthorn(/.*)$ $1 break;`), configure Posthorn's endpoint path to match the **post-rewrite** path.
+</Aside>
+
+## Adding a new endpoint without restarting
+
+v1.0 reads the config once at startup. Adding a new endpoint requires:
+
+1. Edit `posthorn.toml`
+2. `posthorn validate --config posthorn.toml`
+3. Restart the container or process
+
+Hot reload is not in v1.0 scope. v1.1+ may add SIGHUP-triggered reload.

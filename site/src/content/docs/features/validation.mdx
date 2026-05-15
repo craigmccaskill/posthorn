@@ -1,0 +1,142 @@
+---
+title: Validation
+description: Required fields, email format, and the JSON 422 error contract.
+---
+
+Validation runs after the spam-protection layers and before template rendering. Two checks ship in v1.0: required fields and email format. Both produce structured 422 responses that include the specific failing field names.
+
+## Required fields
+
+```toml
+required = ["name", "email", "message"]
+```
+
+For each request, Posthorn checks that every field in `required`:
+
+1. Is present in the form, and
+2. Has a non-empty value (after trimming leading/trailing whitespace).
+
+A missing or empty field returns HTTP 422 with the failing fields enumerated:
+
+```json
+{
+  "error": "Validation failed",
+  "code": "validation_failed",
+  "fields": {
+    "message": "required field is missing or empty"
+  }
+}
+```
+
+**Multiple failing fields** are all reported in one response — Posthorn doesn't short-circuit:
+
+```json
+{
+  "error": "Validation failed",
+  "code": "validation_failed",
+  "fields": {
+    "name": "required field is missing or empty",
+    "email": "required field is missing or empty"
+  }
+}
+```
+
+This lets a client-side form display all errors at once instead of forcing the user to fix them one at a time.
+
+## Email format
+
+```toml
+email_field = "email"   # default: "email"
+```
+
+If `email_field` is configured (or defaults to "email" if not), Posthorn validates that field's value as a syntactically valid email address. The check is **syntactic only** — Posthorn does not:
+
+- Verify the domain has MX records
+- Verify the mailbox accepts mail
+- Check SPF/DKIM on the domain
+
+It uses Go's `mail.ParseAddress` under the hood, which accepts most RFC 5322 addresses. Common formats that pass:
+
+- `alice@example.com`
+- `alice.b.c+test@sub.example.co.uk`
+- `"Alice Bee" <alice@example.com>` (display-name form)
+
+Common formats that fail:
+
+- `alice` (no @)
+- `alice@` (no domain)
+- `alice@@example.com` (double @)
+- ` alice @ example.com ` (whitespace in inappropriate places)
+- An empty string
+
+Failures return the same 422 schema:
+
+```json
+{
+  "error": "Validation failed",
+  "code": "validation_failed",
+  "fields": {
+    "email": "invalid email format"
+  }
+}
+```
+
+## Combined errors
+
+Required-field and email-format checks both run; both contribute to the `fields` object. A submission missing `name` and providing an invalid `email` returns:
+
+```json
+{
+  "error": "Validation failed",
+  "code": "validation_failed",
+  "fields": {
+    "name": "required field is missing or empty",
+    "email": "invalid email format"
+  }
+}
+```
+
+## Display name passthrough
+
+If your form includes a `name` field and an `email` field, Posthorn does **not** automatically construct a display-name email like `"Alice <alice@example.com>"` for the message's `From` or `Reply-To`. The transport uses whatever you specify in the config for those.
+
+If you want display-name behavior, use templates:
+
+```toml
+[[endpoints]]
+required = ["name", "email", "message"]
+reply_to_email_field = "email"
+subject = "Contact from {{.name}}"
+body = """
+From: {{.name}} <{{.email}}>
+
+{{.message}}
+"""
+```
+
+The `reply_to_email_field` config sets the email's `Reply-To` header to the value of the specified form field. Combined with a body template that includes `{{.name}}`, you get a usable reply experience.
+
+## What v1.0 doesn't validate
+
+| Check | When | Notes |
+|---|---|---|
+| Max field length | v1.1 | Currently bounded only by `max_body_size` |
+| Allowed values (enum) | v1.1 | e.g. `category` must be one of `["bug", "feature"]` |
+| Regex pattern match | v1.1 | e.g. `phone` must match a pattern |
+| Custom validators | (not planned) | Adds plugin complexity disproportionate to value |
+
+For v1.0, complex validation belongs in your application or your form's client-side JavaScript. Posthorn's job is to keep obviously-malformed submissions out of Postmark and out of your inbox.
+
+## Best-practice form design
+
+To minimize false negatives:
+
+- Mark required fields in the HTML with `required` attribute so the browser prevents most empty submissions client-side.
+- Use `<input type="email">` for email fields so the browser does its own basic format check.
+- Don't use trailing whitespace in field names in your config — Posthorn matches field names exactly.
+
+To handle false positives gracefully:
+
+- Display 422 field errors next to the field, not as a generic "Form invalid" message.
+- Preserve the user's existing input on validation failure — don't make them retype.
+- For non-JS forms, configure `redirect_error` to a page that can show "please fix the highlighted fields."

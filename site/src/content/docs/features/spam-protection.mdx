@@ -1,0 +1,112 @@
+---
+title: Spam protection
+description: How Posthorn keeps drive-by bots, direct-POST attackers, and abusive humans out of your inbox.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+v1.0 ships a layered spam-protection stack tuned for typical web forms. Each layer is independently configurable; you can omit any of them, but in practice you want all four.
+
+| Layer | Defends against | Default |
+|---|---|---|
+| Max body size | Resource exhaustion | 1 MB |
+| Honeypot | Drive-by scraper bots | unset (recommend setting one) |
+| Origin/Referer check | Direct-POST bots that skip the form page | unset (fail-open) |
+| Rate limit | Basic targeted abuse, Postmark quota burn | unset (recommend setting one) |
+
+## Honeypot
+
+A honeypot is a form field that's invisible to humans (hidden via CSS) but visible to bots that scrape and submit forms blindly. Any non-empty value silently 200s the request without sending mail.
+
+```toml
+honeypot = "_gotcha"
+```
+
+```html
+<input type="text" name="_gotcha" tabindex="-1" autocomplete="off"
+       style="position:absolute;left:-9999px">
+```
+
+**Why silent 200?** A 4xx response tells the bot operator that their submission was flagged — they iterate. A 200 makes the bot think the submission succeeded, so the operator keeps wasting their time on a form that will never deliver mail.
+
+Choose a name that looks plausible to a bot ('email_confirm', 'website', '_gotcha') but isn't a field you actually use. Bots target common form-field names; obscure names work less well because the bot may not fill them in.
+
+<Aside type="note">
+The honeypot field must be **named in your form's HTML.** Bots typically fill fields by name attribute. If you don't render the field, bots won't see it, and the honeypot is useless.
+</Aside>
+
+## Origin/Referer checks
+
+Spam bots that don't bother loading your form page first will POST directly with no `Origin` or `Referer` headers. Setting `allowed_origins` makes that fail closed:
+
+```toml
+allowed_origins = ["https://example.com", "https://www.example.com"]
+```
+
+Behavior when `allowed_origins` is configured:
+
+| `Origin` header | `Referer` header | Outcome |
+|---|---|---|
+| In allowlist | (anything) | Pass |
+| Not in allowlist | (anything) | 403 |
+| Missing | In allowlist (by URL host) | Pass |
+| Missing | Not in allowlist | 403 |
+| Missing | Missing | **403 (fail closed)** |
+
+When `allowed_origins` is **not** configured, Posthorn allows any origin (fail-open by absence of config). This is fine for internal-only or dev environments, but for any public form, set it.
+
+**An explicitly empty list (`allowed_origins = []`) is rejected at config-validation time.** This prevents the surprise of "I cleared the list to disable the check, but actually I just disabled all origins."
+
+## Max body size
+
+Protects against attackers sending multi-gigabyte form bodies to exhaust your process's memory:
+
+```toml
+max_body_size = "1MB"
+```
+
+Supports human-readable sizes: `"32KB"`, `"512KB"`, `"1MB"`, `"5MB"`. Default is `"1MB"`.
+
+Enforced via `http.MaxBytesReader` at the start of the handler — Posthorn never reads beyond the cap into memory. Exceeding it returns 413.
+
+For most contact forms, 32-64 KB is plenty. Increase only if you legitimately accept long-form submissions (think: detailed bug reports with stack traces).
+
+## Rate limiting
+
+See [Rate limiting](/features/rate-limiting/) for the full treatment. The short version:
+
+```toml
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+```
+
+A token-bucket limiter per client IP, per endpoint. 5 submissions per minute means a burst of 5 immediately, then refilling at 5 per minute thereafter. Exceeding triggers 429.
+
+## What v1.0 doesn't ship
+
+| Feature | When | Notes |
+|---|---|---|
+| CSRF tokens | v1.1 | Stateful CSRF tokens for forms that include them |
+| Time-based form tokens | v1.1 | Reject submissions that complete impossibly fast (< 3s) |
+| reCAPTCHA / hCaptcha | (not planned) | Forces a third-party dependency; conflicts with the self-hosted ethos |
+| Proof-of-work challenge | v3 | Computational cost imposed on submitter |
+| Bayesian content classification | (not planned) | Too easy to evade with modern LLMs |
+
+For most operators, the v1.0 stack catches 95%+ of automated abuse with no operator friction. The cases it doesn't catch are mostly low-rate manual abuse — much rarer in practice than the drive-by bots that the honeypot handles.
+
+## Order of checks
+
+For reference, the spam-protection layers run in this order in the request pipeline:
+
+1. **Max body size** (1) — before reading the body at all.
+2. **Method** (POST only).
+3. **Content-Type** (form-encoded).
+4. **Origin/Referer** — header-only check, before parsing the body.
+5. **Rate limit** — header-only check, before parsing the body.
+6. (body is parsed here)
+7. **Honeypot** — after parse, since it needs the form values.
+
+The ordering matters: header-only checks reject obvious junk before the server pays to parse the body. The honeypot check has to wait until after parse because it needs to look at the form value of the honeypot field.
+
+See [Core concepts → Request pipeline](/getting-started/concepts/#the-request-pipeline) for the full ordered list.

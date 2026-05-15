@@ -1,0 +1,150 @@
+---
+title: Docker (recommended)
+description: Run Posthorn as a Docker container — the primary deployment shape.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Running Posthorn as a Docker container next to your other services is the recommended deployment shape. It keeps the email-gateway concern decoupled from your reverse proxy, your application stack, and your TLS termination.
+
+The official image is published to GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/craigmccaskill/posthorn:latest
+```
+
+Multi-arch tags are published for `linux/amd64` and `linux/arm64`. A small Alpine variant and a `distroless` variant share the same tag (the manifest list selects the right one for your platform).
+
+## docker-compose.yml
+
+The canonical setup. Mount the config read-only, pass the Postmark token through the environment, expose port 8080 to the internal network only (reverse-proxy from your front door):
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    restart: unless-stopped
+    volumes:
+      - ./posthorn.toml:/etc/posthorn/config.toml:ro
+    environment:
+      POSTMARK_API_KEY: ${POSTMARK_API_KEY}
+    networks:
+      - web
+    ports:
+      - "127.0.0.1:8080:8080"  # bind to loopback only; reverse-proxy from there
+
+networks:
+  web:
+    external: true   # if you share a network with your reverse proxy
+```
+
+Pair with `.env`:
+
+```bash
+POSTMARK_API_KEY=your-postmark-server-token
+```
+
+<Aside type="caution">
+Bind the published port to `127.0.0.1` (or an internal Docker network) — **don't expose port 8080 to the public internet directly.** Posthorn does not terminate TLS; it expects a reverse proxy in front. Public binding is a misconfiguration.
+</Aside>
+
+## Image conventions
+
+| Detail | Value |
+|---|---|
+| Default config path | `/etc/posthorn/config.toml` |
+| Default listen address | `:8080` |
+| Entry point | `posthorn serve --config /etc/posthorn/config.toml` |
+| Non-root user | `nobody` (UID 65534) — read-only mounts work without UID matching |
+| Filesystem | Distroless-static; no shell, no package manager, no debug tools |
+
+The image is intentionally minimal — distroless means no `sh`, `bash`, `apk`, `apt`, or coreutils. Debugging via `docker exec` is not possible. This is by design (smaller attack surface, no risk of leaving debug tools in production).
+
+If you need to inspect the container for development, override the image command with a debug image temporarily.
+
+## Tags
+
+| Tag | What you get |
+|---|---|
+| `:latest` | Most recent stable release. Multi-arch. |
+| `:v1.0.0`, `:v1.0`, `:v1` | Pinned versions / version aliases |
+| `:main` | HEAD of `main` branch (CI build, not a release) — **don't use in production** |
+
+For production, pin to a specific version (`:v1.0.0`) and update intentionally. `:latest` is convenient for development.
+
+## Health checks
+
+v1.0 does not ship a dedicated `/healthz` endpoint (v1.1 will). For now, use a Docker healthcheck that opens a TCP connection to the listener:
+
+```yaml
+services:
+  posthorn:
+    # ...
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET / HTTP/1.0\\n\\n' >&3"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+```
+
+Note: distroless has no shell, so this healthcheck won't work in the distroless variant. For health checking the distroless image, run a sidecar like [`google/cadvisor`](https://github.com/google/cadvisor) or check from the reverse proxy.
+
+## Logs
+
+Posthorn writes structured JSON logs to stdout. With the default Docker logging driver, those land in `docker logs posthorn`. For production, ship them to your log pipeline via the appropriate driver:
+
+```yaml
+services:
+  posthorn:
+    # ...
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+Or to a remote sink:
+
+```yaml
+services:
+  posthorn:
+    # ...
+    logging:
+      driver: "loki"
+      options:
+        loki-url: "https://loki.example.com/loki/api/v1/push"
+```
+
+## Updating
+
+```bash
+docker compose pull posthorn
+docker compose up -d posthorn
+```
+
+Posthorn handles SIGTERM gracefully — it stops accepting new connections, drains in-flight requests up to the 10-second per-request cap, then exits. The rolling update is safe; in-flight submissions complete before the container is replaced.
+
+## Resource limits
+
+Posthorn is light. Typical resource use:
+
+| Resource | Idle | Under load |
+|---|---|---|
+| Memory | ~15-25 MB | ~50 MB |
+| CPU | under 1% | under 5% |
+| File descriptors | ~30 | ~80 |
+
+For a docker-compose deployment, you generally don't need explicit limits. If you want belt-and-suspenders:
+
+```yaml
+services:
+  posthorn:
+    # ...
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+```

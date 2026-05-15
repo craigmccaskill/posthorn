@@ -1,0 +1,105 @@
+---
+title: Header injection
+description: How Posthorn prevents email-header injection via submitter-controlled fields.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Email header injection is a class of vulnerability where a submitter's input gets concatenated into an email's headers, allowing them to inject additional headers (`Bcc:`, `Cc:`, `From:` overrides, etc.) or split the message entirely.
+
+This is one of the oldest and most common bugs in contact-form software. **Posthorn defends against it by construction**, not by trying to sanitize input.
+
+## The attack
+
+A naive contact-form implementation might do something like:
+
+```go
+// VULNERABLE — do not do this
+headers := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\n",
+    formName, formEmail, formSubject)
+```
+
+If `formName` contains `\r\nBcc: attacker@evil.com\r\n`, the attacker has now added themselves as a Bcc recipient — every message goes to them silently. Worse, with `\r\n\r\n` they can terminate the headers entirely and inject a new message body.
+
+## How Posthorn prevents it
+
+Three layers, all enforced in code:
+
+### 1. No string concatenation into headers
+
+The Postmark transport submits emails as **JSON to Postmark's HTTP API**, not as raw SMTP messages. Every header is a JSON field:
+
+```go
+type postmarkRequest struct {
+    From     string   `json:"From"`
+    To       string   `json:"To"`
+    ReplyTo  string   `json:"ReplyTo,omitempty"`
+    Subject  string   `json:"Subject"`
+    TextBody string   `json:"TextBody"`
+}
+```
+
+The JSON encoder escapes control characters in values automatically. A field value like `Alice\r\nBcc: attacker@evil.com` becomes the JSON string `"Alice\r\nBcc: attacker@evil.com"` — Postmark receives that as a single header value and rejects or sanitizes it server-side.
+
+No `fmt.Sprintf` or string concatenation of submitter input into headers, anywhere in the transport.
+
+### 2. Submitter input only feeds *body templates*, not header fields
+
+The header fields (`From`, `To`, `Reply-To`, `Subject`) come from:
+
+- **`From`**: configured per-endpoint (`from` in the TOML). Operator-controlled. Submitter cannot influence.
+- **`To`**: configured per-endpoint (`to` in the TOML). Operator-controlled. Submitter cannot influence.
+- **`Reply-To`**: value of the configured `email_field` from the form. **This is submitter-controlled** — see below.
+- **`Subject`**: rendered from the `subject` template, which can include submitter input.
+
+For `Reply-To`: the email field passes through the same JSON-encoded structured field; CRLF injection in the email field cannot break out. Additionally, Posthorn validates the email field's format ([Validation](/features/validation/#email-format)) before send, so a payload like `alice@example.com\r\nBcc:...` fails the email syntax check and gets 422'd before reaching the transport.
+
+For `Subject`: the template rendering produces a Go string, which becomes a JSON field value. Same defense — JSON encoding escapes control characters.
+
+### 3. Explicit test coverage (NFR2)
+
+The test suite includes a table of known injection payloads:
+
+```go
+{name: "crlf in name", payload: "Alice\r\nBcc: attacker@evil.com"},
+{name: "crlf in email", payload: "alice@a.com\r\nBcc: attacker@evil.com"},
+{name: "crlf in subject", payload: "Hello\r\nBcc: attacker@evil.com"},
+{name: "smuggled header", payload: "Alice\nX-Mailer: malicious"},
+{name: "double crlf", payload: "Hello\r\n\r\nNew body content"},
+{name: "lone lf", payload: "Hello\nBcc: x@y"},
+{name: "lone cr", payload: "Hello\rBcc: x@y"},
+```
+
+For each payload, the test asserts:
+
+1. The outbound HTTP request to Postmark contains exactly the headers Posthorn intended (no `Bcc:`, no smuggled `X-Mailer:`).
+2. The payload appears in the message body (in the rendered template), not in the header.
+
+These tests run on every build. A regression that re-introduced string-concatenated headers would fail CI immediately.
+
+## What you don't need to do
+
+You do **not** need to:
+
+- Sanitize submitter input yourself before passing it to Posthorn
+- Strip CRLF from form values in client JavaScript
+- Run an additional Postfix milter or sanitizer
+- Configure header filtering at the reverse proxy
+
+Posthorn handles header safety as a code-level invariant. Submitter input is just data; it never becomes header structure.
+
+## What you should still do
+
+- **Validate the `email_field`** — `Posthorn does this by default with `email_field = "email"`. Don't disable it.
+- **Use Postmark's verified-sender domain** — Postmark rejects messages from `From` addresses not on a verified domain. This is an additional Postmark-side defense; keep it on.
+- **Set up SPF, DKIM, DMARC** on your sending domain — these don't defend against header injection but defend against your domain being used for spoofing more broadly. See [DNS](/security/dns/).
+
+<Aside type="note">
+The same guarantees apply to the Caddy adapter. The adapter delegates the entire pipeline (including the transport) to the same core code path; there's no separate header-handling path in the adapter.
+</Aside>
+
+## When v1.1+ transports ship
+
+Each new transport (Resend, Mailgun, SES) must use the same structured-data approach. The Postmark transport sets the pattern: JSON-encoded request bodies, no `Sprintf` into header values, table-driven injection tests included.
+
+The architecture explicitly bans transport implementations from constructing headers via string formatting — see [NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md#security) in the PRD. New transports that violate this don't merge.

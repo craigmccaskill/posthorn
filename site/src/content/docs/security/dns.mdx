@@ -1,0 +1,135 @@
+---
+title: DNS (SPF, DKIM, DMARC)
+description: Required DNS records on your sending domain. Skip these and your mail goes to spam.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn relays mail through Postmark. Postmark sends from **your** domain (the `From:` you configure). For that mail to reach the recipient's inbox — and not their spam folder — three DNS records have to be set up correctly on your sending domain.
+
+This is not Posthorn-specific. Every transactional email service has the same prerequisites. This page documents them so you don't get blindsided after going live.
+
+## What you need
+
+| Record | Purpose | Required by |
+|---|---|---|
+| **SPF** | Tells receiving servers which IPs are allowed to send mail "from" your domain | All major providers (Gmail, Outlook, Apple) |
+| **DKIM** | Cryptographic signature proving the message wasn't modified in transit and was authorized by your domain | All major providers |
+| **DMARC** | Policy combining SPF + DKIM results; tells receivers what to do with messages that fail one or both | Gmail required as of Feb 2024 for bulk senders; recommended for all |
+
+Without these, your mail will be flagged, junked, or rejected outright. Postmark itself doesn't deliver mail until SPF and DKIM are verified for your sending domain.
+
+## Setup walkthrough (Postmark + DNS provider)
+
+Postmark's dashboard walks you through this when you add a sender domain. The high-level shape:
+
+### 1. Add your domain to Postmark
+
+Postmark dashboard → Sender Signatures → Add Domain. Enter `example.com`. Postmark generates the values you need to set in DNS.
+
+### 2. Add an SPF record
+
+Postmark provides:
+
+```text
+Type:  TXT
+Host:  @            (or example.com — depends on DNS provider)
+Value: v=spf1 a mx include:spf.mtasv.net ~all
+```
+
+If you already have an SPF record (because you also send via Gmail Workspace, Mailgun, etc.), **merge** the includes rather than creating a second TXT record. Multiple SPF records is an error condition. The merged form looks like:
+
+```text
+v=spf1 a mx include:_spf.google.com include:spf.mtasv.net ~all
+```
+
+### 3. Add the DKIM record
+
+Postmark provides a public key (long TXT value). Set:
+
+```text
+Type:  TXT
+Host:  20240101pm._domainkey   (Postmark provides the selector — varies)
+Value: k=rsa; p=MIGfMA0GCSq...   (long key, Postmark provides full value)
+```
+
+The selector (`20240101pm` above) is Postmark's; just paste what they give you.
+
+### 4. (Recommended) Add a DMARC record
+
+```text
+Type:  TXT
+Host:  _dmarc
+Value: v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com; pct=100; aspf=s; adkim=s
+```
+
+Start with `p=none` if you want to monitor without enforcement:
+
+```text
+v=DMARC1; p=none; rua=mailto:dmarc-reports@example.com
+```
+
+Move to `p=quarantine` after a week of monitoring (mail that fails goes to spam). Move to `p=reject` later (mail that fails is dropped — strict). Don't jump straight to `p=reject`; you'll lose mail until you've verified all your legitimate sources are SPF/DKIM-aligned.
+
+### 5. Verify in Postmark
+
+Back in the Postmark dashboard, hit "Verify" on the domain. SPF and DKIM should both flip to verified within minutes of the DNS records propagating. DMARC isn't directly verified by Postmark (it's a policy receivers consult, not a record Postmark sends from).
+
+### 6. Send a test
+
+From Posthorn:
+
+```bash
+curl -X POST http://localhost:8080/api/contact \
+  -d "name=Test" -d "email=you@gmail.com" -d "message=hello"
+```
+
+Send to a Gmail address you control. Check:
+
+1. The mail arrives (inbox, not spam, not "Promotions").
+2. Open the message → "Show original" (Gmail's term).
+3. The `Authentication-Results:` header should show `spf=pass`, `dkim=pass`, `dmarc=pass`.
+
+## Common mistakes
+
+| Mistake | What happens |
+|---|---|
+| Two SPF records on the same domain | Receiving servers treat this as a permerror → SPF fails → mail goes to spam |
+| SPF too long (>10 DNS lookups) | Permerror — split using `mx` directives or remove unused includes |
+| Missing DKIM selector | DKIM fails — mail signed but receiver can't verify the signature |
+| Misspelled `_domainkey` host (e.g., `domainkey`) | DKIM fails — receivers expect the underscore |
+| DMARC `p=reject` before SPF/DKIM are verified | Legitimate mail gets dropped silently |
+| Setting up DNS but not waiting for propagation | Some receivers cache for hours — wait at least 1 hour before declaring failure |
+
+## Best-practice setup
+
+For most operators, the following is a sensible end state:
+
+```text
+example.com.        TXT  "v=spf1 a mx include:spf.mtasv.net ~all"
+20240101pm._domainkey.example.com.  TXT  "k=rsa; p=MIGfMA0..."
+_dmarc.example.com. TXT  "v=DMARC1; p=quarantine; rua=mailto:dmarc-reports@example.com"
+```
+
+This passes Gmail's bulk-sender requirements, passes Outlook's strictness checks, and gives you DMARC reports so you can spot abuse.
+
+## Subdomain considerations
+
+If your `From:` is `noreply@example.com`, the records go on `example.com` (apex). If your `From:` is `noreply@mail.example.com`, the records go on `mail.example.com` (subdomain).
+
+Subdomain sending is often a good idea — keeps your transactional mail isolated from your main domain's reputation. A spam blip on your contact form won't affect deliverability for `you@example.com`.
+
+## What Posthorn doesn't do
+
+| Concern | Posthorn? |
+|---|---|
+| Set up DNS for you | **No.** Pre-deployment manual step. |
+| Verify DNS before sending | **No** in v1.0. v1.1+ may add a `posthorn dns check` subcommand. |
+| Sign DKIM itself | **No.** Postmark does this. Posthorn is just the HTTP client. |
+| Re-send mail when deliverability fails post-hoc | **No.** Deliverability is recipient-side — once Postmark says "accepted," it's out of Posthorn's hands. |
+
+<Aside type="note">
+If you don't control DNS on your sending domain (it's a corporate domain, a shared registrar, etc.), get those records added before you go live. Otherwise the contact form will *seem* to work — Posthorn returns 200, Postmark accepts the message — but the recipient never sees it.
+
+A `dig -t TXT example.com` and `dig -t TXT _dmarc.example.com` is a quick sanity check before declaring victory.
+</Aside>

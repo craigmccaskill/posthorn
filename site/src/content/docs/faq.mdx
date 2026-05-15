@@ -1,0 +1,113 @@
+---
+title: FAQ
+description: Common questions about Posthorn — scope, alternatives, deployment choices, behavior.
+---
+
+## What is Posthorn for, in one sentence?
+
+A self-hosted email gateway that lets web forms and self-hosted apps send mail through an HTTP API like Postmark when your hosting provider blocks outbound SMTP.
+
+## Why does my host block SMTP?
+
+To fight spam. DigitalOcean, AWS Lightsail, Linode, Vultr, and most major cloud providers block outbound ports 25, 465, and 587 by default. The policy is not negotiable — they explicitly recommend HTTP API services instead.
+
+## Is Posthorn related to PostHog?
+
+**No.** PostHog is product analytics (event tracking, feature flags, session replay). Posthorn is an email gateway. Similar names, different categories, zero overlap. The name comes from the small brass horn that historical post riders carried — a symbol of mail delivery dating to the 16th century.
+
+## Why not just use Formspree?
+
+Formspree (and similar SaaS form services) work fine for the form case. The reasons to self-host instead:
+
+- **Cost.** Posthorn is one container next to your other services — no per-submission pricing.
+- **Privacy.** Form submissions go from your visitor straight to your Postmark account and your inbox. No third party in the middle.
+- **The other half of the problem.** Formspree only handles forms. It doesn't unblock Ghost, Gitea, Mastodon, etc., which emit SMTP for their own transactional mail. Posthorn's v1.2 SMTP ingress fixes that too.
+- **No vendor lock-in.** If Formspree disappears or changes pricing, your contact forms break. Self-hosted is stable.
+
+## Why not run Postfix as an HTTP-to-SMTP relay?
+
+You can — but Postfix doesn't speak HTTP natively. You'd need a custom milter or `smtp-transport` glue, plus an SMTP-to-HTTP adapter, plus the relay configuration, plus the upstream HTTP transport credentials. Heavy and fragile. Posthorn is one container with one config file.
+
+## What if I want to use SendGrid / Mailgun / Resend / SES instead of Postmark?
+
+v1.0 ships only the Postmark transport. v1.1 adds Resend, Mailgun, SES, and outbound-SMTP. Each new transport implements the same `Transport` interface — config and behavior are identical from the operator's perspective.
+
+If you need a different transport before v1.1 ships, opening an issue is the right move.
+
+## Why Postmark first?
+
+Single author, working part-time, finite budget. Postmark was the author's existing account (they sponsor open-source projects) and has clean API docs. Shipping one transport well in v1.0 beats shipping four poorly. v1.1's transport additions validate the abstraction.
+
+## Can I run multiple Posthorn instances behind a load balancer?
+
+Yes. Each instance has its own in-memory rate-limit buckets, so limits apply per-instance (not globally). For a 5/minute limit with 3 instances, you effectively allow 15/minute aggregate. If that's a problem, scale the limit down per-instance, or wait for distributed rate-limiting (not on the v1 roadmap).
+
+## How much does Posthorn cost to run?
+
+Posthorn itself is free (Apache-2.0). You pay for:
+
+- Postmark — free tier covers ~100 emails/month, then $15/month for 10K emails
+- A small VPS — Posthorn uses ~20 MB RAM and negligible CPU; even a $5 droplet has headroom
+- A domain — if you don't have one
+
+Most homelab operators are already paying for the VPS and the domain. Postmark's free tier is enough for a personal contact form.
+
+## Does Posthorn work with Caddy?
+
+Two ways:
+
+1. **As a separate container, with Caddy as your reverse proxy.** Caddy terminates TLS, Caddy forwards `/api/contact` to Posthorn. Standard reverse-proxy setup.
+2. **As a Caddy v2 module** loaded into Caddy itself. `xcaddy build --with github.com/craigmccaskill/posthorn/caddy` produces a Caddy binary with `http.handlers.posthorn` available. Configure via Caddyfile directive.
+
+The first option is recommended for most operators. The second exists for Caddy purists who prefer a single binary.
+
+## Does Posthorn handle file attachments?
+
+**Not in v1.0.** File attachments land in v2 alongside SQLite persistent storage. If your form has file inputs, the file content is silently ignored — only text fields make it to the email.
+
+## Does Posthorn send confirmation emails to the submitter?
+
+**Not in v1.0.** Confirmation auto-replies are post-v1 (no specific version assigned). For now, send an explicit confirmation from a separate path (e.g., a webhook from your form handler), or accept that the redirect_success page is the confirmation.
+
+## What happens if Postmark goes down?
+
+Posthorn retries once on transient failures (1s delay). If Postmark is still down on retry, the request returns 502 to the client, and the full form payload is logged at ERROR level so you can recover it manually.
+
+There is no persistent queue in v1.0. A failed submission only exists in the log. v2 will add a SQLite-backed retry queue across restarts.
+
+## Can I hot-reload the config?
+
+**Not in v1.0.** Config is read once at startup. To change config, edit the TOML and restart the container or process. v1.1+ may add SIGHUP-triggered reload.
+
+## Why TOML, not YAML / JSON?
+
+TOML is more readable than YAML for the kind of configuration Posthorn does (mostly key-value pairs with a few nested tables). It's stricter than YAML (no whitespace ambiguity), more comment-friendly than JSON, and well-supported in Go. Standard choice for Go ecosystem tools.
+
+The Caddy adapter uses Caddyfile syntax — that's Caddy's native config format, and operators using the adapter prefer it. The internal config struct is the same.
+
+## How do I rotate my Postmark API key?
+
+1. In Postmark dashboard, revoke the old token.
+2. Issue a new token.
+3. Update the env var (e.g., in `.env` or the systemd `EnvironmentFile`).
+4. Restart Posthorn.
+
+Old key is invalid immediately on revocation; new key is in use after restart. Brief downtime is bounded by your restart time (usually under a second).
+
+## Why is the rate limit per-IP and not per-something-else?
+
+For a typical contact form, the unit of abuse is "one person or bot at one location." Per-IP catches that cleanly. Per-cookie or per-account would require persistent state Posthorn doesn't keep. Per-email-address would require parsing the body before deciding to rate-limit (wrong order — security checks should be before parse).
+
+For shared NAT/CGNAT situations where many users come from one IP, tune the limit upward. The 5-per-minute default is conservative.
+
+## What does the project budget look like?
+
+25 hours of implementation time for v1.0, with a 90-day calendar tripwire (project rename was 2026-04-27 → v1.0 tag target 2026-07-26). The project is single-maintainer, part-time. If the budget hits with v1.0 incomplete, the spec specifies cuts in this order: Caddy adapter (ships as v1.1), then polish features. The standalone gateway core is non-cuttable.
+
+## Where do I report a bug?
+
+Open an issue at [github.com/craigmccaskill/posthorn/issues](https://github.com/craigmccaskill/posthorn/issues). For security issues specifically, **don't** open a public issue — email the address in [SECURITY.md](https://github.com/craigmccaskill/posthorn/blob/main/SECURITY.md).
+
+## Where do I find the source?
+
+[github.com/craigmccaskill/posthorn](https://github.com/craigmccaskill/posthorn). Apache-2.0 licensed. The spec is locked in [`/spec`](https://github.com/craigmccaskill/posthorn/tree/main/spec) — read that before suggesting scope changes.

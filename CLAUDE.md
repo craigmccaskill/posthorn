@@ -36,6 +36,7 @@ After each story ships, update this "Current story" pointer.
 **Architecture deviations from original spec:**
 - `core/http/` → `core/gateway/` (package `gateway`) to avoid shadowing stdlib `net/http`. Architecture and PRD updated.
 - Retry timing constants (`requestTimeout`, `transientRetryDelay`, `rateLimitedRetryDelay`) declared as package vars, not consts, so tests can override via the test-only helper `gateway.SetRetryDelaysForTest` (in `core/gateway/export_test.go`). Production never mutates them.
+- [`site/`](./site/) Astro + Starlight directory added at repo root for the posthorn.dev marketing/docs site (2026-05-14). Not in original v1.0 spec scope — treated as launch infrastructure outside the 25h budget. Deploys to GitHub Pages via [`.github/workflows/site-deploy.yml`](./.github/workflows/site-deploy.yml). Custom domain in [`site/public/CNAME`](./site/public/CNAME). Build: `cd site && npm ci && npm run build`. Sidebar config and theming live in [`site/astro.config.mjs`](./site/astro.config.mjs).
 
 **Deps added during implementation:** `github.com/BurntSushi/toml` (config), `github.com/hashicorp/golang-lru/v2` (rate limiter), `github.com/google/uuid` (submission IDs). All three were named in the architecture doc's allowed-deps list.
 

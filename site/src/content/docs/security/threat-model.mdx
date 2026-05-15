@@ -1,0 +1,65 @@
+---
+title: Threat model
+description: What Posthorn defends against in v1.0, and what's deliberately out of scope.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn's threat model is scoped to **HTTP form ingress.** v1.0 does not accept SMTP, so SMTP-ingress threats (open relay, MX spoofing, recipient enumeration) are out of scope until v1.2.
+
+This page summarizes what v1.0 defends against, what it doesn't, and how each defense maps to a configuration setting or code-level guarantee.
+
+## In scope (v1.0 / HTTP form ingress)
+
+| # | Threat | Defense | Configurable? |
+|---|---|---|---|
+| 1 | Drive-by scraper bots filling every form they find | [Honeypot field](/features/spam-protection/#honeypot) — silently 200 on non-empty value | yes — set `honeypot` |
+| 2 | Direct-POST bots that skip the form page | [Origin/Referer check](/features/spam-protection/#originreferer-checks), fails closed if both headers missing | yes — set `allowed_origins` |
+| 3 | Basic targeted abuse from one or few IPs | [Token-bucket rate limit](/features/rate-limiting/) per endpoint, per IP | yes — set `rate_limit` |
+| 4 | Postmark quota burn / resource exhaustion | [Rate limit](/features/rate-limiting/) + [max body size](/features/spam-protection/#max-body-size) | yes — set `rate_limit`, `max_body_size` |
+| 5 | Email header injection via submitter input | [Structured JSON API](/security/header-injection/), no string concatenation of headers | no — code-level guarantee, test-enforced |
+| 6 | API key theft from logs or error output | [API keys never logged](/security/api-keys/) | no — code-level guarantee, test-enforced |
+
+Threats 5 and 6 are **code-level guarantees**, not config options. There's no toggle to disable them; the test suite enforces them on every build.
+
+## Out of scope (v1.0)
+
+| Threat | When addressed | Notes |
+|---|---|---|
+| Open relay (SMTP ingress) | v1.2 | Posthorn doesn't accept SMTP in v1.0. When v1.2 ships, defenses include allowlist of senders, RCPT validation, recipient caps, optional client-cert auth. |
+| MX spoofing / inbound MX abuse | v1.2 | Same — Posthorn doesn't publish MX records or accept inbound mail. |
+| Recipient enumeration attacks | v1.2 | Same. |
+| Botnet spam from many low-rate IPs | v3 | Rate limit per IP doesn't catch this. Mitigation: captcha or proof-of-work (v3). |
+| DDoS / Layer 7 attacks | (not in scope) | This is the CDN/reverse-proxy's responsibility, not Posthorn's. |
+| API key theft from misconfigured deployment | documentation | If you commit your key to git or expose it in a public env file, Posthorn can't help. Treat keys as secrets; use [secret-injection mechanisms](/configuration/environment-variables/). |
+| Compromise of the upstream transport (Postmark) | not applicable | Posthorn is a thin relay; if Postmark is breached, that's an upstream incident, not a Posthorn vulnerability. |
+| Supply chain attacks on Posthorn dependencies | partial | Minimal dep tree (3 deps in v1.0); Dependabot tracks them. No defense beyond keeping deps current. |
+| Phishing emails authored by submitter content | yes — submitter content is sanitized to plaintext only | Posthorn's body is plaintext; no rendering of submitter HTML. v2 may add markdown rendering with explicit escaping. |
+
+## What's a Posthorn vulnerability vs. an operator misconfiguration?
+
+| Class | Examples | Whose responsibility |
+|---|---|---|
+| Posthorn code/spec bug | Header injection passes despite NFR1/NFR2 tests; API key leaks into a log; rate limit bypass via spoofed XFF when `trusted_proxies` is correctly configured | Project (file an issue) |
+| Operator misconfiguration | Loose `trusted_proxies` (`0.0.0.0/0`); committed API key to git; no allowed_origins on a public form; running Posthorn directly on port 443 without TLS | Operator (see docs) |
+
+If you find what you believe is a Posthorn vulnerability, **don't open a public GitHub issue.** Email the disclosure address in [`SECURITY.md`](https://github.com/craigmccaskill/posthorn/blob/main/SECURITY.md).
+
+## Defense in depth
+
+The layers compose. A bot might pass the honeypot (it didn't fill the trap) and pass Origin/Referer (it scraped the form first) but trip the rate limit on its 6th submission in a minute. A determined attacker can probably bypass any single layer; the stack is designed so they have to bypass several.
+
+For most public contact forms, the v1.0 stack catches 95%+ of automated abuse with no operator friction beyond setting four config values. The cases it doesn't catch are mostly **low-rate manual abuse** — much rarer in practice than drive-by bots.
+
+## Disclosure
+
+See [`SECURITY.md`](https://github.com/craigmccaskill/posthorn/blob/main/SECURITY.md) for:
+
+- Reporting channel for security issues
+- Supported versions
+- Disclosure timeline expectations
+- Acknowledgment policy
+
+<Aside type="caution">
+**Always run Posthorn behind TLS.** It doesn't terminate TLS itself — that's the reverse proxy's job. Plaintext submissions over HTTP would expose form data (including any sensitive content) to network observers. Configure your front door to redirect HTTP→HTTPS.
+</Aside>

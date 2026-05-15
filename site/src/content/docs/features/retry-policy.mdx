@@ -1,0 +1,108 @@
+---
+title: Retry policy
+description: How Posthorn retries on transient and rate-limited errors, with a hard 10s overall cap.
+---
+
+The retry policy is deliberately simple and bounded. v1.0 retries at most once per request, classifies failures into three buckets, and enforces a hard 10-second overall timeout. There is no exponential backoff and no jitter — both would complicate the contract without meaningful benefit at the scale and use case Posthorn targets.
+
+## Decision table
+
+| Transport response | Class | Action |
+|---|---|---|
+| `200 OK` / `202 Accepted` | success | Return 200 to client |
+| `5xx` server error | `ErrTransient` | Wait 1s, retry once |
+| Network timeout / connection refused | `ErrTransient` | Wait 1s, retry once |
+| `429 Too Many Requests` | `ErrRateLimited` | Wait 5s, retry once |
+| `4xx` other than 429 (`401`, `403`, `422`, etc.) | `ErrTerminal` | No retry → 502 to client |
+| Either retry exhausted (still failing after retry) | (terminal) | 502 to client |
+| 10 seconds elapsed in total | (timeout) | Cancel in-flight, return 502 |
+
+## Why one retry, not exponential backoff?
+
+Three reasons:
+
+1. **Synchronous request.** The client is waiting on the HTTP response. Each retry attempt adds latency the client experiences directly. Multi-attempt exponential backoff with a 60-second tail would be a poor UX — better to fail fast and let the operator handle recovery from logs.
+
+2. **The cause is usually persistent.** Transport `429` means upstream is rate-limiting; one retry after a generous 5s pause is enough to disambiguate "blip" from "policy." Transport `5xx` is usually a brief network or upstream issue; 1s is enough.
+
+3. **Failure mode is logged, not lost.** Posthorn logs the full submission payload on terminal failure (when `log_failed_submissions = true`, the default). The operator can recover the data and re-send manually if the transient issue was longer than the retry window.
+
+## The 10-second hard cap
+
+Every request runs under a `context.WithTimeout(ctx, 10*time.Second)`. When the deadline fires:
+
+- Any in-flight retry is cancelled mid-request.
+- The handler returns 502 immediately.
+- A `timeout_exceeded` log line is written.
+
+This means a worst case looks like:
+
+| t (sec) | Event |
+|---|---|
+| 0.0 | Request received, validated, send started |
+| 5.0 | Transport returns 5xx (took 5s — slow upstream) |
+| 5.0 | Retry waits 1s |
+| 6.0 | Retry send started |
+| 10.0 | 10s deadline fires; retry cancelled |
+| 10.0 | 502 returned |
+
+In practice, transient failures resolve in under a second and you never come close to the cap. The cap exists to bound the absolute worst case so client connections don't pile up.
+
+## 429 backoff length
+
+The 5-second backoff on transport `429` is chosen to be:
+
+- Longer than `ErrTransient`'s 1s — `429` is upstream policy, not a network blip
+- Shorter than the 10-second cap, leaving room for the retry to complete
+
+If a `429` repeats on retry, Posthorn returns 502 to the client. The operator's mitigation is to either:
+
+- Lower Posthorn's own rate limit so it doesn't blow past Postmark's
+- Upgrade the Postmark plan
+- Switch to a transport with a higher quota (v1.1+)
+
+## What ErrTerminal looks like
+
+A `4xx` response from Postmark other than `429` is almost always a **configuration error**:
+
+| Status | Meaning |
+|---|---|
+| `401 Unauthorized` | Invalid `api_key` — wrong token, account deleted, or token revoked |
+| `403 Forbidden` | Account or sender domain suspended |
+| `422 Unprocessable Entity` | Postmark rejected the message (unverified `from`, invalid recipient, blocked content) |
+| `404 Not Found` | URL misconfigured (Posthorn wouldn't normally hit this — internal bug) |
+
+In every case, retrying without fixing the config will fail again. Posthorn logs the response status and returns 502 to the client. The operator's recovery is to read the log, fix the config, and re-send manually if needed.
+
+## Observing retries
+
+Every retry attempt logs an event:
+
+```json
+{
+  "time": "2026-05-14T20:01:23Z",
+  "level": "WARN",
+  "msg": "send_retry",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "error_class": "transient",
+  "status": 503,
+  "attempt": 2
+}
+```
+
+`attempt: 1` is the initial send; `attempt: 2` is the retry. Successful retry produces a normal `submission_sent` log on the second attempt. Failed retry produces `submission_failed`.
+
+## Tuning
+
+Most of the retry constants are not configurable in v1.0. The PRD's stated values are:
+
+| Constant | Value | Why |
+|---|---|---|
+| Transient retry delay | 1s | Long enough for brief network blips to clear; short enough not to consume the timeout budget |
+| Rate-limit retry delay | 5s | Long enough for a typical upstream limit window to refill partially |
+| Max retries | 1 | See "Why one retry" above |
+| Overall timeout | 10s | Bounded to prevent connection pileup |
+
+These are constants in code (per architecture doc), declared as package variables only so tests can override them. If you find yourself wanting to tune retry behavior in production, the right answer is usually to address the upstream cause, not the retry knob.

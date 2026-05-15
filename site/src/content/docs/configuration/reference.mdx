@@ -1,0 +1,185 @@
+---
+title: TOML reference
+description: Every Posthorn configuration field, with type, default, and example.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn loads a single TOML file at startup. By default the standalone binary reads `/etc/posthorn/config.toml`, overridable via `--config <path>`.
+
+The config file resolves `${env.VAR}` placeholders against the process environment as a post-parse step. Missing env vars are config-validation errors, not runtime errors — `posthorn validate` will surface them before the listener starts.
+
+This page is the **canonical reference** for every field. For an annotated example, see the [Quick start](/getting-started/quick-start/).
+
+## Top-level structure
+
+```toml
+# Zero or more endpoint blocks. Each is fully independent.
+[[endpoints]]
+# ...endpoint fields...
+
+# Optional global logging block
+[logging]
+# ...
+```
+
+## `[[endpoints]]`
+
+Each `[[endpoints]]` table defines a single ingress path with its own transport, recipients, templates, and protections.
+
+### Routing
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `path` | string | yes | — | URL path to match. Must start with `/`. Example: `"/api/contact"`. |
+
+### Recipients
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `to` | `[]string` | yes | — | One or more recipient email addresses. Plain `addr@host` or `"Name <addr@host>"`. |
+| `from` | string | yes | — | Sender. Must be on a Postmark-verified domain. Format: `"Name <addr@host>"`. |
+| `reply_to_email_field` | string | no | the email field | Form field whose value to use as the email's `Reply-To` header. |
+
+### Transport
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `transport.type` | string | yes | — | Transport identifier. v1.0: only `"postmark"`. |
+| `transport.settings` | table | yes | — | Transport-specific settings. See [Transports](/configuration/transports/). |
+
+```toml
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+### Validation
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `required` | `[]string` | no | `[]` | Form fields that must be present and non-empty. Missing → 422. |
+| `email_field` | string | no | `"email"` | Form field name to validate as an email address. |
+
+### Spam protection
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `honeypot` | string | no | unset | Form field name that bots will fill in. Any non-empty value triggers a silent 200 (no email sent). |
+| `allowed_origins` | `[]string` | no | unset | If set, `Origin`/`Referer` must match one of these. Missing both headers → 403 (fail-closed). Empty list is rejected at config-validation time. |
+| `max_body_size` | string | no | `"1MB"` | Maximum request body size. Supports `"32KB"`, `"1MB"`, etc. Exceeding → 413. |
+| `trusted_proxies` | `[]string` | no | `[]` | CIDR ranges. When the request's RemoteAddr matches, read client IP from `X-Forwarded-For` (rightmost untrusted). |
+
+### Rate limiting
+
+```toml
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+```
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `rate_limit.count` | int | no | unset | Token bucket capacity per client IP. Required if `rate_limit` block is present. |
+| `rate_limit.interval` | duration | no | unset | Refill window. Format: Go duration string (`"1m"`, `"30s"`, `"1h"`). Required if `rate_limit` block is present. |
+
+When `rate_limit` is omitted entirely, no rate limit is applied to the endpoint.
+
+### Templates
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `subject` | string | yes | — | `text/template` source for the email subject. Inline string. |
+| `body` | string | yes | — | `text/template` source for the email body. **Inline string** if it contains `{{`, otherwise treated as a **file path**. |
+
+Form fields are available as template variables: `{{.name}}`, `{{.email}}`, `{{.message}}`. See [Templating](/features/templating/).
+
+### Response handling
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `redirect_success` | string | no | unset | URL to redirect to on success (303 See Other). Used when client prefers `text/html`. |
+| `redirect_error` | string | no | unset | URL to redirect to on validation/rate-limit failures. Optional. |
+
+When both are unset, all responses are JSON regardless of `Accept` header.
+
+### Logging override
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `log_failed_submissions` | bool | no | `true` | If `true`, terminal failures log the full submission payload at ERROR level. If `false`, only metadata is logged. Per-endpoint override of the global default. |
+
+## `[logging]`
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `level` | string | no | `"info"` | One of `debug`, `info`, `warn`, `error`. |
+| `format` | string | no | `"json"` | One of `json`, `text`. JSON is recommended for production. |
+| `log_failed_submissions` | bool | no | `true` | Global default for the per-endpoint override. |
+
+## Complete annotated example
+
+```toml
+# Two-endpoint config: a contact form and a newsletter signup.
+
+[logging]
+level = "info"
+format = "json"
+
+[[endpoints]]
+path = "/api/contact"
+to = ["alerts@example.com"]
+from = "Contact Form <noreply@example.com>"
+required = ["name", "email", "message"]
+email_field = "email"
+honeypot = "_gotcha"
+allowed_origins = ["https://example.com", "https://www.example.com"]
+max_body_size = "64KB"
+trusted_proxies = ["10.0.0.0/8"]
+subject = "Contact: {{.name}}"
+body = """
+From: {{.name}} <{{.email}}>
+
+{{.message}}
+"""
+redirect_success = "/thank-you"
+redirect_error = "/contact?error=1"
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_CONTACT_KEY}"
+
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+
+# ---
+
+[[endpoints]]
+path = "/api/newsletter"
+to = ["list@example.com"]
+from = "Signups <noreply@example.com>"
+required = ["email"]
+honeypot = "_gotcha"
+allowed_origins = ["https://example.com"]
+subject = "New signup: {{.email}}"
+body = "{{.email}} subscribed."
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_NEWSLETTER_KEY}"
+
+[endpoints.rate_limit]
+count = 20
+interval = "1m"
+```
+
+<Aside type="tip">
+Run `posthorn validate --config posthorn.toml` after every change. It parses the file, resolves `${env.VAR}` placeholders, checks the schema, and compiles the templates — without starting the listener. Exit code 0 means the config is good.
+</Aside>

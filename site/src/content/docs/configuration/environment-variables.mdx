@@ -1,0 +1,131 @@
+---
+title: Environment variables
+description: Inject secrets into the config via ${env.VAR} placeholders.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn resolves environment variables inside its TOML config via `${env.VAR}` placeholders. Resolution happens as a post-parse pass over every string field — anywhere a string is valid, a placeholder is valid.
+
+## Why placeholders, not env-var-only secrets?
+
+Two reasons:
+
+1. **Multiple keys per process.** A single Posthorn instance can use distinct Postmark tokens for different endpoints (transactional vs. broadcast, for example). Env-var-only would require namespaced conventions; placeholders let you name them naturally.
+2. **Auditable config.** The TOML is the source of truth for everything except secret values. You can diff config changes meaningfully without redacting half the file.
+
+## Syntax
+
+```toml
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+The placeholder must be the **entire value** of the string field. Mixing literal and placeholder substrings is not supported (and is rejected at validation time):
+
+```toml
+# Not supported
+api_key = "Bearer ${env.POSTMARK_API_KEY}"
+```
+
+If you need a prefix, do that in the transport-specific code, not in config.
+
+## Where placeholders make sense
+
+| Field | Typical placeholder |
+|---|---|
+| `endpoints.transport.settings.api_key` | `${env.POSTMARK_API_KEY}` |
+| `endpoints.from` | usually literal, occasionally `"Contact <${env.NOREPLY_ADDR}>"` (not supported — use literal) |
+| Anything else with a string value | Allowed but rarely useful |
+
+## Resolution order
+
+1. TOML file is parsed.
+2. Every string field is scanned for `${env.VAR}` placeholders.
+3. The placeholder is replaced with `os.Getenv("VAR")`.
+4. If `os.Getenv` returns empty string and the field is required, config validation fails.
+
+**Empty env vars are treated as missing.** A literal empty string `""` in config is allowed; an env var that resolves to `""` is not.
+
+## Missing env vars
+
+A missing `${env.VAR}` is a **config error**, not a runtime error. `posthorn validate` will surface it before the listener starts:
+
+```
+$ POSTMARK_API_KEY="" posthorn validate --config posthorn.toml
+ERROR: endpoint 0 (/api/contact): transport.settings.api_key resolves to empty value: ${env.POSTMARK_API_KEY}
+exit status 1
+```
+
+This means deployment health checks can use `posthorn validate` as a precondition before swapping pods.
+
+## What never appears in logs
+
+API keys configured via `${env.VAR}` placeholders **never appear in any log output.** Posthorn enforces this in two places:
+
+- The transport implementation sets the API key as an HTTP header (`X-Postmark-Server-Token`); it's never logged as part of error or debug output.
+- Tests trigger transport failures and assert that the resolved key string does not appear in captured log output.
+
+See [API keys](/security/api-keys/) for the full guarantee.
+
+## Docker examples
+
+### With an env file
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    env_file: .env
+    # ...
+```
+
+```bash
+# .env
+POSTMARK_API_KEY=abc123def456
+```
+
+### With Docker secrets
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    secrets:
+      - postmark_key
+    entrypoint:
+      - sh
+      - -c
+      - 'export POSTMARK_API_KEY=$$(cat /run/secrets/postmark_key) && exec posthorn serve --config /etc/posthorn/config.toml'
+
+secrets:
+  postmark_key:
+    file: ./postmark_key.txt
+```
+
+<Aside type="note">
+Docker secrets are mounted as files, not env vars. The wrapper above reads the file and re-exports it as an env var so `${env.POSTMARK_API_KEY}` resolves. For Kubernetes, use a `Secret` mounted as env via `valueFrom.secretKeyRef`.
+</Aside>
+
+### With direct env vars (compose override)
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    environment:
+      POSTMARK_API_KEY: ${POSTMARK_API_KEY}  # passes from host env
+```
+
+## Caddy adapter
+
+The Caddy adapter uses Caddy's native env-var syntax, **not** Posthorn's:
+
+```nginx
+posthorn /api/contact {
+    transport postmark {
+        api_key {env.POSTMARK_API_KEY}
+    }
+}
+```
+
+`{env.VAR}` (Caddy syntax) replaces `${env.VAR}` (TOML syntax). Everything else about env-var resolution behaves the same: missing vars are validation errors via `caddy validate`; keys never appear in logs.

@@ -1,0 +1,223 @@
+---
+title: Response codes
+description: Every HTTP status Posthorn can return, with example body and root cause.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A reference for every status code Posthorn returns, with example JSON body, root cause, and what to do about it.
+
+## 200 OK
+
+**Success** — submission accepted, transport returned success.
+
+```json
+{
+  "status": "ok",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"
+}
+```
+
+Also returned silently when the **honeypot field is non-empty**. Bots cannot distinguish honeypot rejection from a real success.
+
+## 303 See Other
+
+**Redirect** after content negotiation chose HTML-friendly response.
+
+```http
+HTTP/1.1 303 See Other
+Location: /thank-you
+```
+
+Returned when:
+
+- Client prefers `text/html` (e.g., default browser form submission)
+- `redirect_success` or `redirect_error` is configured for the endpoint
+- The submission has been processed (successfully or not)
+
+The 303 status — not 302 — ensures the browser issues a GET to the redirect URL, preventing form re-submission on refresh.
+
+## 400 Bad Request
+
+**Malformed request.**
+
+```json
+{
+  "error": "Malformed request body",
+  "code": "bad_request"
+}
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Wrong content type (e.g., `application/json`) | Send as form-encoded |
+| Multipart body with truncated boundary | Fix the client encoder |
+| URL-encoded body with malformed escapes (`%XX` where `XX` isn't hex) | Fix the client encoder |
+
+## 403 Forbidden
+
+**Origin/Referer rejected** by the `allowed_origins` check.
+
+```json
+{
+  "error": "Origin not allowed",
+  "code": "origin_rejected"
+}
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Form on `evil.example.com` trying to POST to a Posthorn endpoint configured for `example.com` | Don't, or add the new origin |
+| Direct-POST bot with no Origin or Referer headers | Working as intended — reject |
+| Server-to-server submission (curl, internal cron) without Origin/Referer | Either set headers in the client, or skip `allowed_origins` for that endpoint |
+| Header stripping at the reverse proxy | Configure your proxy to forward `Origin` and `Referer` |
+
+## 404 Not Found
+
+**No endpoint configured for this path.**
+
+```json
+{
+  "error": "Not Found",
+  "code": "not_found"
+}
+```
+
+Just means the URL path doesn't match any `[[endpoints]]` `path` in the config. Posthorn doesn't reveal which paths are configured (so attackers can't enumerate).
+
+## 405 Method Not Allowed
+
+**Wrong method** (anything but POST).
+
+```http
+HTTP/1.1 405 Method Not Allowed
+Allow: POST
+```
+
+```json
+{
+  "error": "Method not allowed",
+  "code": "method_not_allowed"
+}
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| GET request to an endpoint (e.g., navigating to it directly) | Always POST |
+| Browser preflight `OPTIONS` request | Configure CORS at the reverse proxy if needed |
+
+## 413 Payload Too Large
+
+**Body exceeded `max_body_size`.**
+
+```json
+{
+  "error": "Request body too large",
+  "code": "body_too_large",
+  "max_bytes": 1048576
+}
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Form with very long text fields | Either trim client-side, increase `max_body_size`, or reject the input |
+| File upload (since attachments aren't supported, large files still hit this cap) | Don't upload files; v2 will support attachments |
+| Bot trying to exhaust resources | Working as intended — reject |
+
+## 422 Unprocessable Entity
+
+**Validation failure** — required field missing or email malformed.
+
+```json
+{
+  "error": "Validation failed",
+  "code": "validation_failed",
+  "fields": {
+    "name": "required field is missing or empty",
+    "email": "invalid email format"
+  }
+}
+```
+
+The `fields` object enumerates **every** failing field; the response isn't short-circuit. This lets clients display all errors at once.
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| User submitted a form with empty required fields | Display field-level errors in the UI |
+| Submitter typed an email like `alice@`, `alice`, or empty | Same — validate at the client too |
+| Field name typo in config (`requried = ...`) | Fix the typo; `posthorn validate` would have caught it |
+
+## 429 Too Many Requests
+
+**Rate limit exceeded** for this client IP on this endpoint.
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 12
+```
+
+```json
+{
+  "error": "Too many requests",
+  "code": "rate_limited"
+}
+```
+
+`Retry-After` is the number of seconds until the next token is available.
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Real abuse — bot or attacker hitting the form | Working as intended |
+| Legitimate user double-clicked submit | Tune `rate_limit` upward, or disable double-submit at the client |
+| Multiple legitimate users behind shared NAT/CGNAT all hitting the form | Tune `rate_limit` upward, or accept the false-positive rate |
+| Bad `trusted_proxies` config — Posthorn sees the proxy IP, every request looks like the same IP | Set `trusted_proxies` to your reverse proxy's CIDR |
+
+## 502 Bad Gateway
+
+**Transport terminal failure** — Postmark rejected the message or the 10-second timeout fired.
+
+```json
+{
+  "error": "Transport failure",
+  "code": "transport_failure"
+}
+```
+
+The submission ID is still logged for recovery from logs. The response body is intentionally vague — exposing transport details to the requesting client could leak information about your account or configuration.
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| `401` from Postmark — bad API key | Check `${env.POSTMARK_API_KEY}` is set and matches a valid Postmark server token |
+| `422` from Postmark — `From:` not on a verified domain | Verify your sending domain in Postmark dashboard |
+| `422` from Postmark — invalid recipient (e.g., disposable email) | Display a better validation error; Postmark won't deliver |
+| Transient `5xx` from Postmark after retry exhausted | Wait and re-try; the operator's recovery path is the failure log |
+| 10s timeout — slow upstream | Check Postmark status page; if persistent, escalate |
+| Network failure during retry | Same |
+
+<Aside type="caution">
+On 502, the submission's form payload is logged at ERROR level (unless `log_failed_submissions = false`). Read your logs to recover the data and send manually if needed. There is no persistent queue in v1.0; the failed submission only lives in the log.
+</Aside>
+
+## What you never see
+
+| Status | Why not |
+|---|---|
+| `301 Moved Permanently` | Not used |
+| `307 Temporary Redirect` | Form re-POSTs are bad UX; we use 303 instead |
+| `409 Conflict` | No idempotency keys in v1.0 |
+| `503 Service Unavailable` | The 502 catch-all subsumes this |
+| `504 Gateway Timeout` | The 502 catch-all subsumes this |

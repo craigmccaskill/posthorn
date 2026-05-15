@@ -1,0 +1,158 @@
+---
+title: Structured logging
+description: JSON logs with submission IDs, threaded through every request lifecycle event.
+---
+
+Posthorn emits structured JSON logs for every operationally meaningful event. Each log line carries a UUIDv4 submission ID that threads through the lifecycle of a single submission, so you can grep one ID to see every decision point for that request.
+
+## Format
+
+Default format is JSON. Every log entry is a single line of JSON with these standard fields:
+
+```json
+{
+  "time": "2026-05-14T20:01:23.456Z",
+  "level": "INFO",
+  "msg": "submission_sent",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "latency_ms": 312
+}
+```
+
+| Field | Always present | Description |
+|---|---|---|
+| `time` | yes | ISO 8601 timestamp, UTC, millisecond precision |
+| `level` | yes | `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `msg` | yes | Event name (see event catalog below) |
+| `submission_id` | request-scoped events | UUIDv4 generated at request receipt |
+| `endpoint` | request-scoped events | Path from config |
+| `transport` | send events | `"postmark"` etc. |
+| `latency_ms` | terminal events (sent, failed) | Total request duration |
+
+## Event catalog
+
+Every event Posthorn emits during request processing:
+
+| Event | Level | When | Includes |
+|---|---|---|---|
+| `submission_received` | INFO | After parse, validation, and template-prep — request entered the send pipeline | client IP, content length |
+| `spam_blocked` | INFO | Honeypot fired or Origin/Referer rejected | reason (`"honeypot"`, `"origin"`, `"missing_headers"`) |
+| `rate_limited` | WARN | 429 returned due to rate limit | client IP, tokens remaining |
+| `validation_failed` | INFO | 422 returned due to required/email checks | failing field names |
+| `send_retry` | WARN | First attempt failed, retry scheduled | error class, status, attempt number |
+| `submission_sent` | INFO | Transport returned success | Message ID from transport response |
+| `submission_failed` | ERROR | Terminal failure (no retry, or retry exhausted) | error class, status, full payload (if `log_failed_submissions=true`) |
+
+Process-lifecycle events (one-time, not per-request):
+
+| Event | Level | When |
+|---|---|---|
+| `listening` | INFO | HTTP listener bound and accepting connections |
+| `config_loaded` | INFO | TOML parsed, env vars resolved, templates compiled |
+| `shutdown_initiated` | INFO | SIGTERM/SIGINT received, beginning graceful drain |
+| `shutdown_complete` | INFO | All in-flight requests drained, process exiting |
+
+## `submission_failed` payload
+
+When `log_failed_submissions = true` (the default), terminal failures log the **full form payload** at ERROR level:
+
+```json
+{
+  "time": "2026-05-14T20:01:23.456Z",
+  "level": "ERROR",
+  "msg": "submission_failed",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "error_class": "terminal",
+  "status": 422,
+  "latency_ms": 287,
+  "payload": {
+    "name": "Alice Smith",
+    "email": "alice@example.com",
+    "message": "I would like to discuss..."
+  },
+  "headers": {
+    "user-agent": "Mozilla/5.0 ...",
+    "referer": "https://example.com/contact"
+  }
+}
+```
+
+The rationale: when a submission has failed terminally, the operator's primary recovery path is reading the form contents out of the logs and replying manually. Without the payload, the data is gone.
+
+For GDPR-sensitive contexts where you can't log form contents, flip the switch:
+
+```toml
+log_failed_submissions = false
+```
+
+You can override per-endpoint:
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+log_failed_submissions = true   # log payloads here
+
+[[endpoints]]
+path = "/api/medical-intake"
+log_failed_submissions = false  # don't log payloads here
+```
+
+When `log_failed_submissions = false`, the metadata still logs (event, status, error class, latency, IDs) but the `payload` and `headers` fields are omitted.
+
+## Levels
+
+| Level | Use |
+|---|---|
+| `DEBUG` | Per-step pipeline decisions (e.g., "origin check passed"). Off by default. |
+| `INFO` | Standard events: submissions received, sent, blocked by honeypot, validation failed |
+| `WARN` | Concerning but expected: rate limit hits, retries |
+| `ERROR` | Terminal failures, config errors, transport API key issues |
+
+Configure the threshold globally:
+
+```toml
+[logging]
+level = "info"
+```
+
+In production, `info` is the default and matches what you want. In dev or troubleshooting, `debug` adds per-step detail.
+
+## Format
+
+```toml
+[logging]
+format = "json"   # or "text"
+```
+
+JSON is recommended for production — it parses cleanly in any log pipeline (Loki, Elasticsearch, Datadog, CloudWatch, journald with json-parser). Text format is a key=value line format intended for human-readable terminal output during development.
+
+Text-format example:
+
+```text
+time=2026-05-14T20:01:23.456Z level=INFO msg=submission_sent submission_id=7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f endpoint=/api/contact transport=postmark latency_ms=312
+```
+
+## What never appears in logs
+
+By contract:
+
+- The configured API key (resolved value of `${env.POSTMARK_API_KEY}`) — never logged in any path.
+- The honeypot field value — Posthorn knows this is bot traffic; logging the value would just bloat logs with junk.
+
+NFR3 in the PRD makes the API-key guarantee explicit. Test coverage triggers transport failures with a known key string and asserts the string does not appear in captured log output. See [API keys](/security/api-keys/) for the full guarantee.
+
+## Correlating across services
+
+The `submission_id` is returned to the client in the 200 JSON response:
+
+```json
+{ "status": "ok", "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f" }
+```
+
+If the client wants to surface that ID to the end user (an "Your message has been received, ID: 7f2c84d6..." confirmation), they can. Then a support request that quotes the ID maps directly to log lines in Posthorn.
+
+The ID is also a Postmark message identifier in the sense that the `submission_sent` log includes Postmark's message ID, so you can pivot from Posthorn → Postmark dashboard for any submission.

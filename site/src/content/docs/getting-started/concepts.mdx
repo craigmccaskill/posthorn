@@ -1,0 +1,118 @@
+---
+title: Core concepts
+description: The mental model. Endpoints, transports, the request pipeline, and what gets logged.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A short tour of the model so the rest of the docs read naturally.
+
+## Endpoints
+
+Posthorn is configured as a list of **endpoints**. Each endpoint is a `(path, transport, recipients, templates, protections)` bundle. An endpoint is independent — it has its own rate-limit counter, its own templates, its own honeypot field name.
+
+You can configure as many endpoints as you want in a single config file. They share nothing operationally — submissions to `/api/contact` don't count against the rate limit on `/api/newsletter`.
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+# ...
+
+[[endpoints]]
+path = "/api/newsletter"
+# ...
+```
+
+## Transports
+
+A **transport** is the egress side — the thing that actually delivers the email. v1.0 ships one transport (Postmark). v1.1+ adds Resend, Mailgun, SES, and outbound-SMTP. The `Transport` interface is identical across them, so adding a new one doesn't require changes to the request pipeline.
+
+Each endpoint has its own transport configuration:
+
+```toml
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+Different endpoints can use different transports — useful for routing transactional vs. marketing mail to separate Postmark servers, for example.
+
+## The request pipeline
+
+Every form submission flows through this pipeline, in this order:
+
+```text
+1. body size cap        → http.MaxBytesReader wraps r.Body   (413)
+2. method check         → POST only                          (405)
+3. content-type check   → form-encoded only                  (400)
+4. origin/referer check → fail-closed if allowed_origins set (403)
+5. rate limit check     → token bucket, proxy-aware IP       (429)
+6. parse form           → r.ParseForm() reads body           (413/400)
+7. honeypot check       → silent 200 if field non-empty      (200)
+8. required fields      → all listed fields present + non-empty (422)
+9. email format         → submitter email field syntactic    (422)
+10. generate submission ID (UUIDv4), log "submission_received"
+11. render subject template
+12. render body template + custom-fields passthrough
+13. transport.Send() with retry policy
+14. log outcome, write response (JSON or redirect)           (200/502)
+```
+
+The order is intentional: **cheaper checks before expensive ones, header-only checks before parsing the body, security checks before processing.**
+
+## Submission IDs
+
+Every request gets a fresh UUIDv4 **submission ID** at step 10. That ID is included in every log line for that request — from "received" through "sent" or "failed" — and is returned in the JSON response. Save the ID in your logs and you can correlate every event for a single submission.
+
+```json
+{"submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f", ...}
+```
+
+## Custom fields passthrough
+
+The required-fields list, the honeypot field, and the email field together define what Posthorn calls the **named fields**. Anything else in the form submission is passed through verbatim into an "Additional fields" block at the bottom of the rendered email body:
+
+```text
+From: Alice <alice@example.com>
+
+This is the message body the template rendered.
+
+Additional fields:
+  company: Acme Corp
+  source: HN
+  newsletter_opt_in: yes
+```
+
+This means you can add new form fields without touching your config — they show up in the email automatically. Great for A/B testing form variations.
+
+## Failure handling
+
+The retry policy is deliberately simple and bounded:
+
+| Outcome | Action |
+|---|---|
+| Transport returns `2xx` | Log success, return 200 |
+| Transport returns `5xx` or network error | Wait 1s, retry once |
+| Transport returns `429 Too Many Requests` | Wait 5s, retry once |
+| Transport returns `4xx` (other than 429) | Don't retry — log error, return 502 |
+| 10s elapses on the entire request | Cancel retry, log error, return 502 |
+
+The 10-second cap is hard. Even with retries in flight, the request returns by the 10-second mark. No unbounded waits.
+
+On terminal failure, Posthorn logs the **full submission payload** at ERROR level by default. The thinking: the submission has already failed; the operator's primary recovery path is reading the form contents out of the logs and sending the email manually. You can flip this off with `log_failed_submissions = false` for GDPR-sensitive contexts.
+
+<Aside type="note">
+v1.0 has **no persistent queue.** A failed submission that exhausted both retries is gone from in-memory state; only the log line remains. Persistent retry queues land in v2 along with SQLite storage.
+</Aside>
+
+## Two deployment shapes, one core
+
+The standalone binary and the Caddy adapter run **the same core gateway code**. The Caddy adapter is a thin (~150 LOC) wrapper that:
+
+1. Registers `http.handlers.posthorn` with Caddy
+2. Parses the Caddyfile syntax into the same internal config struct that the TOML loader produces
+3. Delegates `ServeHTTP` to the same `gateway.Handler`
+
+If something works in the standalone, it works in the adapter. If a bug exists in the pipeline, it exists in both. Parity tests assert this in CI.

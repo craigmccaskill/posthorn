@@ -1,0 +1,95 @@
+---
+title: Transports
+description: Per-endpoint transport configuration. v1.0 ships Postmark; v1.1+ adds more.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+A **transport** is the egress side — the thing that turns a parsed form submission into a delivered email. v1.0 ships one (Postmark); the interface is designed so v1.1+ can add Resend, Mailgun, SES, and outbound-SMTP without changes to the request pipeline.
+
+Each endpoint declares its own transport:
+
+```toml
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+Different endpoints can use different transports, or different settings (different API keys) on the same transport.
+
+## Postmark
+
+```toml
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+### Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `api_key` | yes | Postmark **server token** (per-server, not per-account). Found in the Postmark dashboard → Server → API Tokens. |
+
+### Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `https://api.postmarkapp.com/email` |
+| Authentication header | `X-Postmark-Server-Token: <api_key>` |
+| Body format | JSON (Postmark's structured API — `From`, `To`, `Subject`, `TextBody` as JSON fields) |
+| Per-request timeout | 5s (transport-level, separate from the gateway's 10s overall cap) |
+| Connection reuse | One `*http.Client` per process, pooled connections |
+
+### Error classification
+
+Posthorn classifies transport responses into four buckets that drive the retry policy:
+
+| Postmark response | Error class | Retry? |
+|---|---|---|
+| `200 OK` or `202 Accepted` | (success) | no |
+| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| Network timeout / connection refused | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`401`, `422`, etc.) | `ErrTerminal` | no |
+
+See [Retry policy](/features/retry-policy/) for the full state machine.
+
+### Why no Postmark SDK?
+
+Posthorn embeds a ~80-line HTTP client for Postmark rather than depending on a third-party SDK. The reasoning:
+
+- Postmark's API is small and stable — the entire surface we use is two endpoints (`/email`, `/email/batch` for v1.1+) with structured JSON bodies.
+- Third-party SDKs would bring transitive dependencies and a maintenance burden disproportionate to the value.
+- A bespoke client lets us guarantee that submitter-controlled fields **never** become raw header strings — every header passes through structured JSON. See [Header injection](/security/header-injection/).
+
+This is [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) in the architecture doc.
+
+## Future transports (v1.1+)
+
+These are designed-in but not implemented in v1.0:
+
+| Transport | Status | Use case |
+|---|---|---|
+| `resend` | v1.1 | Alternative HTTP API provider |
+| `mailgun` | v1.1 | Alternative HTTP API provider |
+| `ses` | v1.1 | AWS-native deployments |
+| `smtp` | v1.1 | Operators on hosts that don't block port 587 |
+
+The `Transport` interface is intentionally narrow:
+
+```go
+type Transport interface {
+    Send(ctx context.Context, msg Message) error
+}
+```
+
+Adding a new transport means implementing that interface and registering it in the transport factory. No changes to the gateway handler, the config loader, the rate limiter, or the response writer.
+
+<Aside type="caution">
+**Don't add a custom transport in a fork** for v1.0. The interface may evolve before v1.1 ships, and the registration mechanism isn't a stable extension point yet. Open an issue if you have a transport you'd like to see — chances are it's already on the v1.1 list.
+</Aside>

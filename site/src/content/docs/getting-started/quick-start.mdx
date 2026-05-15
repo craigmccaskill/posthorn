@@ -1,0 +1,156 @@
+---
+title: Quick start
+description: A working contact form on Posthorn in five minutes.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+This walks through standing up a working contact form on Docker against a real Postmark account. It assumes you've already followed [Installation](/getting-started/installation/) and have a Postmark server token in hand.
+
+<Steps>
+
+1. **Create a working directory.**
+
+   ```bash
+   mkdir posthorn-test && cd posthorn-test
+   ```
+
+   <FileTree>
+   - posthorn-test/
+     - docker-compose.yml
+     - posthorn.toml
+     - .env
+   </FileTree>
+
+2. **Write `posthorn.toml`.**
+
+   ```toml
+   [[endpoints]]
+   path = "/api/contact"
+   to = ["you@example.com"]
+   from = "Contact Form <noreply@example.com>"
+   honeypot = "_gotcha"
+   required = ["name", "email", "message"]
+   subject = "Contact from {{.name}}"
+   body = """
+   From: {{.name}} <{{.email}}>
+
+   {{.message}}
+   """
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+
+   [endpoints.rate_limit]
+   count = 5
+   interval = "1m"
+   ```
+
+   Replace `you@example.com` with your inbox and `noreply@example.com` with an address on your Postmark-verified sending domain.
+
+3. **Write `.env`.**
+
+   ```bash
+   POSTMARK_API_KEY=your-postmark-server-token-here
+   ```
+
+   <Aside type="caution">
+   The Postmark *server token* is per-server, not per-account. Find it in the Postmark dashboard under your server's API Tokens tab. Never commit this to git.
+   </Aside>
+
+4. **Write `docker-compose.yml`.**
+
+   ```yaml
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       ports:
+         - "8080:8080"
+   ```
+
+5. **Start the container.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   You should see a JSON log line like:
+
+   ```json
+   {"time":"2026-05-14T20:00:00Z","level":"INFO","msg":"listening","addr":":8080"}
+   ```
+
+6. **Submit a test form.**
+
+   ```bash
+   curl -i -X POST http://localhost:8080/api/contact \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "name=Test User" \
+     -d "email=test@example.com" \
+     -d "message=hello from curl"
+   ```
+
+   You should receive `HTTP/1.1 200 OK` with a JSON body:
+
+   ```json
+   {"status":"ok","submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"}
+   ```
+
+   And a structured log line on the server:
+
+   ```json
+   {
+     "time": "2026-05-14T20:01:23Z",
+     "level": "INFO",
+     "msg": "submission_sent",
+     "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
+     "endpoint": "/api/contact",
+     "transport": "postmark",
+     "latency_ms": 312
+   }
+   ```
+
+7. **Check your inbox.** The email should arrive within seconds. Subject line will be `Contact from Test User`. Body will be the rendered template.
+
+</Steps>
+
+## Wiring it into a real form
+
+The form action POSTs to `/api/contact` on Posthorn. For a static site behind Caddy:
+
+```html
+<form method="POST" action="/api/contact">
+  <label>Name <input name="name" required></label>
+  <label>Email <input name="email" type="email" required></label>
+  <label>Message <textarea name="message" required></textarea></label>
+  <input type="text" name="_gotcha" tabindex="-1" autocomplete="off"
+         style="position:absolute;left:-9999px">
+  <button type="submit">Send</button>
+</form>
+```
+
+The `_gotcha` field is the honeypot — visible to bots, invisible to humans. Any non-empty value silently 200s the request without sending mail.
+
+For a Caddy reverse proxy in front of Posthorn:
+
+```nginx
+example.com {
+    reverse_proxy /api/contact* posthorn:8080
+    file_server
+}
+```
+
+## Common next steps
+
+- Lock down origins with [`allowed_origins`](/features/spam-protection/#originreferer-checks) so only your domain can submit
+- Set up [SPF, DKIM, and DMARC](/security/dns/) on your sending domain (skip and your mail goes to spam)
+- Add a custom [success/error redirect](/features/templating/#redirects) for non-JS forms
+- Browse the full [configuration reference](/configuration/reference/)

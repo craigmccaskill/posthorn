@@ -1,0 +1,48 @@
+/* Posthorn brand palette
+   Postal yellow / black, postal red accent.
+   Tuned for both light and dark Starlight themes. */
+:root {
+  --sl-color-accent-low: #4a3500;
+  --sl-color-accent: #d4a300;
+  --sl-color-accent-high: #ffe082;
+
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #eceef2;
+  --sl-color-gray-2: #c0c2c7;
+  --sl-color-gray-3: #888b96;
+  --sl-color-gray-4: #545861;
+  --sl-color-gray-5: #353841;
+  --sl-color-gray-6: #24272f;
+  --sl-color-black: #17181c;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #fff7d4;
+  --sl-color-accent: #a37e00;
+  --sl-color-accent-high: #4a3700;
+
+  --sl-color-white: #17181c;
+  --sl-color-gray-1: #24272f;
+  --sl-color-gray-2: #353841;
+  --sl-color-gray-3: #545861;
+  --sl-color-gray-4: #888b96;
+  --sl-color-gray-5: #c0c2c7;
+  --sl-color-gray-6: #eceef2;
+  --sl-color-gray-7: #f6f7f9;
+  --sl-color-black: #ffffff;
+}
+
+/* Hero polish on the splash homepage */
+.hero {
+  padding-block: clamp(2rem, 6vw, 4rem);
+}
+
+.hero h1 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.hero .tagline {
+  font-size: clamp(1.1rem, 1.5vw, 1.35rem);
+  max-width: 38ch;
+}

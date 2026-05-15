@@ -1,0 +1,124 @@
+---
+title: API keys
+description: How Posthorn handles API keys — and the guarantee that they never appear in logs.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn's only API key in v1.0 is the **Postmark server token** used by the Postmark transport. This page documents how it's configured, how it's used, and the guarantee that it never appears in any log output.
+
+## Configuration
+
+API keys are configured via `${env.VAR}` placeholders, not as literal strings in the TOML file:
+
+```toml
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+Then set the env var via your deployment:
+
+```bash
+# Docker
+docker compose --env-file .env up -d
+
+# systemd
+EnvironmentFile=/etc/posthorn/posthorn.env
+
+# direct
+POSTMARK_API_KEY=abc123 posthorn serve --config ...
+```
+
+See [Environment variables](/configuration/environment-variables/) for the full mechanics.
+
+**Why not allow literal strings in the TOML?** Because committed config files end up in git, in backups, in shared screenshots. Forcing env-var indirection prevents the most common path to accidental key disclosure.
+
+That said, Posthorn does accept literal strings (the placeholder syntax is optional) — it's the operator's responsibility to keep that file out of git. Use `.gitignore` for any config file with literal secrets.
+
+## How the key flows
+
+```text
+1. Process starts. os.Environ() reads POSTMARK_API_KEY.
+2. Config loader parses TOML. Finds ${env.POSTMARK_API_KEY} in api_key field.
+3. Loader resolves placeholder against process env. Stores resolved value in
+   memory, in a config struct.
+4. Transport is constructed with the resolved string. Stored as an unexported
+   field on the Postmark transport struct.
+5. For each request:
+     a. Build Postmark HTTP request.
+     b. Set X-Postmark-Server-Token header to the key.
+     c. POST to https://api.postmarkapp.com/email.
+6. Process exit. Memory is released. No persistent storage.
+```
+
+At no point in this flow is the key written to a log, an error message, or any persistent storage.
+
+## The guarantee (NFR3)
+
+> API keys configured via `${env.VAR}` placeholders must not appear in any log output, including error logs.
+
+Specifically:
+
+| Code path | What's logged | Key included? |
+|---|---|---|
+| `config_loaded` | Endpoint paths, transport types, recipient count | **no** — transport settings are not logged |
+| `submission_sent` | Submission ID, endpoint, latency, Postmark message ID | **no** |
+| `send_retry` | Error class, HTTP status, attempt number | **no** |
+| `submission_failed` | Error class, HTTP status, latency, payload (if enabled) | **no** |
+| Transport error wrap | HTTP status, response body excerpt | **no** — response bodies are truncated and inspected; if they contained the key (they shouldn't), an additional redaction pass strips it |
+| Process startup | "listening on :8080", config summary | **no** |
+
+## How it's enforced
+
+Two complementary mechanisms:
+
+### 1. The code doesn't log the key
+
+The Postmark transport sets the key as an HTTP header during request construction. The HTTP client logs are not enabled by default. Error paths log `err.Error()`, which is shaped to exclude the key (transport errors include status code and response excerpt, never the key).
+
+This is what makes the guarantee feasible — if every code path were free to log arbitrary error details, the key could leak. By keeping the key in a header set at one specific construction site, and shaping errors at one specific wrapping site, the leak surface is small enough to audit.
+
+### 2. Tests assert the key isn't there (NFR3)
+
+The test suite captures all log output during failing transport calls (using a mock Postmark server returning 4xx/5xx) and asserts the configured API key string does not appear:
+
+```go
+// pseudo-code
+captured := captureLogs(func() {
+    handler.ServeHTTP(w, r)
+})
+require.NotContains(t, captured, knownAPIKey)
+```
+
+This runs on every CI build. A regression that newly logged the key — even in a debug print, even in a wrapped error — would fail this test.
+
+## Operator responsibilities
+
+Posthorn handles the in-process flow. The operator is still responsible for:
+
+| Concern | How |
+|---|---|
+| Keeping the env-var value out of git | `.env` in `.gitignore` |
+| Keeping `.env` file permissions tight | `chmod 0640`, owned by service user |
+| Rotating compromised keys | Issue a new Postmark token, update env file, restart Posthorn |
+| Limiting key blast radius | Use a **per-server** Postmark token, not the account token. Compromised server tokens can be revoked without affecting other servers. |
+| Auditing key access | Server-side logs in Postmark dashboard show which IPs and User-Agents used the key |
+
+## If a key is compromised
+
+1. **Revoke the token in Postmark.** Dashboard → Server → API Tokens → Revoke.
+2. **Issue a new token.** Same screen.
+3. **Update the env var.**
+4. **Restart Posthorn.** Old key is now invalid; new key is in use.
+
+Posthorn does not need to coordinate with Postmark for revocation — it's a stateless HTTP API client.
+
+<Aside type="caution">
+**Never share screenshots of `.env` files, `docker-compose.yml` with substituted values, or terminal sessions where `printenv` ran.** Keys leak this way more than any other.
+
+If you suspect a leak: revoke, rotate, audit Postmark's send logs for unfamiliar IPs in the leak window.
+</Aside>
+
+## Future transports
+
+The same guarantee applies to v1.1+ transports (Resend, Mailgun, SES). Each transport implementation has its own per-transport key, configured the same way, with the same NFR3 test coverage on every new transport before it merges.

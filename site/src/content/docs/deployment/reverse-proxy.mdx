@@ -1,0 +1,134 @@
+---
+title: Reverse proxy
+description: Sample configs for Caddy, nginx, and Traefik in front of Posthorn.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Posthorn does not terminate TLS. It expects a reverse proxy in front of it, handling:
+
+- TLS termination
+- HTTP/2 (Posthorn speaks HTTP/1.1)
+- Client IP forwarding via `X-Forwarded-For`
+- Optional request logging
+
+These are sample configs for the most common proxies. If you're already running Caddy and want first-class integration without a separate container, [use the Caddy adapter](/deployment/caddy-adapter/) instead.
+
+<Tabs syncKey="proxy">
+  <TabItem label="Caddy">
+
+```nginx
+example.com {
+    # Forward only the form endpoints to Posthorn
+    @forms path /api/contact /api/feedback /api/newsletter
+    handle @forms {
+        reverse_proxy posthorn:8080 {
+            # Trust X-Forwarded-For from upstream (defaults are usually fine)
+        }
+    }
+
+    # Everything else (the actual site)
+    handle {
+        file_server
+    }
+}
+```
+
+If Posthorn is running on the host (not Docker):
+
+```nginx
+reverse_proxy 127.0.0.1:8080
+```
+
+  </TabItem>
+  <TabItem label="nginx">
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    location ~ ^/api/(contact|feedback|newsletter)$ {
+        proxy_pass http://posthorn:8080;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Origin            $http_origin;
+        proxy_set_header Referer           $http_referer;
+    }
+
+    location / {
+        root /var/www/example.com;
+        try_files $uri $uri/ =404;
+    }
+}
+```
+
+  </TabItem>
+  <TabItem label="Traefik">
+
+```yaml
+# docker-compose.yml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.posthorn.rule=Host(`example.com`) && PathPrefix(`/api/`)"
+      - "traefik.http.routers.posthorn.entrypoints=websecure"
+      - "traefik.http.routers.posthorn.tls.certresolver=letsencrypt"
+      - "traefik.http.services.posthorn.loadbalancer.server.port=8080"
+    networks:
+      - traefik
+    # ...
+```
+
+  </TabItem>
+</Tabs>
+
+## Forwarding the client IP
+
+If you want Posthorn's rate limiter and logs to see the **real** client IP — not your reverse proxy's IP — configure `trusted_proxies` in the endpoint:
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+# ...
+```
+
+When a request arrives from a CIDR listed in `trusted_proxies`, Posthorn reads the client IP from the **rightmost untrusted IP** in `X-Forwarded-For`. Without `trusted_proxies` configured, Posthorn uses the connection's `RemoteAddr` directly.
+
+<Aside type="caution">
+**Set `trusted_proxies` to exactly the proxies you trust.** A lax list (e.g., `0.0.0.0/0`) lets any client spoof their IP by setting `X-Forwarded-For` themselves, defeating the rate limiter.
+</Aside>
+
+If your front door is Cloudflare, list Cloudflare's [published IP ranges](https://www.cloudflare.com/ips/). If it's a docker-network internal proxy, list the docker network's CIDR.
+
+## TLS only — no plaintext
+
+Always force HTTPS at the reverse-proxy layer. Posthorn submissions include form data that may be personal; never accept them over plaintext.
+
+Most modern reverse proxies do this by default (Caddy auto-redirects HTTP→HTTPS; Traefik with `entrypoints.web.http.redirections.entrypoint.to=websecure`; nginx needs an explicit `return 301 https://...` block on the `:80` server).
+
+## CORS
+
+Posthorn does not emit CORS headers. For same-origin forms (form on `example.com` posting to `example.com/api/contact`), this is fine — no CORS preflight happens.
+
+For cross-origin forms (form on `app.example.com` posting to `api.example.com/contact`), set CORS headers at the reverse proxy:
+
+```nginx
+@forms path /api/contact
+handle @forms {
+    header Access-Control-Allow-Origin "https://app.example.com"
+    header Access-Control-Allow-Methods "POST, OPTIONS"
+    header Access-Control-Allow-Headers "Content-Type"
+    reverse_proxy posthorn:8080
+}
+```
+
+The `allowed_origins` setting in Posthorn is **not** a CORS policy — it's an Origin/Referer header check applied to the request itself. CORS is browser-side preflight; it must be set by the proxy (or by Posthorn in a future version).

@@ -1,0 +1,152 @@
+---
+title: Standalone binary
+description: Run Posthorn as a Go binary directly on the host or under systemd.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+If Docker isn't an option — bare-metal homelab, traditional VPS without container support, or just personal preference — you can run Posthorn as a plain Go binary under systemd, supervisord, runit, or your init system of choice.
+
+## Install
+
+### From a release artifact
+
+Pre-built binaries for common platforms are attached to each [GitHub release](https://github.com/craigmccaskill/posthorn/releases):
+
+```bash
+curl -L -o posthorn.tar.gz \
+  https://github.com/craigmccaskill/posthorn/releases/download/v1.0.0/posthorn-linux-amd64.tar.gz
+tar -xzf posthorn.tar.gz
+sudo install -m 0755 posthorn /usr/local/bin/posthorn
+```
+
+### From source
+
+```bash
+go install github.com/craigmccaskill/posthorn/cmd/posthorn@latest
+```
+
+Requires Go 1.25+. The binary lands at `$GOPATH/bin/posthorn` (or `$HOME/go/bin/posthorn` by default).
+
+### From the repo
+
+```bash
+git clone https://github.com/craigmccaskill/posthorn
+cd posthorn
+go build -o posthorn ./core/cmd/posthorn
+```
+
+## Verify
+
+```bash
+posthorn --version
+# posthorn v1.0.0
+```
+
+## CLI
+
+Two subcommands:
+
+```bash
+posthorn validate --config /etc/posthorn/config.toml
+posthorn serve --config /etc/posthorn/config.toml
+```
+
+`validate` parses the TOML, resolves `${env.VAR}` placeholders, checks the schema, and compiles templates — without starting the listener. Exit 0 means good.
+
+`serve` starts the HTTP listener on the address configured (default `:8080`).
+
+See [CLI reference](/reference/cli/) for all flags.
+
+## systemd unit
+
+Create `/etc/systemd/system/posthorn.service`:
+
+```ini
+[Unit]
+Description=Posthorn email gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=posthorn
+Group=posthorn
+ExecStart=/usr/local/bin/posthorn serve --config /etc/posthorn/config.toml
+EnvironmentFile=/etc/posthorn/posthorn.env
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadOnlyPaths=/etc/posthorn
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Create `/etc/posthorn/posthorn.env`:
+
+```bash
+POSTMARK_API_KEY=your-postmark-server-token
+```
+
+Restrict its permissions:
+
+```bash
+sudo chown root:posthorn /etc/posthorn/posthorn.env
+sudo chmod 0640 /etc/posthorn/posthorn.env
+```
+
+Create the unprivileged user:
+
+```bash
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin posthorn
+```
+
+Start and enable:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now posthorn
+sudo systemctl status posthorn
+```
+
+Logs:
+
+```bash
+journalctl -u posthorn -f
+```
+
+## Graceful shutdown
+
+Posthorn handles `SIGTERM` and `SIGINT` for graceful shutdown:
+
+1. Stop accepting new connections.
+2. Drain in-flight requests up to each request's 10-second timeout.
+3. Exit with code 0.
+
+A **second** signal forces immediate exit. systemd's default `KillSignal=SIGTERM` followed by `TimeoutStopSec=90` (default 90 seconds) is more than enough for in-flight drain.
+
+## Reverse proxy
+
+The binary listens on `0.0.0.0:8080` by default. **Don't expose this to the public internet.** Bind to loopback or an internal network and reverse-proxy through Caddy, nginx, or your front door of choice. See [Reverse proxy](/deployment/reverse-proxy/) for example configs.
+
+<Aside type="caution">
+The standalone binary does not terminate TLS. It must run behind a reverse proxy or load balancer that handles TLS. This is by design — gluing in TLS termination would duplicate functionality every operator already has.
+</Aside>
+
+## Resource use
+
+Same as the Docker variant — idle around 15-25 MB RSS, single-digit CPU under typical contact-form load. The binary itself is ~12 MB (statically linked Go binary, stripped).

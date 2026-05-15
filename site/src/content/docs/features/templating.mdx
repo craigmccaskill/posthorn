@@ -1,0 +1,137 @@
+---
+title: Templating
+description: Go text/template rendering for subject and body, with custom-fields passthrough.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn uses Go's `text/template` package to render email subjects and bodies. Form fields are exposed to the template as variables, and any field not explicitly named in your config gets appended to a structured "Additional fields" block at the bottom of the body.
+
+## Subject
+
+```toml
+subject = "Contact from {{.name}}"
+```
+
+Renders to: `Contact from Alice`
+
+The subject template has access to every form field by name as `{{.fieldname}}`. The template is rendered once per submission, after validation. Missing variables render as empty strings (no error).
+
+## Body — inline vs. file
+
+If the `body` value contains `{{`, it's treated as an inline template:
+
+```toml
+body = """
+From: {{.name}} <{{.email}}>
+
+{{.message}}
+"""
+```
+
+If it doesn't contain `{{`, it's treated as a **file path** (relative to the binary's working directory or the config file's directory):
+
+```toml
+body = "templates/contact.txt"
+```
+
+```text
+# templates/contact.txt
+From: {{.name}} <{{.email}}>
+
+{{.message}}
+```
+
+File templates are convenient for longer bodies — multi-line markdown signatures, branded footers, structured templates — without bloating the TOML.
+
+<Aside type="note">
+The inline-vs-file heuristic is a compromise to avoid forcing operators to set an explicit type field. If you have an ambiguous case (a path that literally contains `{{`, somehow), explicitly include the file's content inline.
+</Aside>
+
+## Template syntax
+
+Go's `text/template` is similar to but distinct from Jinja2, Liquid, or Handlebars. Core features:
+
+| Feature | Syntax | Example |
+|---|---|---|
+| Variable | `{{.fieldname}}` | `{{.name}}` |
+| Pipe to function | `{{.x \| func}}` | `{{.email \| html}}` |
+| If/else | `{{if .x}}A{{else}}B{{end}}` | `{{if .urgent}}!!!{{end}}` |
+| Range | `{{range .items}}...{{end}}` | Not useful for form data (flat) |
+| Comparison | `{{if eq .x "y"}}` | `{{if eq .category "bug"}}` |
+| Comment | `{{/* note */}}` | `{{/* this is a comment */}}` |
+
+For the full grammar, see the [Go text/template docs](https://pkg.go.dev/text/template).
+
+## Variables available
+
+Every form field is available as `{{.fieldname}}`. Posthorn also exposes a small set of metadata variables:
+
+| Variable | Type | Description |
+|---|---|---|
+| `{{.fieldname}}` | string | Value of any form field. Missing → empty string. |
+| `{{._submission_id}}` | string | UUIDv4 generated for this submission |
+| `{{._timestamp}}` | string | RFC 3339 timestamp of receipt |
+| `{{._endpoint}}` | string | Endpoint path that received the submission |
+
+Form field names that start with `_` are still accessible — the metadata variables use `_` prefix to reduce collision risk but don't strictly reserve it.
+
+## Custom fields passthrough
+
+The **named fields** for an endpoint are the union of:
+
+- Fields in `required`
+- The `email_field` (default `"email"`)
+- The `honeypot` field
+
+Any other field submitted to the endpoint is a **custom field**. Custom fields appear in an "Additional fields:" block appended to the rendered body:
+
+```text
+[rendered body template]
+
+Additional fields:
+  company: Acme Corp
+  source: HN
+  newsletter_opt_in: yes
+```
+
+The block is alphabetically sorted by field name for stable output across runs. Empty-valued custom fields are omitted from the block.
+
+This means you can add new fields to your HTML form without touching the Posthorn config — they show up in the email automatically.
+
+## Subject and body validation
+
+Both templates are parsed at config-load time. Syntax errors fail `posthorn validate` (and prevent the listener from starting). A subject template that fails to parse looks like:
+
+```
+$ posthorn validate --config posthorn.toml
+ERROR: endpoint 0 (/api/contact): subject template parse error at line 1: function "foo" not defined
+exit status 1
+```
+
+This means template errors are caught at deploy time, not request time.
+
+## Redirects
+
+When the requesting client prefers `text/html` (i.e., a normal browser form submission), Posthorn redirects to the configured URL on success or error:
+
+```toml
+redirect_success = "/thank-you"
+redirect_error = "/contact?error=1"
+```
+
+When neither is configured, the response is JSON regardless of `Accept` header. When only one is configured, the other still falls back to JSON.
+
+The redirect status is **303 See Other** — this tells the browser to issue a GET to the new URL, which prevents form re-submission on refresh.
+
+If your form expects to be progressively enhanced (works without JS, gets nicer with), use a redirect on success and an error redirect that re-renders the form with field errors. If your form is JS-only (e.g., a `fetch()` from your SPA), omit redirects entirely — the JSON response is what you want.
+
+## Edge cases
+
+| Scenario | Behavior |
+|---|---|
+| Form field with same name as a metadata var (e.g., `_submission_id`) | User value wins; metadata is overridden by the form data |
+| Field name with a dot (e.g., `user.name`) | Not addressable in Go templates. Avoid dots in form field names. |
+| Field name with a dash (e.g., `first-name`) | Not addressable via `{{.first-name}}` (interpreted as subtraction). Use `{{index . "first-name"}}` |
+| Empty form (all values empty) | Validation fails on required fields → 422, never reaches template |
+| HTML in field values | Passed through as-is. Plaintext-only body, no HTML escaping. Use `html` pipe if you ever switch to HTML body in v2. |

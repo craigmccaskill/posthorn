@@ -1,0 +1,64 @@
+---
+title: Introduction
+description: What Posthorn is, what it isn't, and which problems it solves.
+---
+
+Posthorn is a self-hosted email gateway designed for cloud platforms that block outbound SMTP. It accepts mail through pluggable ingress modes and delivers it via pluggable HTTP API transports. v1.0 ships HTTP form ingress and a Postmark transport.
+
+## The problem
+
+DigitalOcean, AWS Lightsail, Linode, Vultr, and most cloud hosts block outbound SMTP on ports 25, 465, and 587 by default. The block is not negotiable — a 2026-04 support exchange with DigitalOcean confirmed they will not unblock the range, and explicitly recommended using an HTTP API service like Postmark, Resend, Mailgun, or AWS SES instead.
+
+That breaks two common deployment patterns at once:
+
+1. **Web forms that send email.** Contact forms, signup confirmations, alert webhooks. Every static-site host or Caddy/nginx-fronted blog hits this on day one.
+2. **Self-hosted apps that emit SMTP for transactional mail.** Ghost, Gitea, Mastodon, Discourse, Matrix, NextCloud, Authentik. Their configs assume an SMTP server they can reach.
+
+The status quo is bad:
+
+- Pay for SaaS form services (Formspree, Netlify Forms) for forms.
+- Rewrite app configs to use API SDKs (rarely supported).
+- Run Postfix as a relay with custom HTTP glue (heavy, fragile).
+- Move to a host that doesn't block SMTP (disruptive, sometimes not viable).
+
+There is no actively maintained, self-hosted, HTTP-API-first email gateway in 2026. Posthorn is that gateway.
+
+## The shape
+
+Posthorn is a single Go binary distributed primarily as a Docker container. It speaks form-encoded HTTP on one side and HTTP API calls to Postmark on the other. A single TOML file configures one or more endpoints, each with its own recipients, templates, spam protection, and rate limit.
+
+For operators already running Caddy as a front door, the same logic is also packaged as a Caddy v2 module (`http.handlers.posthorn`) you can load with `xcaddy build`. Both deployment shapes share one core gateway implementation — same pipeline, same behavior, same tests.
+
+## What ships in v1.0
+
+| Capability | Detail |
+|---|---|
+| Ingress | HTTP form (`application/x-www-form-urlencoded`, `multipart/form-data`) |
+| Transport | Postmark HTTP API |
+| Spam protection | Honeypot, Origin/Referer fail-closed, max body size, token-bucket rate limit with LRU eviction |
+| Validation | Required fields, email syntax check |
+| Templating | Go `text/template` for subject and body, with custom-field passthrough |
+| Response handling | JSON, redirect via content negotiation, `redirect_success` / `redirect_error` |
+| Failure handling | 1 retry on transient/5xx (1s), 1 retry on 429 (5s), no retry on 4xx config errors, 10s hard timeout |
+| Logging | Structured JSON with UUIDv4 submission ID |
+| Deployment | Standalone Docker (primary) + Caddy adapter (optional) |
+
+## What's out of scope for v1.0
+
+These come later, intentionally:
+
+- **SMTP ingress** — v1.2 (the headline post-v1.0 feature; what unblocks Ghost et al.)
+- Resend, Mailgun, SES, outbound-SMTP transports — v1.1
+- CSRF / time-based tokens — v1.1
+- Prometheus metrics, health check, dry run — v1.1
+- File attachments, webhook transport — v2
+- Persistent submission log + retry queue across restarts — v2
+- Admin UI, proof-of-work spam challenge, PGP — v3
+
+See the [project brief](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md) for the full roadmap.
+
+## Where to next
+
+- **New to Posthorn?** → [Installation](/getting-started/installation/) and [Quick start](/getting-started/quick-start/)
+- **Want the mental model?** → [Core concepts](/getting-started/concepts/)
+- **Already have it running?** → [Configuration reference](/configuration/reference/)

@@ -1,0 +1,198 @@
+---
+title: HTTP API
+description: The wire format Posthorn accepts and returns.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn exposes one HTTP endpoint per configured `[[endpoints]]` block. This page documents the wire format — request, response, status codes, content negotiation.
+
+## Request
+
+| Aspect | Required value |
+|---|---|
+| Method | `POST` |
+| Path | Any configured `path` (e.g., `/api/contact`) |
+| Content-Type | `application/x-www-form-urlencoded` or `multipart/form-data` |
+| Body | Form-encoded key/value pairs |
+
+Other methods (`GET`, `HEAD`, `PUT`, `DELETE`, etc.) return `405 Method Not Allowed`. Other content types return `400 Bad Request`.
+
+### Form-encoded example
+
+```http
+POST /api/contact HTTP/1.1
+Host: example.com
+Content-Type: application/x-www-form-urlencoded
+Origin: https://example.com
+
+name=Alice+Smith&email=alice%40example.com&message=Hello+world
+```
+
+### Multipart example
+
+```http
+POST /api/contact HTTP/1.1
+Host: example.com
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+
+------WebKitFormBoundary
+Content-Disposition: form-data; name="name"
+
+Alice Smith
+------WebKitFormBoundary
+Content-Disposition: form-data; name="email"
+
+alice@example.com
+------WebKitFormBoundary
+Content-Disposition: form-data; name="message"
+
+Hello world
+------WebKitFormBoundary--
+```
+
+Both forms are handled by `r.ParseForm()` and produce the same internal representation.
+
+<Aside type="note">
+**File uploads (multipart with `Content-Type: application/octet-stream` parts) are accepted at the wire level but ignored.** Posthorn does not forward attachments to the transport in v1.0. File attachments are a v2 feature. If your form includes file inputs, the file content is silently dropped — only the text fields make it to the email.
+</Aside>
+
+## Response — success
+
+When the submission is accepted and the transport returned success:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "status": "ok",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"
+}
+```
+
+When `redirect_success` is configured and the client prefers `text/html`:
+
+```http
+HTTP/1.1 303 See Other
+Location: /thank-you
+```
+
+## Response — error
+
+Errors return JSON or redirect to `redirect_error` (if configured and `text/html` preferred), with the appropriate status code.
+
+### JSON error schema
+
+```json
+{
+  "error": "Human-readable summary",
+  "code": "machine_readable_code",
+  "fields": {
+    "field_name": "field-specific error"
+  }
+}
+```
+
+`fields` is only populated for `422 Unprocessable Entity` (validation failures).
+
+### Status codes
+
+| Status | Meaning | When |
+|---|---|---|
+| `200 OK` | Submission accepted and sent | Happy path; also returned silently when honeypot triggered |
+| `303 See Other` | Redirect after success or error | When `text/html` preferred and `redirect_success`/`redirect_error` configured |
+| `400 Bad Request` | Malformed request | Wrong content type, can't parse body |
+| `403 Forbidden` | Origin/Referer check failed | Both headers missing when `allowed_origins` set, or value not in allowlist |
+| `404 Not Found` | Unknown path | Path not configured |
+| `405 Method Not Allowed` | Wrong method | Not POST |
+| `413 Payload Too Large` | Body exceeded `max_body_size` | Either pre-parse cap or post-parse size |
+| `422 Unprocessable Entity` | Validation failed | Required field missing, email format invalid |
+| `429 Too Many Requests` | Rate limit exceeded | Token-bucket empty for the client IP |
+| `502 Bad Gateway` | Transport terminal failure | Postmark rejected the message (or 10s timeout) |
+
+See [Response codes](/reference/response-codes/) for the per-code error JSON schema.
+
+## Content negotiation
+
+Posthorn checks the `Accept` header to decide between JSON and redirect responses:
+
+| `Accept` header | Redirects configured? | Response |
+|---|---|---|
+| `application/json` (preferred) | (any) | JSON |
+| `text/html` (preferred) | Yes (success or error path) | 303 redirect |
+| `text/html` (preferred) | No | JSON (fallback) |
+| `*/*` | (any) | JSON |
+| Missing | (any) | JSON |
+
+Most fetch-based form submitters set `Accept: application/json` and get JSON. Most plain browser form submissions set `Accept: text/html` and get a redirect.
+
+## Client examples
+
+### JavaScript (fetch)
+
+```javascript
+const form = document.querySelector('form');
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const data = new FormData(form);
+  const res = await fetch('/api/contact', {
+    method: 'POST',
+    body: new URLSearchParams(data),
+    headers: { 'Accept': 'application/json' },
+  });
+  const json = await res.json();
+  if (res.ok) {
+    showSuccess(json.submission_id);
+  } else if (res.status === 422) {
+    showFieldErrors(json.fields);
+  } else if (res.status === 429) {
+    showRetryAfter(res.headers.get('Retry-After'));
+  } else {
+    showGenericError(json.error);
+  }
+});
+```
+
+### Plain HTML form (no JS)
+
+```html
+<form method="POST" action="/api/contact">
+  <input name="name" required>
+  <input name="email" type="email" required>
+  <textarea name="message" required></textarea>
+  <input type="text" name="_gotcha" tabindex="-1" autocomplete="off"
+         style="position:absolute;left:-9999px">
+  <button type="submit">Send</button>
+</form>
+```
+
+With `redirect_success = "/thank-you"` configured, a successful submission redirects to `/thank-you`. With `redirect_error = "/contact?error=1"`, validation failures redirect back to the form.
+
+### curl
+
+```bash
+# Success
+curl -X POST http://localhost:8080/api/contact \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "name=Test User&email=test@example.com&message=hello"
+
+# Multipart
+curl -X POST http://localhost:8080/api/contact \
+  -F name="Test User" -F email=test@example.com -F message=hello
+
+# Force JSON response
+curl -X POST http://localhost:8080/api/contact \
+  -H "Accept: application/json" \
+  -d "name=...&..."
+```
+
+## What's not in v1.0
+
+| Feature | When |
+|---|---|
+| Health check endpoint (`/healthz`) | v1.1 |
+| Prometheus metrics (`/metrics`) | v1.1 |
+| Dry-run mode (parse + validate without send) | v1.1 |
+| File attachments | v2 |
+| Webhook transport response | v2 |

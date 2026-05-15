@@ -1,0 +1,127 @@
+---
+title: Posthorn
+description: Self-hosted email gateway for cloud platforms that block outbound SMTP. HTTP form ingress, Postmark transport, Docker or Caddy adapter.
+template: splash
+hero:
+  tagline: A self-hosted email gateway for cloud platforms that block outbound SMTP. Run it next to your apps in Docker, or load it as a Caddy module.
+  image:
+    file: ../../assets/logo.svg
+  actions:
+    - text: Get started
+      link: /getting-started/installation/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/craigmccaskill/posthorn
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, Code, LinkCard } from '@astrojs/starlight/components';
+
+## Why Posthorn?
+
+DigitalOcean, AWS Lightsail, Linode, and most cloud hosts block outbound SMTP on ports 25, 465, and 587. The block is policy, not configurable — providers explicitly recommend an HTTP API service like Postmark instead.
+
+That breaks two patterns at once:
+
+1. **Web forms that send email** — contact forms, signups, alert webhooks.
+2. **Self-hosted apps that emit SMTP for transactional mail** — Ghost, Gitea, Mastodon, Matrix, NextCloud, Authentik. Magic links, password resets, admin notifications.
+
+Posthorn is the bridge. Drop it in as a container, point your forms at it (v1.0) or your apps' SMTP config at it (v1.2), and it relays through Postmark over HTTP.
+
+<CardGrid>
+  <Card title="HTTP form ingress" icon="rocket">
+    Accepts `application/x-www-form-urlencoded` and `multipart/form-data` POSTs
+    on configured paths. Templates the body, validates the fields, sends the
+    mail.
+  </Card>
+  <Card title="Postmark transport" icon="email">
+    Bespoke ~80-line HTTP client. No third-party SDK. API keys never appear in
+    logs. Headers pass through Postmark's structured JSON API — no string
+    concatenation, no injection vector.
+  </Card>
+  <Card title="Defense in depth" icon="shield">
+    Honeypot, Origin/Referer fail-closed, token-bucket rate limit with LRU
+    eviction at 10K IPs, max body size, required-field validation, email
+    syntax check.
+  </Card>
+  <Card title="Two deployment shapes" icon="puzzle">
+    Standalone Docker container (primary) or a Caddy v2 module for operators
+    already running Caddy. Both run the same pipeline — identical behavior by
+    construction.
+  </Card>
+  <Card title="Structured logging" icon="document">
+    Every event emits JSON with a UUIDv4 submission ID, endpoint, transport,
+    and latency. Failed submissions log the full payload so you can recover
+    from terminal errors.
+  </Card>
+  <Card title="Retry that respects deadlines" icon="random">
+    One retry on transient/5xx (1s backoff), one retry on 429 (5s backoff),
+    no retry on 4xx config errors, hard 10-second timeout including retries.
+  </Card>
+</CardGrid>
+
+## Five-minute setup
+
+```yaml
+# docker-compose.yml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    volumes:
+      - ./posthorn.toml:/etc/posthorn/config.toml:ro
+    environment:
+      POSTMARK_API_KEY: ${POSTMARK_API_KEY}
+    ports:
+      - "8080:8080"
+```
+
+```toml
+# posthorn.toml
+[[endpoints]]
+path = "/api/contact"
+to = ["you@example.com"]
+from = "Contact Form <noreply@example.com>"
+honeypot = "_gotcha"
+allowed_origins = ["https://example.com"]
+required = ["name", "email", "message"]
+subject = "Contact from {{.name}}"
+body = """
+From: {{.name}} <{{.email}}>
+
+{{.message}}
+"""
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+```
+
+Reverse-proxy `/api/contact` from your front door (Caddy, nginx, Traefik) at `https://posthorn:8080`. Point your form's `action` at `/api/contact`. Done.
+
+<LinkCard
+  title="Installation guide"
+  description="Docker Compose, standalone binary, or Caddy adapter — pick a path."
+  href="/getting-started/installation/"
+/>
+
+<LinkCard
+  title="Quick start"
+  description="A working contact form in five minutes against a real Postmark account."
+  href="/getting-started/quick-start/"
+/>
+
+## Not related to PostHog
+
+PostHog is product analytics. Posthorn is an email gateway. Similar names, different categories, zero functional overlap.
+
+## License & status
+
+Apache-2.0. Currently pre-v1.0 — [spec is locked](https://github.com/craigmccaskill/posthorn/tree/main/spec), implementation is in flight. Track progress on the [GitHub project board](https://github.com/craigmccaskill/posthorn).

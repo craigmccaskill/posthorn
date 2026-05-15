@@ -1,0 +1,131 @@
+---
+title: Rate limiting
+description: Token-bucket rate limiter with per-IP keying, trusted-proxy support, and LRU eviction.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Posthorn's rate limiter is a **token-bucket** keyed by client IP, with LRU eviction at a configurable cap.
+
+## Configuration
+
+```toml
+[[endpoints]]
+path = "/api/contact"
+
+[endpoints.rate_limit]
+count = 5
+interval = "1m"
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `count` | int | Bucket capacity. Maximum burst of submissions allowed instantly. |
+| `interval` | duration | Refill window. After `interval`, the bucket is fully refilled. |
+
+This means **5 submissions per minute, with a burst of 5**. A client can submit 5 forms back-to-back, then has to wait for the bucket to refill at a rate of 5/60 = 0.083 tokens per second.
+
+## How the math works
+
+A token bucket has two parameters: **capacity** (`count`) and **refill rate** (`count / interval`). When a request arrives:
+
+1. Compute how much has refilled since the last check (capped at `capacity`).
+2. If the bucket has ≥ 1 token, consume one and allow the request.
+3. Otherwise, return 429.
+
+For `count = 5, interval = 1m`:
+
+- Refill rate: `5 / 60s` ≈ 0.083 tokens/sec
+- Bucket starts full at 5 tokens
+- 5 requests in 100ms → bucket drained to 0 → 6th request 429s
+- After 12 seconds idle → 1 token refilled → next request allowed
+- After 60 seconds idle → bucket back to 5
+
+## Why token bucket (not leaky bucket, fixed window)?
+
+Token bucket allows bursts up to the capacity, which is what humans actually do — a person submitting a contact form might double-tap-click the submit button, retry after seeing a redirect, etc. Allowing a small burst before throttling produces fewer false positives.
+
+Leaky bucket (or fixed-window counter) would 429 the second click. Token bucket lets it through, as long as the user hasn't already submitted multiple recent times.
+
+## Per-IP keying
+
+By default the bucket key is the request's `RemoteAddr`. Behind a reverse proxy this is the proxy's IP, not the real client's — every request looks like it's coming from the same IP, defeating the limiter.
+
+Configure `trusted_proxies` to make Posthorn extract the real client IP from `X-Forwarded-For`:
+
+```toml
+trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+```
+
+When `RemoteAddr` is in one of the trusted CIDRs, Posthorn reads `X-Forwarded-For` and uses the **rightmost untrusted IP** as the bucket key. Otherwise, it uses `RemoteAddr` directly.
+
+<Aside type="caution">
+**Don't trust untrusted proxies.** If you set `trusted_proxies = ["0.0.0.0/0"]`, any attacker can fake their client IP by setting their own `X-Forwarded-For` header. List only the proxies you actually control.
+
+For Cloudflare in front of your stack, list [Cloudflare's published IPv4 and IPv6 ranges](https://www.cloudflare.com/ips/).
+</Aside>
+
+## LRU cap (NFR6)
+
+The limiter tracks at most **10,000 IPs by default**. When the cap is reached, the least-recently-used bucket is evicted to make room.
+
+This bounds memory regardless of attack volume. A flood of submissions from a million different IPs won't grow Posthorn's memory unboundedly — older buckets get evicted as new ones come in. The eviction is per-endpoint, so a flood on `/api/contact` doesn't affect `/api/newsletter`.
+
+The 10K default is sized for typical homelab and indie-developer use. Larger deployments can override (though the override knob isn't exposed in v1.0 config — see [open question 1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#open-architectural-questions); the spec defaults this).
+
+## What happens on 429
+
+Posthorn returns HTTP 429 with a JSON body:
+
+```json
+{
+  "error": "Too many requests",
+  "code": "rate_limited"
+}
+```
+
+Or, if the request prefers `text/html` and `redirect_error` is configured, a 303 redirect to that URL.
+
+A `Retry-After` header is included on every 429, computed from the time until the next token is available:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+Retry-After: 12
+```
+
+## Choosing values
+
+| Use case | Suggested `count` | Suggested `interval` |
+|---|---|---|
+| Public contact form | 3-5 | 1m |
+| Newsletter signup (one per visitor) | 2 | 1m |
+| Internal API with known clients | 50 | 1m |
+| Internal API with high-volume client | 100-500 | 1m |
+| API guarded against quota burn | (whatever your provider allows) | 1m |
+
+The tightest constraint is your transport's rate limit upstream. Postmark's default per-server rate is generous (10/sec for transactional), but if you misconfigure Posthorn to allow 1000/min, you might blow through a daily quota in minutes. Set Posthorn's limit conservatively below the upstream.
+
+## Inspecting rate-limit decisions
+
+Every rate-limited request logs an event:
+
+```json
+{
+  "time": "2026-05-14T20:01:23Z",
+  "level": "WARN",
+  "msg": "rate_limited",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "client_ip": "203.0.113.42",
+  "tokens_remaining": 0
+}
+```
+
+Use this to spot abuse patterns — a single IP that's been 429'd a hundred times in an hour is a bot you might want to block at the firewall level.
+
+## What's not in v1.0
+
+- **Per-endpoint absolute limit.** Only per-IP. A coordinated botnet from many low-rate IPs can still drive aggregate volume up. Mitigation lands in v3 (proof-of-work / captcha).
+- **Hot reload of rate-limit config.** You restart Posthorn to change rate limits.
+- **Distributed rate limiting** across multiple Posthorn instances. v1.0 limits are per-instance. For multi-instance deployments behind a load balancer, the limit you configure applies to each instance independently — a 5/min config with 3 instances means up to 15/min in practice.

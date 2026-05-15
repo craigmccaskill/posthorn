@@ -1,0 +1,108 @@
+---
+title: Installation
+description: Install Posthorn as a Docker container, a Go binary, or a Caddy v2 module.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Posthorn ships in three forms. **Docker is the recommended path** for most operators — it's a single container running next to your apps, and it's the deployment shape that's exercised most heavily in tests and documentation.
+
+<Tabs syncKey="install">
+  <TabItem label="Docker (recommended)">
+
+```bash
+docker pull ghcr.io/craigmccaskill/posthorn:latest
+```
+
+Multi-arch images are published for `linux/amd64` and `linux/arm64`. The container expects a TOML config mounted at `/etc/posthorn/config.toml` and listens on `8080` by default.
+
+A minimal `docker-compose.yml`:
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    restart: unless-stopped
+    volumes:
+      - ./posthorn.toml:/etc/posthorn/config.toml:ro
+    environment:
+      POSTMARK_API_KEY: ${POSTMARK_API_KEY}
+    ports:
+      - "8080:8080"
+```
+
+Continue to the [Quick start](/getting-started/quick-start/) for a working contact form.
+
+  </TabItem>
+  <TabItem label="Standalone binary">
+
+```bash
+go install github.com/craigmccaskill/posthorn/cmd/posthorn@latest
+```
+
+Requires Go 1.25+. The binary is fully self-contained and runs anywhere.
+
+```bash
+posthorn validate --config posthorn.toml   # check the config without serving
+posthorn serve --config posthorn.toml      # start the HTTP listener
+```
+
+Pre-built binaries for common platforms are attached to each [GitHub release](https://github.com/craigmccaskill/posthorn/releases).
+
+  </TabItem>
+  <TabItem label="Caddy adapter">
+
+For operators already running Caddy as a front door, the form-ingress mode is also exposed as a Caddy v2 module. Build a Caddy with the adapter:
+
+```bash
+xcaddy build --with github.com/craigmccaskill/posthorn/caddy
+```
+
+The Caddyfile directive is `posthorn`:
+
+```nginx
+example.com {
+    posthorn /api/contact {
+        to you@example.com
+        from "Contact Form <noreply@example.com>"
+        transport postmark {
+            api_key {env.POSTMARK_API_KEY}
+        }
+    }
+}
+```
+
+See [Caddy adapter](/deployment/caddy-adapter/) for the full directive grammar. Requires Caddy 2.9+.
+
+<Aside type="note">
+The Caddy adapter is fully supported but is **not** the recommended path for new users. If you don't already run Caddy, use the Docker container instead — it keeps the email-gateway concern decoupled from your reverse-proxy concern.
+</Aside>
+
+  </TabItem>
+</Tabs>
+
+## Prerequisites
+
+Regardless of how you install Posthorn, you need:
+
+| Prerequisite | Why |
+|---|---|
+| A [Postmark](https://postmarkapp.com) account with a verified sender domain | Posthorn relays through Postmark's HTTP API |
+| A Postmark **server token** (not the account token) | Used as `${env.POSTMARK_API_KEY}` |
+| SPF, DKIM, and DMARC records on your sending domain | Required for deliverability — see [DNS](/security/dns/) |
+| A reverse proxy in front of Posthorn (Caddy, nginx, Traefik, Cloudflare) | TLS termination, HTTP/2, request logging |
+
+## Verifying the install
+
+```bash
+docker run --rm ghcr.io/craigmccaskill/posthorn:latest --version
+# posthorn v1.0.0
+```
+
+If you're running the standalone binary:
+
+```bash
+posthorn --version
+```
+
+For a deeper sanity check, run `posthorn validate --config <your-config>` — it parses the TOML, resolves `${env.VAR}` placeholders, and reports schema errors without starting the listener.

@@ -1,0 +1,257 @@
+---
+title: Log format
+description: The structured fields in every Posthorn log line.
+---
+
+Posthorn writes structured JSON logs to stdout. Every line is a single JSON object with a consistent set of fields. This page documents the schema so you can build queries, alerts, and dashboards on top of it.
+
+## Standard fields
+
+These appear on every log line:
+
+| Field | Type | Description |
+|---|---|---|
+| `time` | string (RFC 3339, UTC, ms precision) | When the log was written |
+| `level` | string | `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `msg` | string | Event name (see catalog below) |
+
+## Request-scoped fields
+
+These appear on log lines emitted while processing a specific request:
+
+| Field | Type | Description |
+|---|---|---|
+| `submission_id` | string (UUIDv4) | Generated at request receipt; threads through every log line for the request |
+| `endpoint` | string | Endpoint path from config (`"/api/contact"`) |
+| `transport` | string | Transport type from config (`"postmark"`) |
+| `client_ip` | string | Client IP per `trusted_proxies` resolution |
+| `latency_ms` | int | Total request duration (only on terminal events) |
+
+## Event-specific fields
+
+### `submission_received`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.000Z",
+  "level": "INFO",
+  "msg": "submission_received",
+  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
+  "endpoint": "/api/contact",
+  "client_ip": "203.0.113.42",
+  "content_length": 142
+}
+```
+
+### `spam_blocked`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.045Z",
+  "level": "INFO",
+  "msg": "spam_blocked",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "client_ip": "203.0.113.42",
+  "reason": "honeypot"
+}
+```
+
+`reason` is one of:
+
+| Reason | What triggered |
+|---|---|
+| `"honeypot"` | Honeypot field non-empty |
+| `"origin"` | Origin header not in `allowed_origins` |
+| `"missing_headers"` | Both Origin and Referer missing when `allowed_origins` configured |
+| `"body_too_large"` | Pre-parse body cap exceeded (also a 413 event) |
+
+### `rate_limited`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.087Z",
+  "level": "WARN",
+  "msg": "rate_limited",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "client_ip": "203.0.113.42",
+  "tokens_remaining": 0
+}
+```
+
+### `validation_failed`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.112Z",
+  "level": "INFO",
+  "msg": "validation_failed",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "fields": ["name", "email"]
+}
+```
+
+`fields` is the list of field names that failed (one of: missing/empty required, or invalid email format).
+
+### `send_retry`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.587Z",
+  "level": "WARN",
+  "msg": "send_retry",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "error_class": "transient",
+  "status": 503,
+  "attempt": 2
+}
+```
+
+`error_class` is one of:
+
+| Value | Meaning |
+|---|---|
+| `"transient"` | 5xx or network error; will retry after 1s |
+| `"rate_limited"` | Transport returned 429; will retry after 5s |
+
+`attempt` is the next attempt number (the one about to be tried). For v1.0 retry policy (1 retry), `attempt` is always `2`.
+
+### `submission_sent`
+
+```json
+{
+  "time": "2026-05-14T20:01:23.312Z",
+  "level": "INFO",
+  "msg": "submission_sent",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "latency_ms": 312,
+  "transport_message_id": "abc123-postmark-id"
+}
+```
+
+`transport_message_id` is the upstream's identifier (Postmark's `MessageID`). Useful for pivoting from Posthorn logs to the Postmark dashboard.
+
+### `submission_failed`
+
+When `log_failed_submissions = true` (default):
+
+```json
+{
+  "time": "2026-05-14T20:01:23.456Z",
+  "level": "ERROR",
+  "msg": "submission_failed",
+  "submission_id": "...",
+  "endpoint": "/api/contact",
+  "transport": "postmark",
+  "error_class": "terminal",
+  "status": 422,
+  "latency_ms": 287,
+  "transport_message": "The 'From' address is not a valid Sender Signature.",
+  "payload": {
+    "name": "Alice Smith",
+    "email": "alice@example.com",
+    "message": "..."
+  },
+  "headers": {
+    "user-agent": "Mozilla/5.0 ...",
+    "referer": "https://example.com/contact"
+  }
+}
+```
+
+When `log_failed_submissions = false`, `payload` and `headers` are omitted; everything else is present.
+
+`error_class` adds `"terminal"` (4xx other than 429, no retry) and `"timeout"` (10s deadline hit).
+
+## Process-lifecycle events
+
+### `listening`
+
+```json
+{
+  "time": "2026-05-14T19:00:00.000Z",
+  "level": "INFO",
+  "msg": "listening",
+  "addr": ":8080"
+}
+```
+
+### `config_loaded`
+
+```json
+{
+  "time": "2026-05-14T19:00:00.000Z",
+  "level": "INFO",
+  "msg": "config_loaded",
+  "endpoints": ["/api/contact", "/api/newsletter"],
+  "transports": ["postmark"]
+}
+```
+
+### `shutdown_initiated`
+
+```json
+{
+  "time": "2026-05-14T22:00:00.000Z",
+  "level": "INFO",
+  "msg": "shutdown_initiated",
+  "signal": "SIGTERM",
+  "in_flight": 2
+}
+```
+
+### `shutdown_complete`
+
+```json
+{
+  "time": "2026-05-14T22:00:02.500Z",
+  "level": "INFO",
+  "msg": "shutdown_complete",
+  "duration_ms": 2500
+}
+```
+
+## Useful queries (Loki)
+
+```text
+# All errors in the last hour
+{service="posthorn"} | json | level="ERROR"
+
+# Failed submissions on a specific endpoint
+{service="posthorn"} | json | msg="submission_failed" | endpoint="/api/contact"
+
+# Rate of submissions by endpoint over time
+sum by (endpoint) (
+  rate({service="posthorn"} | json | msg="submission_sent" [5m])
+)
+
+# Top spam sources
+topk(10,
+  sum by (client_ip) (
+    count_over_time({service="posthorn"} | json | msg="spam_blocked" [1h])
+  )
+)
+```
+
+## Useful queries (jq for ad-hoc analysis)
+
+```bash
+# Tail and pretty-print
+docker logs -f posthorn | jq .
+
+# All failures from the last hour
+docker logs --since 1h posthorn | jq 'select(.level=="ERROR")'
+
+# Latency P99 over the last 1000 sent submissions
+docker logs --tail 10000 posthorn \
+  | jq -s 'map(select(.msg=="submission_sent")) | sort_by(.latency_ms) | .[-10:]'
+
+# Find a specific submission across all log lines
+docker logs posthorn | jq 'select(.submission_id=="7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f")'
+```
