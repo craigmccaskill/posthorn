@@ -1,0 +1,16 @@
+# Test artifacts (only relevant during `go test`, not for the build)
+*.test
+coverage.out
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Local config (operators provide their own at runtime via volume mount)
+*.toml.local
+config.local.toml
+
+# Dockerfile itself shouldn't change the image hash via COPY
+Dockerfile
+.dockerignore

@@ -55,7 +55,7 @@ Bind the published port to `127.0.0.1` (or an internal Docker network) — **don
 | Default config path | `/etc/posthorn/config.toml` |
 | Default listen address | `:8080` |
 | Entry point | `posthorn serve --config /etc/posthorn/config.toml` |
-| Non-root user | `nobody` (UID 65534) — read-only mounts work without UID matching |
+| Non-root user | `nonroot` (UID 65532) from distroless — read-only mounts work without UID matching |
 | Filesystem | Distroless-static; no shell, no package manager, no debug tools |
 
 The image is intentionally minimal — distroless means no `sh`, `bash`, `apk`, `apt`, or coreutils. Debugging via `docker exec` is not possible. This is by design (smaller attack surface, no risk of leaving debug tools in production).
