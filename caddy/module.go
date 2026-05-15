@@ -80,6 +80,13 @@ type Handler struct {
 	// Defaults to "email" if unset.
 	EmailField string `json:"email_field,omitempty"`
 
+	// ReplyToEmailField names the form field whose value becomes the
+	// outbound email's Reply-To header. Defaults to EmailField (or
+	// "email") if unset. Skip-on-invalid: a malformed or empty value
+	// leaves Reply-To unset rather than forwarding bad data to the
+	// transport.
+	ReplyToEmailField string `json:"reply_to_email_field,omitempty"`
+
 	// Subject is the text/template source for the email subject.
 	Subject string `json:"subject,omitempty"`
 
@@ -197,6 +204,7 @@ func (h *Handler) toEndpointConfig() pconfig.EndpointConfig {
 		MaxBodySize:          h.MaxBodySize,
 		Required:             h.Required,
 		EmailField:           h.EmailField,
+		ReplyToEmailField:    h.ReplyToEmailField,
 		Subject:              h.Subject,
 		Body:                 h.Body,
 		LogFailedSubmissions: h.LogFailedSubmissions,

@@ -70,6 +70,7 @@ posthorn /api/contact {
 	from "Contact <noreply@example.com>"
 	required name email message
 	email_field email
+	reply_to_email_field email
 	honeypot _gotcha
 	allowed_origins https://example.com https://www.example.com
 	max_body_size 64KB
@@ -97,6 +98,7 @@ posthorn /api/contact {
 		{"From", h.From, "Contact <noreply@example.com>"},
 		{"Required", h.Required, []string{"name", "email", "message"}},
 		{"EmailField", h.EmailField, "email"},
+		{"ReplyToEmailField", h.ReplyToEmailField, "email"},
 		{"Honeypot", h.Honeypot, "_gotcha"},
 		{"AllowedOrigins", h.AllowedOrigins, []string{"https://example.com", "https://www.example.com"}},
 		{"MaxBodySize", h.MaxBodySize, "64KB"},

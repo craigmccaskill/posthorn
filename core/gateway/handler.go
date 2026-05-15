@@ -291,6 +291,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		BodyText: body,
 	}
 
+	// Reply-To header (PRD Open Question 4): when the operator names a
+	// form field via reply_to_email_field, or leaves it unset (defaulting
+	// to h.emailField), and the submission provides a value that passes
+	// the email syntax check, set Reply-To. Otherwise leave it empty so
+	// the receiver replies to the `from` address — the safe default.
+	replyToField := h.cfg.ReplyToEmailField
+	if replyToField == "" {
+		replyToField = h.emailField
+	}
+	if v := strings.TrimSpace(r.Form.Get(replyToField)); v != "" && validate.Email(v) {
+		msg.ReplyTo = v
+	}
+
 	// Send with retry policy (FR19-22) under the request hard timeout.
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()

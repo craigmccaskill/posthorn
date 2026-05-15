@@ -40,6 +40,7 @@ type EndpointConfig struct {
 	MaxBodySize          string           `toml:"max_body_size"` // e.g. "32KB"; parsed at handler-construction time
 	Required             []string         `toml:"required"`
 	EmailField           string           `toml:"email_field"`
+	ReplyToEmailField    string           `toml:"reply_to_email_field"`
 	Subject              string           `toml:"subject"`
 	Body                 string           `toml:"body"`
 	LogFailedSubmissions *bool            `toml:"log_failed_submissions"`

@@ -1114,3 +1114,110 @@ func TestHandler_RateLimit_TrustedProxy(t *testing.T) {
 		t.Errorf("status = %d; rate limit should key on X-F-F when proxy is trusted", rec.Code)
 	}
 }
+
+// --- Reply-To handling (PRD Open Question 4 decision, Story 6+ patch) ---
+
+// TestHandler_ReplyTo_DefaultsToEmailField verifies the default behavior:
+// when ReplyToEmailField is unset, the resolved email field is used. A
+// valid email value populates msg.ReplyTo; the receiver hits "Reply" and
+// reaches the submitter, not the operator's "from" address.
+func TestHandler_ReplyTo_DefaultsToEmailField(t *testing.T) {
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		Path:    "/test",
+		To:      []string{"to@example.com"},
+		From:    "from@example.com",
+		Subject: "S",
+		Body:    "B",
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("email=user@example.com&message=hi"))
+
+	if len(rt.sent) != 1 {
+		t.Fatalf("expected one Send, got %d", len(rt.sent))
+	}
+	if got := rt.sent[0].ReplyTo; got != "user@example.com" {
+		t.Errorf("ReplyTo = %q, want user@example.com", got)
+	}
+}
+
+// TestHandler_ReplyTo_HonorsExplicitField verifies that an explicit
+// ReplyToEmailField points at a non-default form field.
+func TestHandler_ReplyTo_HonorsExplicitField(t *testing.T) {
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		Path:              "/test",
+		To:                []string{"to@example.com"},
+		From:              "from@example.com",
+		Subject:           "S",
+		Body:              "B",
+		ReplyToEmailField: "contact_address",
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("contact_address=alice@example.com&message=hi"))
+
+	if got := rt.sent[0].ReplyTo; got != "alice@example.com" {
+		t.Errorf("ReplyTo = %q, want alice@example.com", got)
+	}
+}
+
+// TestHandler_ReplyTo_SkipsInvalidEmail verifies that an invalid email
+// in the configured field does NOT become a Reply-To — that would let
+// a malformed value (CRLF, bare string) reach the transport's header
+// path. Empty Reply-To means receivers reply to the "from" address.
+func TestHandler_ReplyTo_SkipsInvalidEmail(t *testing.T) {
+	rt := &recordingTransport{}
+	// Use a separate email_field so the main email validator passes
+	// (it'd reject the request before send otherwise).
+	cfg := config.EndpointConfig{
+		Path:              "/test",
+		To:                []string{"to@example.com"},
+		From:              "from@example.com",
+		Subject:           "S",
+		Body:              "B",
+		EmailField:        "main_email",
+		ReplyToEmailField: "reply_field",
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("main_email=ok@example.com&reply_field=not-an-email"))
+
+	if got := rt.sent[0].ReplyTo; got != "" {
+		t.Errorf("ReplyTo = %q, want \"\" (invalid email should not set Reply-To)", got)
+	}
+}
+
+// TestHandler_ReplyTo_SkipsEmptyField verifies that a missing form
+// field (no value supplied) does NOT set Reply-To.
+func TestHandler_ReplyTo_SkipsEmptyField(t *testing.T) {
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		Path:              "/test",
+		To:                []string{"to@example.com"},
+		From:              "from@example.com",
+		Subject:           "S",
+		Body:              "B",
+		ReplyToEmailField: "missing_field",
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	h.ServeHTTP(httptest.NewRecorder(), urlencodedRequest("message=hi"))
+
+	if got := rt.sent[0].ReplyTo; got != "" {
+		t.Errorf("ReplyTo = %q, want \"\"", got)
+	}
+}

@@ -120,6 +120,12 @@ This walks through standing up a working contact form on Docker against a real P
 
 7. **Check your inbox.** The email should arrive within seconds. Subject line will be `Contact from Test User`. Body will be the rendered template.
 
+   <Aside type="caution" title="If the email lands in spam (or never arrives)">
+   The first deliverability gotcha for almost every new Posthorn deployment is **DNS on the sending domain**. Postmark sends *from* `noreply@example.com` (whatever you configured), and recipient providers will quarantine that mail unless your domain has SPF, DKIM, and DMARC records correctly set up.
+
+   This is a five-minute fix done at your DNS host, not in Posthorn config. **[Set up SPF, DKIM, and DMARC →](/security/dns/)**
+   </Aside>
+
 </Steps>
 
 ## Wiring it into a real form

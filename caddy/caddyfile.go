@@ -88,6 +88,11 @@ func (h *Handler) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 
+			case "reply_to_email_field":
+				if !d.AllArgs(&h.ReplyToEmailField) {
+					return d.ArgErr()
+				}
+
 			case "honeypot":
 				if !d.AllArgs(&h.Honeypot) {
 					return d.ArgErr()
