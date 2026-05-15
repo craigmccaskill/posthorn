@@ -8,8 +8,6 @@
 //
 // Per ADR-2-revised: slog in core (zero deps for the logging machinery
 // itself; uuid is the one external dep, ~200 LOC well-known package).
-// The Caddy adapter uses Caddy's zap logger; bridging happens at the
-// adapter boundary.
 package log
 
 import (

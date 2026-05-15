@@ -3,9 +3,8 @@
 // One Handler instance is constructed per configured endpoint. Multiple
 // endpoints get multiple Handlers, each independent (FR2). The Handler
 // implements [net/http.Handler] and is path-unaware: it assumes the caller
-// has already routed the request to the right endpoint. The standalone
-// binary uses [net/http.ServeMux] for routing; the Caddy adapter checks
-// the path in its module wrapper.
+// has already routed the request to the right endpoint. The cmd/posthorn
+// binary uses [net/http.ServeMux] for routing.
 package gateway
 
 import (
@@ -69,8 +68,7 @@ type Handler struct {
 // Option configures a Handler at construction time.
 type Option func(*Handler)
 
-// WithLogger overrides the default (discard) logger. The Caddy adapter
-// passes a slog wrapper around Caddy's zap logger; the standalone
+// WithLogger overrides the default (discard) logger. The cmd/posthorn
 // binary passes the logger built from the [logging] config block.
 func WithLogger(l *slog.Logger) Option {
 	return func(h *Handler) {

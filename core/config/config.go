@@ -1,10 +1,9 @@
 // Package config defines the Posthorn configuration schema and TOML loader.
 //
 // Configuration flows: TOML file → resolveEnvVars → toml.Unmarshal → Validate.
-// Both deployment shapes (standalone binary and Caddy adapter) end up with
-// the same Config struct, which is the single source of truth for runtime
-// behavior. Validation runs at load time (FR24) so operators get fast
-// feedback rather than runtime surprises.
+// The Config struct is the single source of truth for runtime behavior.
+// Validation runs at load time (FR24) so operators get fast feedback
+// rather than runtime surprises.
 package config
 
 import (
