@@ -5,7 +5,11 @@ description: A working contact form on Posthorn in five minutes.
 
 import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 
-This walks through standing up a working contact form on Docker against a real Postmark account. It assumes you've already followed [Installation](/getting-started/installation/) and have a Postmark server token in hand.
+This walks through standing up a working contact form on Docker against a real transactional-mail account. It assumes you've already followed [Installation](/getting-started/installation/) and have a provider API key in hand.
+
+<Aside type="note" title="Transport choice">
+This walkthrough uses **Postmark** because it's the only transport v1.0 ships. **Resend, Mailgun, AWS SES, and outbound-SMTP relay** ship in v1.2 — the walkthrough structure doesn't change, just the `[endpoints.transport]` block at step 2. See [Transports](/configuration/transports/) for what's available and [Roadmap](/roadmap/) for what's next.
+</Aside>
 
 <Steps>
 
@@ -58,7 +62,7 @@ This walks through standing up a working contact form on Docker against a real P
    ```
 
    <Aside type="caution">
-   The Postmark *server token* is per-server, not per-account. Find it in the Postmark dashboard under your server's API Tokens tab. Never commit this to git.
+   For Postmark specifically: the *server token* is per-server, not per-account. Find it in the Postmark dashboard under your server's API Tokens tab. Other transports (v1.2+) have analogous per-deployment credentials documented on their respective [transport pages](/configuration/transports/). Never commit any of these to git.
    </Aside>
 
 4. **Write `docker-compose.yml`.**
