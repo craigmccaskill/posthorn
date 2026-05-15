@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM gcr.io/distroless/static:nonroot
 
 LABEL org.opencontainers.image.title="Posthorn" \
-      org.opencontainers.image.description="Self-hosted email gateway for cloud platforms that block outbound SMTP" \
+      org.opencontainers.image.description="The unified outbound mail layer for self-hosted projects" \
       org.opencontainers.image.source="https://github.com/craigmccaskill/posthorn" \
       org.opencontainers.image.url="https://posthorn.dev" \
       org.opencontainers.image.licenses="Apache-2.0"

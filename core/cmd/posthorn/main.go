@@ -36,7 +36,7 @@ import (
 // "-X main.version=v1.0.0" in the release workflow (Story 5.3).
 var version = "v0.0.1-dev"
 
-const usage = `posthorn — self-hosted email gateway for cloud platforms that block outbound SMTP.
+const usage = `posthorn — the unified outbound mail layer for self-hosted projects.
 
 Usage:
   posthorn serve     [--config <path>] [--listen <addr>]
