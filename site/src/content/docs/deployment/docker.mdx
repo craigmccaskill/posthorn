@@ -66,11 +66,12 @@ If you need to inspect the container for development, override the image command
 
 | Tag | What you get |
 |---|---|
-| `:latest` | Most recent stable release. Multi-arch. |
-| `:v1.0.0`, `:v1.0`, `:v1` | Pinned versions / version aliases |
-| `:main` | HEAD of `main` branch (CI build, not a release) — **don't use in production** |
+| `:latest` | Most recent stable release. Multi-arch. Not set for pre-releases (e.g., `-rc1`, `-test`). |
+| `:1.0.0` | Exact patch version. Multi-arch. |
+| `:1.0` | Latest patch in the 1.0.x line. Floats. |
+| `:1` | Latest release in the 1.x line. Floats. |
 
-For production, pin to a specific version (`:v1.0.0`) and update intentionally. `:latest` is convenient for development.
+For production, pin to a specific version (`:1.0.0`) and update intentionally. `:latest` is convenient for development.
 
 ## Health checks
 
