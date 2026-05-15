@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_Nothing yet — next entry will become v1.0.1 or v1.1.0._
+
+## [1.0.0] — 2026-05-16
+
+Initial public release. The full v1.0 spec — locked 2026-04-27 — is in [`spec/`](./spec/).
+
 ### Added
 
 - HTTP form ingress with multiple independent endpoints per config (FR1, FR2)
@@ -22,7 +28,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GitHub Actions CI running `go vet` and `go test -race` across both workspace modules
 - Caddy v2 adapter module at `github.com/craigmccaskill/posthorn/caddy` registering `http.handlers.posthorn`, with Caddyfile directive support and a TOML-parity unit test (FR27-FR30, NFR10)
 - Public documentation site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight)
-
-## [1.0.0] — TBD
-
-_Pending Story 7.3 tag. Contents will move from [Unreleased] when v1.0.0 is tagged._

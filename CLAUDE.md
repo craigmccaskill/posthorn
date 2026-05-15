@@ -8,28 +8,29 @@ Posthorn is a self-hosted email gateway for cloud platforms that block outbound 
 
 The full project history (initial scope as a Caddy form handler called `caddy-formward`, the 2026-04-27 scope expansion to email gateway, the rename to Posthorn) is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Status log". Don't re-derive — read the spec.
 
-## Status (as of 2026-04-27)
+## Status (as of 2026-05-15)
 
-**Phase:** pre-v1.0 implementation. Spec is locked. Epics 1-4 complete; Epics 5-7 remain.
+**Phase:** v1.0 release prep. All implementation work landed; tag pending operator validation.
 
-**Repo state:** Two-module workspace with the standalone gateway functionally complete. Core has 9 packages: `transport/`, `config/`, `gateway/`, `validate/`, `template/`, `response/`, `spam/`, `ratelimit/`, `log/`, plus `cmd/posthorn/` for the binary. The `caddy/` adapter module is still a stub awaiting Epic 6. **2,240 source lines, 3,922 test lines, 212 tests, all passing.**
+**Repo state:** Two-module workspace, both functional. Core has 9 packages plus `cmd/posthorn/`. Caddy adapter is ~250 lines wrapping `core/gateway.Handler` with `http.handlers.posthorn` registration and Caddyfile unmarshaler. Public docs site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight, deployed via GH Pages from `site/`).
 
-The full request pipeline is wired end-to-end: body cap → method → content-type → origin → rate limit → parse → honeypot → required fields → email format → template render → transport send (with FR19-22 retry under 10s hard timeout) → JSON 200 or 502. Every decision point logs structured JSON with a per-request UUID submission_id.
+The full request pipeline is wired end-to-end across both deployment shapes: body cap → method → content-type → origin → rate limit → parse → honeypot → required fields → email format → template render → transport send (with FR19-22 retry under 10s hard timeout) → JSON 200 or 502. Every decision point logs structured JSON with a per-request UUID submission_id. CI runs `go vet` + `go test -race` across both modules on every push.
 
-**Completed stories (12 of 21):**
+**Completed stories (20 of 21):**
 - ✅ Epic 1 (Stories 1.1-1.3) — rename, workspace restructure, zero-Caddy-dep enforcement
 - ✅ Epic 2 (Stories 2.1-2.5) — TOML config, HTTP handler, validation, templating, cmd/posthorn
 - ✅ Epic 3 (Stories 3.1-3.2) — spam protection, rate limiting
 - ✅ Epic 4 (Stories 4.1-4.2) — retry policy, structured JSON logging
+- ✅ Epic 5 (Stories 5.1-5.3) — multi-stage Dockerfile, CI workflow, multi-arch release workflow (validated end-to-end via `v0.0.1-test` tag → `ghcr.io/craigmccaskill/posthorn:0.0.1-test` multi-arch publish)
+- ✅ Epic 6 (Stories 6.1-6.3) — Caddy adapter module, Caddyfile unmarshaler with parity test, manual-test procedure
+- ✅ Epic 7 Stories 7.1-7.2 — README rewrite, OSS hygiene files (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CHANGELOG, PR + issue templates)
 
-**Remaining stories (9 of 21):**
-- ⏳ Epic 5 (Stories 5.1-5.3, ~2.5h) — Dockerfile, GitHub Actions CI, multi-arch release workflow
-- ⏳ Epic 6 (Stories 6.1-6.3, ~2.5h) — Caddy adapter module, Caddyfile unmarshaler, parity test
-- ⏳ Epic 7 (Stories 7.1-7.3, ~3h) — README, OSS hygiene files, v1.0.0 tag, modules-page submission
+**Remaining story (1 of 21):**
+- ⏳ Epic 7 Story 7.3 — tag v1.0.0, verify GHCR publish, file modules-page PR against `caddyserver/website`. **Gated on operator validation:** Docker smoke test (Story 5.1 acceptance), `xcaddy build` verification (Story 6.1 acceptance), full manual parity test ([docs/manual-test.md](./docs/manual-test.md), Story 6.3 acceptance).
 
-**Current story:** Epic 5 Story 5.1 — `core/Dockerfile` using multi-stage build (golang:1.25 builder → gcr.io/distroless/static runtime). Image entrypoint runs `posthorn serve --config /etc/posthorn/config.toml`.
+**Current task:** Operator validation pass scheduled 2026-05-16/17. See [docs/release-checklist.md](./docs/release-checklist.md) for the tag-day procedure.
 
-**Budget:** ~13.5h burned of 25h v1.0 budget. Tracking on plan.
+**Budget:** ~14.5h burned of 25h v1.0 budget. Site work (~6h, off-budget) was launch infrastructure. Comfortable margin remaining for any validation rework.
 
 After each story ships, update this "Current story" pointer.
 
