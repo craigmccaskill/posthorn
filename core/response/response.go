@@ -30,10 +30,13 @@ type Error struct {
 	Fields map[string]string `json:"fields,omitempty"`
 }
 
-// Success is the JSON envelope returned on 200. Submission IDs land in
-// Story 4.2; for now the body is an empty object so clients have a stable
-// "did it work" response shape.
-type Success struct{}
+// Success is the JSON envelope returned on 200. The same shape is written
+// on both real success and silent-honeypot rejection (NFR5) — a bot that
+// looks at the body should not be able to tell which path it took.
+type Success struct {
+	Status       string `json:"status"`
+	SubmissionID string `json:"submission_id"`
+}
 
 // WriteJSON writes body as JSON with the given status code.
 //

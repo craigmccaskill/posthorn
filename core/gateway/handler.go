@@ -239,13 +239,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Honeypot check (FR5) — silent 200 if triggered so bots can't
-	// distinguish honeypot rejection from success.
+	// distinguish honeypot rejection from success. The response body
+	// mirrors the real success path's shape (status + submission_id)
+	// for the same reason: an observant bot inspecting the body must
+	// not be able to tell the two paths apart.
 	if spam.CheckHoneypot(r.Form, h.cfg.Honeypot) == spam.SilentReject {
 		logger.Info("spam_blocked",
 			slog.String("kind", "honeypot"),
 			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 		)
-		response.WriteJSON(w, http.StatusOK, response.Success{})
+		response.WriteJSON(w, http.StatusOK, response.Success{
+			Status:       "ok",
+			SubmissionID: submissionID,
+		})
 		return
 	}
 
@@ -331,7 +337,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	logger.Info("submission_sent",
 		slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 	)
-	response.WriteJSON(w, http.StatusOK, response.Success{})
+	response.WriteJSON(w, http.StatusOK, response.Success{
+		Status:       "ok",
+		SubmissionID: submissionID,
+	})
 }
 
 // sendWithRetry implements the FR19-22 retry policy:

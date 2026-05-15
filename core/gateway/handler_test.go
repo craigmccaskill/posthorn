@@ -608,6 +608,71 @@ func TestHandler_Honeypot_Triggered_Silent200(t *testing.T) {
 	}
 }
 
+// TestHandler_HoneypotBodyMatchesSuccessShape pins the NFR5 / FR5
+// invariant: a bot inspecting the 200 response body must not be able
+// to tell a honeypot rejection apart from a real successful send.
+// Both paths return the same JSON shape ({status, submission_id});
+// only the submission_id value differs between requests.
+func TestHandler_HoneypotBodyMatchesSuccessShape(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithSpam(t, rt, "_gotcha", nil, "")
+
+	// Real success.
+	recOK := httptest.NewRecorder()
+	h.ServeHTTP(recOK, urlencodedRequest("name=craig"))
+	if recOK.Code != http.StatusOK {
+		t.Fatalf("real-success status = %d", recOK.Code)
+	}
+
+	// Honeypot reject.
+	recHP := httptest.NewRecorder()
+	h.ServeHTTP(recHP, urlencodedRequest("name=craig&_gotcha=bot"))
+	if recHP.Code != http.StatusOK {
+		t.Fatalf("honeypot status = %d", recHP.Code)
+	}
+
+	var okBody, hpBody map[string]any
+	if err := json.Unmarshal(recOK.Body.Bytes(), &okBody); err != nil {
+		t.Fatalf("real-success body not JSON: %v (body=%q)", err, recOK.Body.String())
+	}
+	if err := json.Unmarshal(recHP.Body.Bytes(), &hpBody); err != nil {
+		t.Fatalf("honeypot body not JSON: %v (body=%q)", err, recHP.Body.String())
+	}
+
+	// Same set of keys.
+	if len(okBody) != len(hpBody) {
+		t.Fatalf("body key count differs: ok=%d hp=%d (ok=%v hp=%v)",
+			len(okBody), len(hpBody), okBody, hpBody)
+	}
+	for k := range okBody {
+		if _, ok := hpBody[k]; !ok {
+			t.Errorf("key %q present in real-success body but not honeypot body", k)
+		}
+	}
+
+	// Same status value.
+	if okBody["status"] != "ok" {
+		t.Errorf("real-success status = %v, want ok", okBody["status"])
+	}
+	if hpBody["status"] != "ok" {
+		t.Errorf("honeypot status = %v, want ok", hpBody["status"])
+	}
+
+	// Both have a non-empty submission_id, and they differ (fresh per
+	// request — so a replay attacker can't fingerprint by ID either).
+	okID, _ := okBody["submission_id"].(string)
+	hpID, _ := hpBody["submission_id"].(string)
+	if okID == "" {
+		t.Error("real-success body missing non-empty submission_id")
+	}
+	if hpID == "" {
+		t.Error("honeypot body missing non-empty submission_id")
+	}
+	if okID == hpID {
+		t.Errorf("submission_id reused across requests: %q", okID)
+	}
+}
+
 func TestHandler_Honeypot_NotTriggered_Pass(t *testing.T) {
 	rt := &recordingTransport{}
 	h := handlerWithSpam(t, rt, "_gotcha", nil, "")

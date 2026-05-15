@@ -13,15 +13,25 @@ import (
 
 func TestWriteJSON_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
-	response.WriteJSON(rec, 200, response.Success{})
+	response.WriteJSON(rec, 200, response.Success{
+		Status:       "ok",
+		SubmissionID: "11111111-2222-3333-4444-555555555555",
+	})
 	if rec.Code != 200 {
 		t.Errorf("status = %d, want 200", rec.Code)
 	}
 	if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
 		t.Errorf("Content-Type = %q", got)
 	}
-	if !strings.Contains(rec.Body.String(), "{}") {
-		t.Errorf("body = %q, want JSON object", rec.Body.String())
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("body did not decode as JSON: %v (body=%q)", err, rec.Body.String())
+	}
+	if got["status"] != "ok" {
+		t.Errorf("status = %v, want ok", got["status"])
+	}
+	if got["submission_id"] != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("submission_id = %v", got["submission_id"])
 	}
 }
 
