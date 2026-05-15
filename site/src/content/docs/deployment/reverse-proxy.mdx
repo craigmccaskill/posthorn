@@ -12,7 +12,7 @@ Posthorn does not terminate TLS. It expects a reverse proxy in front of it, hand
 - Client IP forwarding via `X-Forwarded-For`
 - Optional request logging
 
-These are sample configs for the most common proxies. If you're already running Caddy and want first-class integration without a separate container, [use the Caddy adapter](/deployment/caddy-adapter/) instead.
+These are sample configs for the most common proxies. Any HTTP reverse proxy works — Posthorn is just an HTTP service on `:8080`.
 
 <Tabs syncKey="proxy">
   <TabItem label="Caddy">

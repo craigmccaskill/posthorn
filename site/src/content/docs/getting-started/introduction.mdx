@@ -35,7 +35,7 @@ There is no actively maintained, self-hosted, HTTP-API-first email gateway in 20
 
 Posthorn is a single Go binary distributed primarily as a Docker container. It speaks form-encoded HTTP on one side (with JSON API in v1.1 and SMTP in v1.3) and HTTP API calls to your chosen transactional provider on the other. A single TOML file configures one or more endpoints, each with its own recipients, templates, spam protection, and rate limit.
 
-For operators already running Caddy as a front door, the same logic is also packaged as a Caddy v2 module (`http.handlers.posthorn`) you can load with `xcaddy build`. Both deployment shapes share one core gateway implementation — same pipeline, same behavior, same tests.
+Posthorn doesn't terminate TLS — run it behind whatever reverse proxy you already use (Caddy, nginx, Traefik, Cloudflare). The [reverse proxy](/deployment/reverse-proxy/) page covers the common ones with worked configs.
 
 ## What ships in v1.0
 
@@ -49,7 +49,7 @@ For operators already running Caddy as a front door, the same logic is also pack
 | Response handling | JSON, redirect via content negotiation, `redirect_success` / `redirect_error` |
 | Failure handling | 1 retry on transient/5xx (1s), 1 retry on 429 (5s), no retry on 4xx config errors, 10s hard timeout |
 | Logging | Structured JSON with UUIDv4 submission ID |
-| Deployment | Standalone Docker (primary) + Caddy adapter (optional) |
+| Deployment | Standalone Docker container or Go binary, behind any reverse proxy |
 
 ## What's out of scope for v1.0
 

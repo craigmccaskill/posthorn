@@ -94,10 +94,6 @@ Posthorn handles header safety as a code-level invariant. Submitter input is jus
 - **Use Postmark's verified-sender domain** — Postmark rejects messages from `From` addresses not on a verified domain. This is an additional Postmark-side defense; keep it on.
 - **Set up SPF, DKIM, DMARC** on your sending domain — these don't defend against header injection but defend against your domain being used for spoofing more broadly. See [DNS](/security/dns/).
 
-<Aside type="note">
-The same guarantees apply to the Caddy adapter. The adapter delegates the entire pipeline (including the transport) to the same core code path; there's no separate header-handling path in the adapter.
-</Aside>
-
 ## When v1.2+ transports ship
 
 Each new transport (Resend, Mailgun, SES) must use the same structured-data approach. The Postmark transport sets the pattern: JSON-encoded request bodies, no `Sprintf` into header values, table-driven injection tests included.

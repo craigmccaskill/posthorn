@@ -102,10 +102,10 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
     syntax check. CSRF + time-based tokens in v1.2. API-key auth for
     server-to-server callers in v1.1.
   </Card>
-  <Card title="Two deployment shapes" icon="puzzle">
-    Standalone Docker container (primary) or a Caddy v2 module for
-    operators already running Caddy. Both run the same pipeline —
-    identical behavior by construction.
+  <Card title="One deployment shape, every front door" icon="puzzle">
+    Standalone Docker container (or Go binary) that runs as a sidecar
+    to your apps. Reverse-proxy your form endpoints from whatever
+    front door you already use — Caddy, nginx, Traefik, Cloudflare.
   </Card>
   <Card title="Structured for ops" icon="document">
     JSON logs with UUIDv4 submission IDs. Hard 10-second request timeout.
@@ -180,7 +180,7 @@ Full walkthrough: [posthorn.dev/getting-started/quick-start](/getting-started/qu
 
 <LinkCard
   title="Installation guide"
-  description="Docker Compose, standalone binary, or Caddy adapter — pick a path."
+  description="Docker Compose or a standalone Go binary — pick a path."
   href="/getting-started/installation/"
 />
 
@@ -217,7 +217,7 @@ Four principles that shape every decision. Full reasoning in [the brief](https:/
 Posthorn unifies how your apps *send* mail — many ingress shapes converge on one transport surface, talking to your provider. Receiving mail (MX hosting, inbound spam filtering, mailbox storage) is mail-server territory and Posthorn doesn't go there. The unification is one-way: many inputs, one output. The mailbox is somebody else's job.
 
 **Configuration as truth.**
-A TOML file (or Caddyfile via the adapter) is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
+A TOML file is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
 
 **Bespoke transports, audit in an afternoon.**
 Every transport integration is ~80-200 lines of Go in this repo. Postmark is ~80 lines. SES will be ~200 (SigV4 + send). No vendor SDKs in transport code, no transitive dep trees to track for CVEs, no opaque wrappers between you and the upstream API. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.

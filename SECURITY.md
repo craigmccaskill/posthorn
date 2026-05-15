@@ -21,7 +21,7 @@ If for some reason that isn't available to you, email **craig.mccaskill+posthorn
 
 - A clear description of the issue and the impact you observed (or believe is achievable)
 - Posthorn version (output of `posthorn version` or the Docker image tag)
-- Deployment shape (standalone Docker / standalone binary / Caddy adapter)
+- Deployment shape (Docker container / standalone binary)
 - A minimal reproducer if you have one (sanitized config, sample request)
 - Any logs or stack traces (with API keys redacted)
 

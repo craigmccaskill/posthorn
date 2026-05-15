@@ -59,7 +59,6 @@ export default defineConfig({
           items: [
             { label: 'Docker (recommended)', slug: 'deployment/docker' },
             { label: 'Standalone binary', slug: 'deployment/binary' },
-            { label: 'Caddy adapter', slug: 'deployment/caddy-adapter' },
             { label: 'Reverse proxy', slug: 'deployment/reverse-proxy' },
           ],
         },

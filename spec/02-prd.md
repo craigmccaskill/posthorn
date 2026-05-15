@@ -11,11 +11,13 @@ This document translates the locked decisions in [the project brief](./01-projec
 
 Scope is strictly v1.0. v1.1+ items are tracked in the project's Obsidian dashboard (not included in this repository).
 
+> **2026-05-15 amendment:** The Caddy v2 adapter module was cut from v1.0 pre-tag (see the brief's status log for the product reasoning). Original FR27–FR30 and NFR10 are deleted in-place below; Epic 6 (Caddy adapter) is retired; Stories 1.2 and 1.3 (workspace restructure) and Story 7.3 (modules-page PR) are noted with the cut. The standalone-behind-any-reverse-proxy deployment shape is now the only one in scope.
+
 ## Goals
 
 Defer to [the project brief](./01-project-brief.md) §"Goals and Success Metrics". Two reminders that shape decisions in this document:
 
-- **Done:** Author's blog runs on Posthorn for the contact form for 30 days with zero dropped submissions; README has copy-pasteable examples for both deployment shapes; tagged v1.0.0 with Docker image; Caddy adapter listed on caddyserver.com modules page within 7 days
+- **Done:** Author's blog runs on Posthorn for the contact form for 30 days with zero dropped submissions; README has a copy-pasteable Docker Compose example verified end-to-end; tagged v1.0.0 with Docker image
 - **Worked:** External user in production within 90 days + Ghost roundtrip via v1.3 SMTP ingress within 6 months
 
 ## Functional requirements
@@ -32,7 +34,7 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 **FR3.** The gateway **must** ship a Postmark HTTP API transport that accepts a configurable API key (via `{env.VAR}` substitution) and sends submissions as email through `https://api.postmarkapp.com/email`.
 
-**FR4.** The gateway **must** expose a pluggable `Transport` interface such that additional transports (Resend, Mailgun, SES, outbound SMTP) can be added in v1.2+ without modifying handler logic or Caddy adapter code.
+**FR4.** The gateway **must** expose a pluggable `Transport` interface such that additional transports (Resend, Mailgun, SES, outbound SMTP) can be added in v1.2+ without modifying handler logic.
 
 ### Spam protection
 
@@ -98,15 +100,9 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 **FR26.** The standalone binary **must** handle SIGTERM and SIGINT for graceful shutdown: stop accepting new connections, drain in-flight requests up to the 10-second per-request timeout, then exit with code 0. Forced exit on second signal.
 
-### Caddy adapter
+### Caddy adapter (deleted 2026-05-15)
 
-**FR27.** The Caddy adapter **must** be published as a separate Go module at `github.com/craigmccaskill/posthorn/caddy`, distinct from the standalone core module.
-
-**FR28.** The Caddy adapter **must** register the module ID `http.handlers.posthorn` and implement `caddyhttp.MiddlewareHandler`.
-
-**FR29.** The Caddy adapter **must** support a Caddyfile directive `posthorn <path> { ... }` that mirrors the standalone TOML config schema for the form-ingress endpoint, with adapter-specific syntax adjustments where Caddyfile conventions differ from TOML.
-
-**FR30.** The Caddy adapter **must** be installable via `xcaddy build --with github.com/craigmccaskill/posthorn/caddy` and produce a working Caddy build that handles form submissions identically to the standalone binary.
+FR27–FR30 originally specified a Caddy v2 adapter module. They were deleted pre-tag along with the adapter itself. Sequence numbers are retained for historical traceability — do not reuse them for new requirements.
 
 ## Non-functional requirements
 
@@ -134,11 +130,11 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 ### Compatibility
 
-**NFR9.** The standalone core **must** build and run on Go 1.25+. The Caddy adapter **must** build against Caddy 2.9+. The `go.mod` files **must** declare these as minimum versions.
+**NFR9.** The standalone binary **must** build and run on Go 1.25+. The `go.mod` file **must** declare this as the minimum version.
 
-**NFR10.** The standalone core **must not** depend on Caddy. The Caddy adapter **must** depend on both the standalone core and Caddy. This dependency direction is a hard constraint.
+**NFR10.** *(Deleted 2026-05-15 along with FR27–FR30.)* Originally specified the standalone-core-zero-Caddy-dependency invariant.
 
-**NFR11.** Config syntax (TOML, Caddyfile) **must** remain stable within the v1 major version. Adding optional new fields is permitted; removing or renaming existing ones is not.
+**NFR11.** The TOML config syntax **must** remain stable within the v1 major version. Adding optional new fields is permitted; removing or renaming existing ones is not.
 
 ### Distribution & build
 
@@ -146,17 +142,17 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 **NFR13.** The Docker image **must** be multi-arch (linux/amd64 and linux/arm64).
 
-**NFR14.** The Caddy adapter **must** be installable via `xcaddy build --with github.com/craigmccaskill/posthorn/caddy`.
+**NFR14.** *(Deleted 2026-05-15 along with FR27–FR30.)* Originally specified the `xcaddy build` installability of the Caddy adapter.
 
 **NFR15.** The repository **must** be licensed Apache-2.0, with a `LICENSE` file in the repository root.
 
 ### Documentation
 
-**NFR16.** The README **must** include complete, copy-pasteable examples for both deployment shapes (standalone Docker Compose; Caddy adapter), each verified end-to-end on a clean install.
+**NFR16.** The README **must** include a complete, copy-pasteable Docker Compose example verified end-to-end on a clean install.
 
 **NFR17.** The README **must** document DNS prerequisites for production use: SPF, DKIM, and DMARC records for the sending domain.
 
-**NFR18.** Every config field (TOML, Caddyfile) **must** be documented in the README with at least one example value and a description of its behavior.
+**NFR18.** Every TOML config field **must** be documented in the README (or the linked docs site) with at least one example value and a description of its behavior.
 
 ## Testing strategy
 
@@ -166,10 +162,9 @@ The brief commits to test coverage for header injection (NFR2) and to a 30-day p
 |-------|----------|
 | Unit | Table-driven Go tests for each component (validation, rate limiter, templating, content negotiation, error classification, config loader) |
 | Transport integration | `httptest.NewServer` mock standing in for Postmark API; covers retry behavior, error classification, timeout enforcement |
-| Adapter integration | Caddyfile parse + JSON adapt round-trip; assertion that adapter and standalone produce identical outbound mail given identical input |
-| End-to-end | Manual against real Postmark account during development; CI does not require a live API key |
+| End-to-end | Manual against real Postmark account during development (see `docs/manual-test.md`); CI does not require a live API key |
 | Security | Explicit table tests against known injection payloads; assertions on outbound mail structure (mock-captured) |
-| CI | GitHub Actions: `go test ./...` on push to main and on PRs; matrix across the two go modules in the workspace |
+| CI | GitHub Actions: `go vet ./...` and `go test -race -count=1 ./...` on push to main and on PRs |
 
 ## Epic and story breakdown
 
@@ -177,15 +172,17 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 
 ### Epic 1: Project restructure (~3h)
 
-**Definition of done:** Repo renamed to `posthorn`. Two-module workspace structure (`core/` + `caddy/`) in place, both modules buildable, existing transport code migrated. No new functionality yet.
+**Definition of done:** Repo renamed to `posthorn`. The standalone-core source tree at `core/` is buildable, existing transport code migrated. No new functionality yet.
+
+> **2026-05-15 amendment:** Stories 1.2 and 1.3 originally split the codebase into a two-module workspace (`core/` + `caddy/`) joined by `go.work`. When the Caddy adapter was cut pre-tag, the `caddy/` module and `go.work` were removed; the repo is now a single Go module rooted at `core/`. Story 1.1 (rename) and the spirit of Stories 1.2–1.3 (move transport code into `core/`) still describe what happened.
 
 - **Story 1.1:** Rename GitHub repo from `caddy-formward` to `posthorn`. Update CONTRIBUTING.md, CLAUDE.md, README.md to use new project identity. Verify `git clone` still works via auto-redirect for at least one external clone.
   - Acceptance: New URL resolves; old URL redirects; CI still passes.
 
-- **Story 1.2:** Restructure repo to two-module workspace: `core/` (gateway, no Caddy dep) + `caddy/` (adapter, depends on core). Add `go.work` at repo root joining both. Move existing `transport.go`, `transport_postmark.go`, and their tests into `core/transport/`.
-  - Acceptance: `go work sync` succeeds; `go build ./...` succeeds in both modules; existing transport tests pass after import-path updates.
+- **Story 1.2:** Move existing `transport.go`, `transport_postmark.go`, and their tests into `core/transport/`.
+  - Acceptance: `go build ./...` succeeds in `core/`; existing transport tests pass after import-path updates.
 
-- **Story 1.3:** Strip Caddy-specific scaffolding from migrated code. Remove `caddy.Module` registration, `caddy.Provisioner` / `caddy.Validator` interface implementations, and Caddyfile-specific parsing from the core. Caddy concerns move to the `caddy/` module in Epic 6.
+- **Story 1.3:** Strip Caddy-specific scaffolding from migrated code. Remove `caddy.Module` registration, `caddy.Provisioner` / `caddy.Validator` interface implementations, and Caddyfile-specific parsing from the core.
   - Acceptance: `core/` module's `go.mod` does not import `github.com/caddyserver/caddy/v2`; `core` builds standalone.
 
 ### Epic 2: Standalone gateway core (~5h)
@@ -234,37 +231,28 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 - **Story 5.1:** Add `core/Dockerfile` using multi-stage build (golang:1.25 builder → gcr.io/distroless/static runtime). Image entrypoint runs `posthorn serve --config /etc/posthorn/config.toml`. Single-arch local build first.
   - Acceptance: `docker build` succeeds; running container with sample config + Postmark API key sends test email successfully.
 
-- **Story 5.2:** Add GitHub Actions workflow for CI: `go test ./...` and `go vet` across both modules in the workspace, on push to main and PRs.
+- **Story 5.2:** Add GitHub Actions workflow for CI: `go test -race -count=1 ./...` and `go vet ./...` on push to main and PRs.
   - Acceptance: CI passes on a clean main branch; PR with deliberately broken test fails.
 
 - **Story 5.3:** Add release workflow: on tag push (`v*.*.*`), build multi-arch Docker image (amd64 + arm64) and push to GHCR. Tag `:latest` only on stable releases.
   - Acceptance: Tagging `v0.0.1-test` produces both arch images at `ghcr.io/craigmccaskill/posthorn:v0.0.1-test`. Pulling on each architecture works.
 
-### Epic 6: Caddy adapter (~2.5h)
+### Epic 6: Caddy adapter — **retired 2026-05-15**
 
-**Definition of done:** Caddy adapter module wraps the core HTTP form handler as `http.handlers.posthorn`. Caddyfile parsing works. xcaddy build produces a working Caddy with the module loaded.
-
-- **Story 6.1:** Implement adapter module in `caddy/`. Register `http.handlers.posthorn` with Caddy. Implement `caddy.Provisioner`, `caddy.Validator`, `caddyhttp.MiddlewareHandler`. Wraps `core/gateway.Handler`.
-  - Acceptance: `xcaddy build --with .` produces a binary; `caddy list-modules` includes `http.handlers.posthorn`.
-
-- **Story 6.2:** Implement Caddyfile unmarshaler matching the directive grammar in the architecture doc. Parse to the same internal config struct that TOML produces (single source of truth in `core/config`).
-  - Acceptance: Caddyfile config `posthorn /api/contact { ... }` produces an identical internal config to the equivalent TOML; `caddy adapt` round-trip succeeds.
-
-- **Story 6.3:** Manual end-to-end test: configure Caddy adapter against real Postmark account, POST a form submission, verify email lands. Same test against the standalone binary for parity.
-  - Acceptance: Both deployment shapes deliver the same email for identical input. Test procedure documented in `docs/manual-test.md`.
+Original definition of done was a Caddy v2 adapter module wrapping the core handler as `http.handlers.posthorn`. Stories 6.1–6.3 were implemented and shipped during development; on 2026-05-15, on tag eve, the adapter was cut for the product reasons recorded in the brief's status log. The `caddy/` directory, the workspace file, the parity test, and the manual parity procedure were removed. The `core/gateway.Handler` interface is preserved so a community module against it remains possible without the project carrying the maintenance.
 
 ### Epic 7: Documentation and release (~3h)
 
 **Definition of done:** Repository has a complete README, OSS-hygiene docs, working examples for both deployment shapes, tagged v1.0.0, modules-page submission filed.
 
-- **Story 7.1:** Write README with: project description, "why" framing (cloud-blocks-SMTP motivation), copy-pasteable examples for both deployment shapes (Docker Compose; Caddy adapter), complete config reference (TOML + Caddyfile), DNS prerequisites (SPF/DKIM/DMARC), build instructions, badges, license note. Set GitHub repo metadata: description, topics (`email-gateway`, `postmark`, `self-hosted`, `caddy-module`).
-  - Acceptance: Both READMEs examples build and run against a real Postmark account. NFR16-18 satisfied.
+- **Story 7.1:** Write README with: project description, "why" framing (cloud-blocks-SMTP motivation), copy-pasteable Docker Compose example, complete TOML config reference, DNS prerequisites (SPF/DKIM/DMARC), build instructions, badges, license note. Set GitHub repo metadata: description, topics (`email-gateway`, `postmark`, `self-hosted`).
+  - Acceptance: README example builds and runs against a real Postmark account. NFR16-18 satisfied.
 
 - **Story 7.2:** Add OSS hygiene files. `CONTRIBUTING.md` updated for Posthorn; `SECURITY.md` documenting the vulnerability disclosure process and explicit security guarantees (NFR1-3); `CODE_OF_CONDUCT.md` adopting Contributor Covenant 2.1; `CHANGELOG.md` in Keep a Changelog format with v1.0.0 entry; `.github/PULL_REQUEST_TEMPLATE.md` and `.github/ISSUE_TEMPLATE/` (bug + feature).
   - Acceptance: All listed files present. SECURITY.md gives a clear reporting channel.
 
-- **Story 7.3:** Tag v1.0.0 release with release notes summarizing v1.0 scope. Verify Docker images publish to GHCR. File modules-page submission PR against `caddyserver/website` for the Caddy adapter (per R3 mitigation; within 7 days of tag).
-  - Acceptance: GitHub release published; Docker image pullable; modules-page PR submitted.
+- **Story 7.3:** Tag v1.0.0 release with release notes summarizing v1.0 scope. Verify Docker images publish to GHCR.
+  - Acceptance: GitHub release published; Docker image pullable on both architectures.
 
 ## Out of scope (re-stated for clarity)
 
@@ -287,13 +275,11 @@ If implementation goes faster than budgeted, additional v1.0 polish (better erro
 
 These do not block the brief but need answers during implementation. None should change v1.0 scope.
 
-1. **Logging library: `log/slog` (stdlib) or `zap`?** `slog` is stdlib, no dep, structured logging native. `zap` is Caddy's choice. Recommendation: `slog` in core (zero deps), the Caddy adapter pipes through Caddy's zap logger. Decided during Story 4.2.
+1. **Logging library: `log/slog` (stdlib) or `zap`?** `slog` is stdlib, no dep, structured logging native. Recommendation: `slog`. Decided during Story 4.2.
 
 2. **Body template — file path vs inline detection.** Recommendation: heuristic — if the value contains `{{` it's inline; otherwise it's a file path. Reject ambiguity at validation time. Decided during Story 2.4.
 
-3. **Caddy adapter: directive name `posthorn` vs `formward`?** Brief specifies `posthorn` for project identity match. Alternative: keep `formward` as semantically more accurate for a form-handler directive. Decided in brief. Worth re-confirming during Story 6.2 once the operator-facing example is written and read aloud.
-
-4. **Reply-To handling.** When the form has an email field, set the email's `Reply-To` to that address by default? Recommendation: yes, configurable via `reply_to_email_field <fieldname>` (default: the email field). Decided during Story 2.4.
+3. **Reply-To handling.** When the form has an email field, set the email's `Reply-To` to that address by default? Recommendation: yes, configurable via `reply_to_email_field <fieldname>` (default: the email field). Decided during Story 2.4.
 
 ## Traceability
 
@@ -309,7 +295,7 @@ Every FR and NFR maps back to a brief commitment. Quick reference:
 | MVP > Response handling | FR14, FR15, FR16 |
 | MVP > Operational | FR17, FR18, NFR7, NFR8 |
 | MVP > Failure handling | FR19, FR20, FR21, FR22, FR23, NFR5 |
-| MVP > Deployment shape | FR24, FR25, FR26, FR27, FR28, FR29, FR30, NFR10, NFR12, NFR13, NFR14 |
+| MVP > Deployment shape | FR24, FR25, FR26, NFR12, NFR13 (FR27–FR30, NFR10, NFR14 deleted 2026-05-15 with the Caddy adapter cut) |
 | MVP > Security NFR | NFR1, NFR2, NFR3 |
 | Constraints | NFR9, NFR11, NFR15 |
 | Done criteria | NFR16, NFR17, NFR18, Epic 7 |

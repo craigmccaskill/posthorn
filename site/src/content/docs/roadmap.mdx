@@ -13,13 +13,13 @@ Posthorn ships in deliberately small, scoped releases. Every version has a locke
 
 **Status:** released or imminent (see the [GitHub Releases page](https://github.com/craigmccaskill/posthorn/releases) for the live date).
 
-**Scope:** HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON + redirect responses, standalone Docker container, optional Caddy adapter.
+**Scope:** HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON + redirect responses, standalone Docker container.
 
 What you can do today:
 
 - Drop in a self-hosted contact form on any host that blocks outbound SMTP
 - Run Posthorn as a Docker sidecar next to your blog / static site / app stack
-- Or load it as a Caddy v2 module if you're already running Caddy
+- Reverse-proxy from whatever front door you already use (Caddy, nginx, Traefik, Cloudflare)
 
 [Get started →](/getting-started/quick-start/)
 
@@ -74,7 +74,6 @@ The architectural commitments are already locked in v1.0:
 - The `Message` struct doesn't change — it's the boundary between ingress (form parser, SMTP MIME parser) and egress (transports)
 - New `Ingress` interface — HTTP form ingress is the first instance (in v1.0); SMTP listener is the second
 - New top-level config section `smtp_listener` alongside `endpoints`
-- Caddy adapter does **not** get SMTP ingress — the standalone binary is the natural sidecar
 - New threat model (open relay prevention, RCPT validation, sender allowlist, recipient caps, optional client-cert auth) gets its own spec rewrite in v1.3
 
 ## v2 — platform maturity
@@ -129,7 +128,7 @@ These come up in conversation and are worth naming explicitly:
 | Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The v1.3 SMTP ingress accepts mail from known internal clients only. |
 | Markdown body rendering | Templates are plain text. v2 may add markdown with explicit escaping. |
 | Multi-tenancy / per-tenant config isolation | Post-v1 if at all — the project's audience is single-tenant self-hosters. |
-| GUI installer / first-run wizard | The TOML / Caddyfile config is the source of truth; no UI in front of it. |
+| GUI installer / first-run wizard | The TOML config is the source of truth; no UI in front of it. |
 | Replacing Postmark / providers entirely (e.g., running our own SMTP outbound) | That's "build a postfix replacement" territory; out of scope forever. |
 
 <LinkCard

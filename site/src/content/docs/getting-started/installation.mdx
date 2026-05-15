@@ -1,11 +1,11 @@
 ---
 title: Installation
-description: Install Posthorn as a Docker container, a Go binary, or a Caddy v2 module.
+description: Install Posthorn as a Docker container or a Go binary.
 ---
 
 import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 
-Posthorn ships in three forms. **Docker is the recommended path** for most operators — it's a single container running next to your apps, and it's the deployment shape that's exercised most heavily in tests and documentation.
+Posthorn ships in two forms. **Docker is the recommended path** for most operators — it's a single container running next to your apps, and it's the deployment shape exercised most heavily in tests and documentation.
 
 <Tabs syncKey="install">
   <TabItem label="Docker (recommended)">
@@ -50,36 +50,11 @@ posthorn serve --config posthorn.toml      # start the HTTP listener
 Pre-built binaries for common platforms are attached to each [GitHub release](https://github.com/craigmccaskill/posthorn/releases).
 
   </TabItem>
-  <TabItem label="Caddy adapter">
-
-For operators already running Caddy as a front door, the form-ingress mode is also exposed as a Caddy v2 module. Build a Caddy with the adapter:
-
-```bash
-xcaddy build --with github.com/craigmccaskill/posthorn/caddy
-```
-
-The Caddyfile directive is `posthorn`:
-
-```nginx
-example.com {
-    posthorn /api/contact {
-        to you@example.com
-        from "Contact Form <noreply@example.com>"
-        transport postmark {
-            api_key {env.POSTMARK_API_KEY}
-        }
-    }
-}
-```
-
-See [Caddy adapter](/deployment/caddy-adapter/) for the full directive grammar. Requires Caddy 2.9+.
+</Tabs>
 
 <Aside type="note">
-The Caddy adapter is fully supported but is **not** the recommended path for new users. If you don't already run Caddy, use the Docker container instead — it keeps the email-gateway concern decoupled from your reverse-proxy concern.
+Posthorn does not terminate TLS. Run it behind a reverse proxy — Caddy, nginx, Traefik, Cloudflare, or whatever your front door already is. The [reverse proxy](/deployment/reverse-proxy/) page has worked examples for the common ones.
 </Aside>
-
-  </TabItem>
-</Tabs>
 
 ## Prerequisites
 

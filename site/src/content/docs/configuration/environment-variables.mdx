@@ -116,16 +116,3 @@ services:
       POSTMARK_API_KEY: ${POSTMARK_API_KEY}  # passes from host env
 ```
 
-## Caddy adapter
-
-The Caddy adapter uses Caddy's native env-var syntax, **not** Posthorn's:
-
-```nginx
-posthorn /api/contact {
-    transport postmark {
-        api_key {env.POSTMARK_API_KEY}
-    }
-}
-```
-
-`{env.VAR}` (Caddy syntax) replaces `${env.VAR}` (TOML syntax). Everything else about env-var resolution behaves the same: missing vars are validation errors via `caddy validate`; keys never appear in logs.

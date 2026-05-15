@@ -54,12 +54,9 @@ Most homelab operators are already paying for the VPS and the domain. Postmark's
 
 ## Does Posthorn work with Caddy?
 
-Two ways:
+Yes — Caddy as a reverse proxy in front of the Posthorn container is the standard setup. Caddy terminates TLS, Caddy forwards `/api/contact` to `posthorn:8080`. The [reverse proxy](/deployment/reverse-proxy/) page has a worked example.
 
-1. **As a separate container, with Caddy as your reverse proxy.** Caddy terminates TLS, Caddy forwards `/api/contact` to Posthorn. Standard reverse-proxy setup.
-2. **As a Caddy v2 module** loaded into Caddy itself. `xcaddy build --with github.com/craigmccaskill/posthorn/caddy` produces a Caddy binary with `http.handlers.posthorn` available. Configure via Caddyfile directive.
-
-The first option is recommended for most operators. The second exists for Caddy purists who prefer a single binary.
+Earlier versions of Posthorn also shipped a Caddy v2 module (loaded via `xcaddy build`) for operators who wanted a single binary. That adapter was cut before v1.0 to keep the project to a single deployment shape — the sidecar-behind-Caddy path is one extra compose entry and works the same way Caddy users already integrate every other service.
 
 ## Does Posthorn handle file attachments?
 
@@ -83,8 +80,6 @@ There is no persistent queue in v1.0. A failed submission only exists in the log
 
 TOML is more readable than YAML for the kind of configuration Posthorn does (mostly key-value pairs with a few nested tables). It's stricter than YAML (no whitespace ambiguity), more comment-friendly than JSON, and well-supported in Go. Standard choice for Go ecosystem tools.
 
-The Caddy adapter uses Caddyfile syntax — that's Caddy's native config format, and operators using the adapter prefer it. The internal config struct is the same.
-
 ## How do I rotate my Postmark API key?
 
 1. In Postmark dashboard, revoke the old token.
@@ -102,7 +97,7 @@ For shared NAT/CGNAT situations where many users come from one IP, tune the limi
 
 ## What does the project budget look like?
 
-25 hours of implementation time for v1.0, with a 90-day calendar tripwire (project rename was 2026-04-27 → v1.0 tag target 2026-07-26). The project is single-maintainer, part-time. If the budget hits with v1.0 incomplete, the spec specifies cuts in this order: Caddy adapter (ships as v1.1), then polish features. The standalone gateway core is non-cuttable.
+25 hours of implementation time for v1.0, with a 90-day calendar tripwire (project rename was 2026-04-27 → v1.0 tag target 2026-07-26). The project is single-maintainer, part-time. The standalone gateway core is the only deployment shape; everything in scope traces back to it.
 
 ## Where do I report a bug?
 

@@ -15,7 +15,7 @@ The project's Obsidian dashboard retains the broader project roadmap and v2/v3 s
 
 Posthorn is the **unified outbound mail layer for self-hosted projects**. Nobody wants to run a mail server in 2026 — self-hosted operators use Postmark, Resend, Mailgun, or AWS SES for the deliverability + bounce-handling reasons that have always favored managed providers. But every app a self-hoster runs has to integrate with that provider independently, duplicating credentials, integration code, and operational concerns across the stack. Posthorn is the single gateway that all those apps point at.
 
-It accepts mail through pluggable ingress modes (HTTP form submissions in v1.0; JSON API in v1.1; SMTP listener in v1.3) and delivers it via pluggable HTTP API transports (Postmark in v1.0; Resend / Mailgun / AWS SES / outbound-SMTP relay in v1.2). It runs as a standalone Go binary or Docker container, with an optional Caddy module adapter for operators who already run Caddy.
+It accepts mail through pluggable ingress modes (HTTP form submissions in v1.0; JSON API in v1.1; SMTP listener in v1.3) and delivers it via pluggable HTTP API transports (Postmark in v1.0; Resend / Mailgun / AWS SES / outbound-SMTP relay in v1.2). It runs as a standalone Go binary or Docker container behind whatever reverse proxy the operator already runs.
 
 The cloud-blocks-SMTP problem is the canonical entry point — DigitalOcean, AWS Lightsail, Linode, and most cloud hosts block ports 25/465/587 outbound, breaking both web-form-to-email patterns and SMTP-emitting apps simultaneously. Posthorn solves that. But the broader value is the unified outbound layer pattern, which applies even when SMTP isn't blocked: self-hosters running multiple apps benefit from centralizing the outbound mail concern regardless of underlying infrastructure.
 
@@ -24,6 +24,7 @@ The cloud-blocks-SMTP problem is the canonical entry point — DigitalOcean, AWS
 - **2026-04-27** — Project named *caddy-formward* and scoped as a Caddy v2 HTTP handler module replacing the dead `SchumacherFM/mailout` plugin. Spec locked.
 - **2026-04-27** — Scope expanded to email gateway (two ingress modes: HTTP form, SMTP listener) after analyzing the broader audience experiencing the same DigitalOcean SMTP-block pain. Project renamed to *Posthorn*. Repo renamed in place from `caddy-formward` to `posthorn`. Caddy module status changed from primary deliverable to optional adapter. Spec rewritten from scratch (this document); previous brief, PRD, and architecture documents replaced.
 - **2026-05-15** — Positioning sharpened from "gateway for cloud platforms that block outbound SMTP" to "unified outbound mail layer for self-hosted projects" after triaging 10 incoming GitHub issues (most from the Pensum integration POV). The cloud-SMTP-block wedge is preserved as the canonical discovery entry point; the broader unified-layer framing is the durable value proposition. v1.x roadmap restructured (v1.1 API mode, v1.2 multi-transport + ops polish, v1.3 SMTP ingress) to support this positioning.
+- **2026-05-15** — Caddy v2 adapter module cut from v1.0 pre-tag. Originally kept as a secondary deployment shape (carryover from the project's `caddy-formward` origin), the adapter increasingly diverged from the standalone (v1.3 SMTP ingress and v2 SQLite storage were both already standalone-only) and the two-shapes-per-feature carve-outs muddled the single-shape thesis. Caddy users keep first-class support via the reverse-proxy path. FR27–FR30 / NFR10 deleted from the PRD, ADR-6 and ADR-7 retired from the architecture doc, R3 modules-page submission dropped. The `core/gateway.Handler` interface is preserved so a community-maintained module against it remains possible without the project carrying the maintenance.
 
 ## Design principles
 
@@ -49,7 +50,7 @@ The corollary: if a feature request would push Posthorn deeper into one of those
 
 ### 4. Config files over admin UIs
 
-Posthorn is configured via TOML (standalone) or Caddyfile (adapter). There is no runtime mutation surface that could drift from the config file. Reviewing a config diff is reviewing the system's behavior — there's no `posthorn admin` CLI, no settings page, no live-reload-this-endpoint operation that bypasses the file.
+Posthorn is configured via a single TOML file. There is no runtime mutation surface that could drift from the config file. Reviewing a config diff is reviewing the system's behavior — there's no `posthorn admin` CLI, no settings page, no live-reload-this-endpoint operation that bypasses the file.
 
 This is a deliberate trade. Admin UIs add ops complexity (auth, audit logging, state reconciliation) and create surface for the configured behavior to diverge from the documented behavior. The cost is real — operators editing TOML by hand instead of clicking a UI — and we pay it intentionally. v3+ may introduce a read-only UI for browsing submissions / logs; it will not be a configuration surface.
 
@@ -57,7 +58,7 @@ This is a deliberate trade. Admin UIs add ops complexity (auth, audit logging, s
 
 For integrations with small, stable surfaces (Postmark's ~2 endpoints; SES's SigV4 + send call; Resend / Mailgun similarly), Posthorn writes the integration directly using stdlib + minimal dependencies. We don't pull in `aws-sdk-go-v2` for SES, `postmark-go` for Postmark, etc. The bias is toward bespoke for two reasons: a smaller dep tree (security audit surface, build complexity, version-pin maintenance) and a more auditable integration (every byte touching the upstream API is in our repo).
 
-The exception is integrations against systems with huge surfaces and meaningful semantics — Caddy's module API, for instance, where reimplementing the host's contract would be larger than the gain. There, we depend. The rule of thumb: bespoke when the integration is ~200 lines or less; SDK when bespoke would be ~1000+.
+The rule of thumb: bespoke when the integration is ~200 lines or less; SDK when bespoke would be ~1000+. Posthorn's v1.0 dependency surface — TOML parser, LRU cache, UUID library, and the stdlib — is the floor this principle drives toward.
 
 This is [ADR-1](./03-architecture.md#architectural-decisions-log) elevated to a project-wide principle, not just a Postmark decision.
 
@@ -79,7 +80,7 @@ The current options for either pattern are bad:
 - **Run Postfix as a relay configured to use HTTP API** — Postfix doesn't natively speak HTTP. Workable with custom milters or `smtp-transport` glue, but heavy and fragile.
 - **Find a maintained SMTP-to-HTTP bridge** — there isn't one. The landscape is `bytemark/smtp` and similar postfix-based images that still need outbound SMTP somewhere; or dead/abandoned `smtp2http` projects.
 
-The Caddy v1 `mailout` plugin filled half this gap (web-form-to-email) for Caddy users; it was never ported to v2. Even if it had been, it never addressed the SMTP-emitting-app side.
+The Caddy v1 `mailout` plugin filled half this gap (web-form-to-email) for Caddy users; it was never ported to v2 and never addressed the SMTP-emitting-app side. (Posthorn started life as a v2 successor to `mailout`; that genealogy is preserved in the status log above.)
 
 There is no actively maintained, self-hosted, HTTP-API-first email gateway in 2026.
 
@@ -118,7 +119,7 @@ A standalone Go binary (`posthorn`), distributed primarily as a Docker image, th
 2. **Delivers mail through pluggable HTTP API transports.** v1.0 ships with Postmark; v1.2 adds Resend, Mailgun, AWS SES, and outbound-SMTP-relay (for operators on hosts that don't block it). Same `Transport` interface across ingress modes.
 3. **Provides shared operational features** across all ingress/transport pairs: structured logging, rate limiting, retry policy, observability, secrets via env-var resolution.
 4. **Is configured via a single TOML file**, with `${env.VAR}` placeholders for secrets.
-5. **Offers an optional Caddy module adapter** as a sibling Go module (`github.com/craigmccaskill/posthorn/caddy`) for operators who already run Caddy and prefer Caddyfile syntax for the form-ingress mode.
+5. **Runs behind whatever reverse proxy the operator already uses** — Caddy, nginx, Traefik, Cloudflare. Posthorn does not terminate TLS; it expects to sit behind a proxy that does.
 
 The architecture is deliberately ingress-agnostic and transport-agnostic. The reusable middle layer — Message, Transport, retry policy, structured logging — does not care whether a Message arrived via HTTP form parser or SMTP MIME parser, nor whether it leaves via Postmark JSON API or Mailgun multipart API.
 
@@ -130,10 +131,6 @@ The architecture is deliberately ingress-agnostic and transport-agnostic. The re
 
 This is the author. The Ghost dogfooding case covers both ingress modes once v1.x SMTP ingress ships.
 
-### Secondary (v1.0)
-
-**Caddy users running it as the front door for one or more sites.** v1.0 ships an optional Caddy adapter so they can configure form ingress in their existing Caddyfile rather than running a separate `posthorn` container. They get the same core gateway, with Caddyfile ergonomics. v1.3 SMTP ingress will not be exposed through the Caddy adapter (different deployment shape — see architecture).
-
 ### Secondary, emerging (v1.1+)
 
 **Indie developers building multi-project stacks who want one centralized outbound mail gateway across all their apps.** Concrete example: a single operator running a blog (Ghost), a SaaS project on Cloudflare Workers (Pensum), and a couple of internal tools. Each has its own outbound mail need; without Posthorn, each needs its own Postmark integration. With Posthorn (v1.1 API mode + v1.0 form ingress), all of them point at one Posthorn instance — one set of credentials, one set of logs, one set of bounce-handling decisions.
@@ -142,9 +139,8 @@ This audience is shape-distinct from the original "homelab operator with a conta
 
 ### Future audiences (post-v1, named to constrain architecture)
 
-- **Self-hosted-app operators not running Caddy.** Bigger TAM than Caddy users. The standalone binary serves them without requiring a proxy stack. Architecture must keep the core Caddy-independent so this audience is reachable without forks.
+- **Self-hosted-app operators with stacks behind any reverse proxy** — nginx, Traefik, Cloudflare, HAProxy. The reverse-proxy-agnostic standalone serves them without forks.
 - **Small agencies and freelancers deploying for clients.** Need template scalability, per-tenant config isolation, file attachments, observability that flows into their existing log pipelines. Out of scope for v1.0 — but the Transport interface and config loader must grow into per-tenant use without a rewrite.
-- **Caddy v1 mailout migrants.** Want a config-compatible upgrade path. Out of scope for v1.0 (clean-slate config syntax). Caddy adapter directive name (`posthorn` in Caddyfile) does not contradict v1's `mailout` semantics.
 
 ## Goals and Success Metrics
 
@@ -153,9 +149,8 @@ This audience is shape-distinct from the original "homelab operator with a conta
 All four must pass:
 
 1. The author's blog runs Posthorn for the contact form for 30 days with zero dropped submissions, confirmed via Postmark logs.
-2. README has copy-pasteable examples for both deployment shapes (standalone Docker; Caddy adapter), each verified end-to-end on a clean install.
+2. README has a copy-pasteable Docker Compose example verified end-to-end on a clean install.
 3. Tagged v1.0.0 release on GitHub with a published Docker image at `ghcr.io/craigmccaskill/posthorn:v1.0.0` and `:latest`.
-4. The Caddy adapter is published as a separate Go module and listed on caddyserver.com modules page within 7 days of v1.0.0.
 
 ### Worked — did v1 actually achieve anything?
 
@@ -200,7 +195,7 @@ GitHub stars, blog traffic, HN front page are noise relative to these. A real se
 **Deployment shape**
 - Standalone Go binary (`posthorn serve --config config.toml`)
 - Docker image at `ghcr.io/craigmccaskill/posthorn` with multi-arch support (amd64, arm64)
-- Caddy adapter as a separate Go module exposing form ingress as `caddyhttp.MiddlewareHandler` (`http.handlers.posthorn`)
+- Runs behind any reverse proxy that handles TLS (Caddy, nginx, Traefik, Cloudflare, etc.)
 - TOML config file with `${env.VAR}` placeholders for secrets
 
 **Operational**
@@ -257,7 +252,6 @@ The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incomin
 - TCP listener accepting SMTP from clients on the local network, forwarding via the configured HTTP API transport
 - New threat model: open-relay prevention, RCPT validation, sender allowlist, recipient/size caps, optional client-cert auth
 - New `smtp_listener` config section, new `Ingress` interface
-- Caddy adapter does NOT receive SMTP ingress — different deployment shape (standalone is the natural sidecar)
 - This is what unblocks the Ghost admin login use case.
 
 **v2 — platform maturity.** The architectural shift that unlocks operating Posthorn as a real mail platform.
@@ -277,16 +271,12 @@ The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incomin
 | Constraint | Value |
 |---|---|
 | Language | Go 1.25+ |
-| License | Apache-2.0 (matches Caddy itself, simplifies the adapter relationship) |
+| License | Apache-2.0 |
 | Distribution | GitHub releases (binary), Docker image at GHCR, `go install` |
 | Repo | github.com/craigmccaskill/posthorn |
-| Core Go module | github.com/craigmccaskill/posthorn |
-| Caddy adapter Go module | github.com/craigmccaskill/posthorn/caddy |
-| Caddy module ID | http.handlers.posthorn |
-| Caddyfile directive (adapter) | posthorn |
-| Standalone config format | TOML |
-| Caddy version (adapter) | 2.9+ |
-| Build tooling | `go build` (standalone), `xcaddy` (adapter) |
+| Go module | github.com/craigmccaskill/posthorn |
+| Config format | TOML |
+| Build tooling | `go build` |
 | Config syntax stability | Stable within a major version after v1.0.0 |
 | Go API stability | Not guaranteed; subject to refactor |
 
@@ -336,13 +326,12 @@ This is a deliberate posture. Operators who need stronger guarantees — running
 
 **Constraints:**
 - Single author, working part-time
-- 25-hour total budget for v1.0 implementation (vs 15h in the prior `caddy-formward` brief; expanded to cover the standalone-binary plumbing and dual-deployment-shape testing)
+- 25-hour total budget for v1.0 implementation (vs 15h in the prior `caddy-formward` brief; expanded to cover the standalone-binary plumbing)
 - 90-day calendar tripwire from project rename (2026-04-27 → 2026-07-26) to v1.0.0 tag
 - All testing must be possible with infrastructure the author already has (Postmark account; no SMTP server required for v1.0)
 
 **Assumptions:**
 - Postmark API and free-tier availability remain unchanged in pricing structure
-- Caddy 2.9 module API remains stable through v1.0 development (affects adapter only)
 - The `posthorn` repo name and Go module path remain unclaimed (verified 2026-04-27)
 - Docker Hub `craigmccaskill/posthorn` namespace remains unclaimed by anyone other than author
 
@@ -350,9 +339,9 @@ This is a deliberate posture. Operators who need stronger guarantees — running
 
 | ID | Risk | Likelihood | Impact | Mitigation |
 |----|------|------------|--------|------------|
-| R1 | Solo maintainer abandonment | Medium | High | Time-bound commitment statement in README; 90-day shipping tripwire — if v1.0 isn't shipped within 90 days of project rename, scope cuts further (cut Caddy adapter from v1.0 if necessary; keep core) |
-| R2 | Effort blowup beyond 25h budget | High | High | Hard tripwire at 25h. Cut order: Caddy adapter first (v1.1 release item), then polish (better errors, validator depth). Core gateway is non-cuttable. |
-| R3 | Discoverability failure | Medium | High | Multi-channel: caddyserver.com modules-page submission for adapter; Docker Hub README and topics for standalone; launch blog post documenting the Ghost-on-DO end-to-end story; submit to Hacker News once v1.2 SMTP ingress is dogfooded |
+| R1 | Solo maintainer abandonment | Medium | High | Time-bound commitment statement in README; 90-day shipping tripwire — if v1.0 isn't shipped within 90 days of project rename, scope cuts further (start with polish, then optional features; the core gateway is non-cuttable). |
+| R2 | Effort blowup beyond 25h budget | High | High | Hard tripwire at 25h. Cut order: polish (better errors, validator depth) first, then optional features. Core gateway is non-cuttable. |
+| R3 | Discoverability failure | Medium | High | Multi-channel: Docker Hub README and topics for the container; launch blog post documenting the Ghost-on-DO end-to-end story; submit to Hacker News once v1.2 SMTP ingress is dogfooded. |
 | R4 | Header injection vulnerability ships in v1.0.0 | Medium without explicit testing; low with | Very high | Explicit injection-payload test cases as a PRD requirement; use Postmark JSON API exclusively |
 | R5 | Email deliverability rabbit hole on launch day | Medium | Medium | Pre-launch DNS verification checklist (SPF, DKIM, DMARC); document DNS requirements in README |
 | R6 | Postmark API or pricing change mid-development | Low | High | Acknowledged. Resend/Mailgun transports in v1.1 are the natural backstops. |
@@ -377,9 +366,7 @@ The closest collision is PostHog (open-source product analytics), which is simil
 
 - DigitalOcean SMTP block policy (2026-04 support exchange): outbound 25/465/587 blocked, no exceptions, recommends HTTP API
 - Postmark API: https://postmarkapp.com/developer
-- Caddy v2 module docs: https://caddyserver.com/docs/extending-caddy (for the adapter only)
-- xcaddy: https://github.com/caddyserver/xcaddy (for the adapter only)
-- Original v1 Caddy mailout plugin (dead): https://github.com/SchumacherFM/mailout
+- Original v1 Caddy mailout plugin (dead): https://github.com/SchumacherFM/mailout (genealogical only; Posthorn started as a v2 successor before scope expanded)
 - Posthorn historical context: https://en.wikipedia.org/wiki/Post_horn
 
 ### C. Related project documents

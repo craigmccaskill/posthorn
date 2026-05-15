@@ -17,49 +17,37 @@ The architecture doc's [Architectural decisions log](./spec/03-architecture.md#a
 ## Prerequisites
 
 - Go 1.25+
-- [`xcaddy`](https://github.com/caddyserver/xcaddy) (only needed for Caddy adapter work)
 - A Postmark account for end-to-end testing (a sandbox token is sufficient)
-- Docker (optional, for testing the standalone deployment shape)
+- Docker (optional, for testing the container deployment)
 
 ## Repository layout
 
-This is a **two-module Go workspace**:
+Posthorn is a single Go module:
 
-- [`core/`](./core/) — the standalone gateway, the `cmd/posthorn` binary, all the business logic. No Caddy dependency (ADR-6, structurally enforced).
-- [`caddy/`](./caddy/) — the Caddy v2 adapter, ~250 lines of glue wrapping `core/gateway.Handler`.
+- [`core/`](./core/) — the gateway, the `cmd/posthorn` binary, all the business logic.
 - [`spec/`](./spec/) — the locked v1.0 specification.
-- [`docs/`](./docs/) — operator-facing documentation that lives in-repo (manual test procedure, etc.). The public site source is in [`site/`](./site/) and ships to [posthorn.dev](https://posthorn.dev).
+- [`docs/`](./docs/) — operator-facing documentation that lives in-repo. The public site source is in [`site/`](./site/) and ships to [posthorn.dev](https://posthorn.dev).
 - [`site/`](./site/) — Astro + Starlight source for the docs site.
-
-The two Go modules are joined by [`go.work`](./go.work) at the repo root, which is what makes plain `go build ./...` from the root resolve cross-module imports during development.
 
 ## Build and test
 
 ```bash
-# Run tests across both modules
-( cd core && go test -race ./... )
-( cd caddy && go test -race ./... )
+# Run the test suite
+cd core && go test -race ./...
 
-# Build the standalone binary
-go build -o posthorn ./core/cmd/posthorn
+# Build the binary
+go build -o posthorn ./cmd/posthorn
 ./posthorn version
-
-# Build Caddy with the adapter loaded
-cd caddy
-xcaddy build \
-  --with github.com/craigmccaskill/posthorn/caddy=. \
-  --with github.com/craigmccaskill/posthorn=../core
-./caddy list-modules | grep posthorn   # → http.handlers.posthorn
 
 # Build the docs site
 cd site && npm ci && npm run build
 ```
 
-CI runs `go vet ./...` and `go test -race -count=1 -timeout=2m ./...` across both modules on every push and pull request. See [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+CI runs `go vet ./...` and `go test -race -count=1 -timeout=2m ./...` on every push and pull request. See [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
-## End-to-end parity test
+## End-to-end smoke test
 
-Whenever you touch `core/gateway/`, `core/transport/`, `core/template/`, `core/config/`, or `caddy/`, run the [manual parity test](./docs/manual-test.md) against a real Postmark account before opening a PR. The unit tests cover config-level parity; the manual procedure exercises the full request pipeline through the transport.
+Whenever you touch `core/gateway/`, `core/transport/`, `core/template/`, or `core/config/`, run the [manual end-to-end test](./docs/manual-test.md) against a real Postmark account before opening a PR. The unit tests cover config and pipeline behavior; the manual procedure exercises the full request pipeline through the transport and confirms mail actually delivers.
 
 ## Commit conventions
 

@@ -26,6 +26,9 @@ Initial public release. The full v1.0 spec — locked 2026-04-27 — is in [`spe
 - Structured JSON logging with UUIDv4 submission IDs propagated through every log line (FR17, FR18, NFR7, NFR8)
 - Standalone binary `cmd/posthorn` with `serve` and `validate` subcommands, SIGTERM/SIGINT graceful shutdown (FR24-FR26)
 - Multi-stage Dockerfile producing a distroless static image for `linux/amd64` and `linux/arm64`, published to `ghcr.io/craigmccaskill/posthorn` on tag push (NFR12, NFR13)
-- GitHub Actions CI running `go vet` and `go test -race` across both workspace modules
-- Caddy v2 adapter module at `github.com/craigmccaskill/posthorn/caddy` registering `http.handlers.posthorn`, with Caddyfile directive support and a TOML-parity unit test (FR27-FR30, NFR10)
+- GitHub Actions CI running `go vet` and `go test -race -count=1`
 - Public documentation site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight)
+
+### Removed (before tag)
+
+- The Caddy v2 adapter module (previously planned as a secondary deployment shape under FR27-FR30 / NFR10 / ADR-6 / ADR-7) was cut before tagging v1.0.0. The single-shape standalone-behind-any-reverse-proxy story keeps the product thesis cleaner and avoids ongoing per-feature carve-outs (v1.3 SMTP ingress and v2 SQLite storage were already standalone-only). Caddy users keep first-class support as a reverse proxy — see [posthorn.dev/deployment/reverse-proxy](https://posthorn.dev/deployment/reverse-proxy/).

@@ -8,9 +8,9 @@
 
 ## Test plan
 
-- [ ] `go vet ./...` clean in both modules
-- [ ] `go test -race ./...` passes in both modules
-- [ ] Manual parity test run (only if `core/gateway`, `core/transport`, `core/template`, `core/config`, or `caddy/` changed — see `docs/manual-test.md`)
+- [ ] `go vet ./...` clean
+- [ ] `go test -race ./...` passes
+- [ ] Manual end-to-end test run (only if `core/gateway`, `core/transport`, `core/template`, or `core/config` changed — see `docs/manual-test.md`)
 - [ ] Docs updated (`spec/` if behavior; `site/` if operator-facing)
 
 ## Spec impact

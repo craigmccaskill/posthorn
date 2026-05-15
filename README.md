@@ -94,37 +94,6 @@ Reverse-proxy `/api/contact` from your front door (Caddy, nginx, Traefik) to `ht
 
 Full walkthrough: [posthorn.dev/getting-started/quick-start](https://posthorn.dev/getting-started/quick-start/).
 
-## Caddy adapter (optional)
-
-For operators already running Caddy as a front door:
-
-```bash
-xcaddy build --with github.com/craigmccaskill/posthorn/caddy
-```
-
-```caddyfile
-example.com {
-    posthorn /api/contact {
-        to you@example.com
-        from "Contact Form <noreply@example.com>"
-        required name email message
-        honeypot _gotcha
-        allowed_origins https://example.com
-        subject "Contact from {{.name}}"
-        body "From {{.name}} <{{.email}}>: {{.message}}"
-        rate_limit 5 1m
-
-        transport postmark {
-            api_key {env.POSTMARK_API_KEY}
-        }
-    }
-}
-```
-
-Both deployment shapes run the same internal pipeline — they accept identical inputs and produce identical outbound mail. Parity is asserted in CI ([`caddy/caddyfile_test.go`](./caddy/caddyfile_test.go)) and validated end-to-end via the [manual test procedure](./docs/manual-test.md).
-
-Full adapter docs: [posthorn.dev/deployment/caddy-adapter](https://posthorn.dev/deployment/caddy-adapter/).
-
 ## Production checklist
 
 Before pointing real traffic at Posthorn:
@@ -141,7 +110,7 @@ The full operator checklist is on [posthorn.dev](https://posthorn.dev).
 
 | Version | Scope |
 |---|---|
-| **v1.0** | HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON+redirect responses, standalone Docker + Caddy adapter |
+| **v1.0** | HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON+redirect responses, standalone Docker container |
 | **v1.1** | **API mode** — Posthorn becomes an internal mail API alongside its form-ingress role. Per-endpoint API-key auth, JSON content type, idempotency keys (in-memory), batch send |
 | **v1.2** | **Multi-transport + ops polish** — Resend, Mailgun, AWS SES, outbound-SMTP transports; CSRF + time-based token spam protection; `/healthz`, `/metrics`, dry run mode |
 | **v1.3** | **SMTP ingress** — TCP listener accepting SMTP from internal apps (Ghost, Gitea, Mastodon) and forwarding via the configured HTTP API transport |

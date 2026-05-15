@@ -4,9 +4,9 @@ Tag-day procedure for the v1.0.0 release. Follow in order. The release workflow 
 
 ## 0. Operator validation (gating)
 
-These three acceptance tests gate the tag. **Don't proceed if any fails.**
+The end-to-end smoke gates the tag. **Don't proceed if it fails.**
 
-### Story 5.1 — Docker smoke test
+### Docker smoke test
 
 ```bash
 docker pull ghcr.io/craigmccaskill/posthorn:0.0.1-test   # the test image we already built
@@ -40,71 +40,15 @@ docker logs posthorn-smoke   # confirm structured JSON logs
 docker stop posthorn-smoke
 ```
 
-**Pass criteria:** HTTP 200 with submission_id, email arrives in your inbox.
+**Pass criteria:** HTTP 200 with submission_id in the response body, email arrives in your inbox.
 
-### Story 6.1 — `xcaddy build` produces a working binary
+Full procedure (multi-step, real-mail smoke): [docs/manual-test.md](./manual-test.md).
 
-```bash
-cd <repo-root>/caddy
-xcaddy build \
-  --with github.com/craigmccaskill/posthorn/caddy=. \
-  --with github.com/craigmccaskill/posthorn=../core
-./caddy list-modules | grep posthorn
-```
-
-**Pass criteria:** binary produced, `caddy list-modules` includes `http.handlers.posthorn`.
-
-### Story 6.3 — Manual parity test
-
-Full procedure: [docs/manual-test.md](./manual-test.md). Both deployment shapes deliver identical mail for identical input.
-
-## 1. Generate `caddy/go.sum`
-
-CI currently re-downloads caddy deps every run because we never committed `go.sum`. Fix it once now so the release builds against a pinned dep tree:
-
-```bash
-cd <repo-root>/caddy
-go mod tidy
-git add go.sum
-git commit -m "chore(caddy): commit go.sum"
-```
-
-## 2. Update `caddy/go.mod` for external installability
-
-The current `caddy/go.mod` has a dev-only `replace` directive pointing to `../core`. That works for in-workspace builds but breaks `xcaddy build --with github.com/craigmccaskill/posthorn/caddy@v1.0.0` for external users (they don't have a local `../core`). Replace it with a real version pin once you've tagged core:
-
-After step 5 below (tagging the root), come back and edit `caddy/go.mod`:
-
-```diff
--// Pre-v1.0 development: resolve the core module from the local checkout.
--// This `replace` directive comes out as part of the v1.0.0 release prep
--// (Story 7.3) so external `xcaddy build` invocations resolve core via
--// the published module proxy.
--replace github.com/craigmccaskill/posthorn => ../core
--
- require (
-   github.com/caddyserver/caddy/v2 v2.10.0
--  github.com/craigmccaskill/posthorn v0.0.0-00010101000000-000000000000
-+  github.com/craigmccaskill/posthorn v1.0.0
-   go.uber.org/zap v1.27.0
-   go.uber.org/zap/exp v0.3.0
- )
-```
-
-Then `go mod tidy` again to regenerate `go.sum` against the published core. Commit:
-
-```bash
-cd <repo-root>/caddy
-go mod tidy
-git add go.mod go.sum
-git commit -m "chore(caddy): pin core to v1.0.0 (post-tag)"
-```
-
-## 3. Update CHANGELOG date if needed
+## 1. Update CHANGELOG date if needed
 
 [`CHANGELOG.md`](../CHANGELOG.md) currently has `## [1.0.0] — 2026-05-16` as a placeholder. Update if the actual tag day differs.
 
-## 4. Verify CI on main is green
+## 2. Verify CI on main is green
 
 ```bash
 gh run list --workflow=ci.yml --branch=main --limit=1
@@ -112,13 +56,13 @@ gh run list --workflow=ci.yml --branch=main --limit=1
 
 Must be ✅ before tagging.
 
-## 5. Tag and push `v1.0.0` (core)
+## 3. Tag and push `v1.0.0`
 
 ```bash
 git tag -a v1.0.0 -m "Posthorn v1.0.0 — first public release
 
-HTTP form ingress, Postmark transport, standalone Docker + optional
-Caddy adapter. Full release notes in CHANGELOG.md."
+HTTP form ingress, Postmark transport, standalone Docker container.
+Full release notes in CHANGELOG.md."
 
 git push origin v1.0.0
 ```
@@ -136,23 +80,7 @@ The workflow:
 
 **Pass criteria:** workflow green, `docker pull ghcr.io/craigmccaskill/posthorn:1.0.0` works on both archs, `docker pull ghcr.io/craigmccaskill/posthorn:latest` resolves to the same digest.
 
-## 6. Do step 2 (caddy/go.mod swap), then tag `caddy/v1.0.0`
-
-The caddy submodule needs its own version tag for `xcaddy build --with github.com/craigmccaskill/posthorn/caddy@v1.0.0` to resolve via the module proxy. Go's convention for tagged submodules within a single repo is `<subdir>/<version>`:
-
-```bash
-git tag -a caddy/v1.0.0 -m "Caddy adapter v1.0.0"
-git push origin caddy/v1.0.0
-```
-
-Verify after a minute or two:
-
-```bash
-go list -m github.com/craigmccaskill/posthorn/caddy@v1.0.0
-# expect: github.com/craigmccaskill/posthorn/caddy v1.0.0
-```
-
-## 7. Create the GitHub Release
+## 4. Create the GitHub Release
 
 ```bash
 # Extracts everything from the v1.0.0 heading to EOF. v1.0.0 is the last
@@ -166,24 +94,7 @@ gh release create v1.0.0 \
 
 Or use the GitHub UI to paste the same notes.
 
-## 8. File the Caddy modules-page submission
-
-Per R3 in the project brief — discoverability for the adapter. Within 7 days of the tag:
-
-```bash
-# One-time: fork caddyserver/website to your GitHub account.
-gh repo fork caddyserver/website --clone --remote
-cd website
-
-# Add an entry to the modules listing (check the current data layout
-# at caddyserver/website — past PRs are a good template).
-# Open a PR pointing at github.com/craigmccaskill/posthorn/caddy.
-gh pr create --title "Add posthorn module" --body-file <pr-body>
-```
-
-The acceptance criterion is "PR submitted within 7 days," not "PR merged" — landing is up to the Caddy team's review cadence.
-
-## 9. Optional cleanup
+## 5. Optional cleanup
 
 ```bash
 # Delete the v0.0.1-test git tag if you don't want it kept as history
@@ -197,11 +108,11 @@ VERSION_ID=$(gh api /users/craigmccaskill/packages/container/posthorn/versions \
 gh api --method DELETE /users/craigmccaskill/packages/container/posthorn/versions/$VERSION_ID
 ```
 
-## 10. Update CLAUDE.md status pointer
+## 6. Update CLAUDE.md status pointer
 
 Move "Current task" to: "v1.0.0 shipped on 2026-05-XX. Open: v1.1 planning."
 
-## 11. Tell the world
+## 7. Tell the world
 
 - HN Show post linking to posthorn.dev (per R3 mitigation — discoverability)
 - Personal blog launch post (already planned per the brief — DigitalOcean SMTP-block story as the narrative hook)

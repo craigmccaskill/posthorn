@@ -33,7 +33,6 @@ body:
       options:
         - Docker container
         - Standalone binary
-        - Caddy adapter (xcaddy build)
         - Other (describe below)
     validations:
       required: true
@@ -77,7 +76,7 @@ body:
     id: config
     attributes:
       label: Config (redacted)
-      description: The relevant slice of your `posthorn.toml` or Caddyfile. Redact secrets and recipient addresses.
+      description: The relevant slice of your `posthorn.toml`. Redact secrets and recipient addresses.
       render: toml
     validations:
       required: false

@@ -107,12 +107,6 @@ On terminal failure, Posthorn logs the **full submission payload** at ERROR leve
 v1.0 has **no persistent queue.** A failed submission that exhausted both retries is gone from in-memory state; only the log line remains. Persistent retry queues land in v2 along with SQLite storage.
 </Aside>
 
-## Two deployment shapes, one core
+## Deployment
 
-The standalone binary and the Caddy adapter run **the same core gateway code**. The Caddy adapter is a thin (~150 LOC) wrapper that:
-
-1. Registers `http.handlers.posthorn` with Caddy
-2. Parses the Caddyfile syntax into the same internal config struct that the TOML loader produces
-3. Delegates `ServeHTTP` to the same `gateway.Handler`
-
-If something works in the standalone, it works in the adapter. If a bug exists in the pipeline, it exists in both. Parity tests assert this in CI.
+Posthorn is a single Go binary, distributed as a Docker container or a standalone executable. Run it as a sidecar to your apps and reverse-proxy your form endpoints to it from whatever front door you already use — Caddy, nginx, Traefik, Cloudflare. The [reverse proxy](/deployment/reverse-proxy/) page has worked examples.

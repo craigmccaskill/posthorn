@@ -49,7 +49,7 @@ body:
     attributes:
       label: Proposed solution
       description: |
-        How you'd like it to work. **Config sketches welcome** — TOML snippets, Caddyfile examples, `curl` invocations, JSON request/response shapes. The more concrete, the easier to evaluate.
+        How you'd like it to work. **Config sketches welcome** — TOML snippets, `curl` invocations, JSON request/response shapes. The more concrete, the easier to evaluate.
       placeholder: |
         ```toml
         [[endpoints]]
@@ -105,7 +105,7 @@ body:
       description: Tick anything that applies. Helps triage prioritize and flag NFR considerations early.
       options:
         - label: Affects a security NFR (header injection, API-key handling, fail-closed defaults, rate limiting)
-        - label: Breaking config change (existing TOML / Caddyfile configs need migration)
+        - label: Breaking config change (existing TOML configs need migration)
         - label: Affects email deliverability (DKIM / SPF / DMARC, bounce handling, sender reputation)
         - label: New operator-facing UX surface (new config keys, new docs page needed)
         - label: Depends on persistent storage (only deliverable in v2+)
