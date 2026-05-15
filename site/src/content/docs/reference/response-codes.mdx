@@ -11,14 +11,20 @@ A reference for every status code Posthorn returns, with example JSON body, root
 
 **Success** — submission accepted, transport returned success.
 
-```json
-{
-  "status": "ok",
-  "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"
-}
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{"status":"ok","submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"}
 ```
 
-Also returned silently when the **honeypot field is non-empty**. Bots cannot distinguish honeypot rejection from a real success.
+Also returned silently when the **honeypot field is non-empty.** The honeypot path emits the *same* JSON shape — `status: "ok"` plus a fresh `submission_id` — so a bot inspecting the response body cannot tell honeypot rejection apart from a real success.
+
+```json
+{"status":"ok","submission_id":"a1b2c3d4-..."}
+```
+
+The submission_id on a honeypot 200 is a real UUIDv4 minted for that request; it's just never threaded into a transport send. If you grep your logs for that ID you'll see a `spam_blocked` event instead of `submission_sent`.
 
 ## 303 See Other
 
@@ -39,13 +45,19 @@ The 303 status — not 302 — ensures the browser issues a GET to the redirect 
 
 ## 400 Bad Request
 
-**Malformed request.**
+**Malformed request.** Plaintext body.
 
-```json
-{
-  "error": "Malformed request body",
-  "code": "bad_request"
-}
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: text/plain; charset=utf-8
+
+form-encoded body required (application/x-www-form-urlencoded or multipart/form-data)
+```
+
+Or, for a body that couldn't be parsed:
+
+```text
+parse form: <underlying error from net/http>
 ```
 
 Common causes:
@@ -58,14 +70,16 @@ Common causes:
 
 ## 403 Forbidden
 
-**Origin/Referer rejected** by the `allowed_origins` check.
+**Origin/Referer rejected** by the `allowed_origins` check. Plaintext body.
 
-```json
-{
-  "error": "Origin not allowed",
-  "code": "origin_rejected"
-}
+```http
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain; charset=utf-8
+
+forbidden
 ```
+
+The reason (which exact check fired — bad origin, bad referer, both headers missing) is in the structured `spam_blocked` log event, not in the response. Bots don't get to learn which defense caught them.
 
 Common causes:
 
@@ -78,31 +92,26 @@ Common causes:
 
 ## 404 Not Found
 
-**No endpoint configured for this path.**
+**No endpoint configured for this path.** Plaintext body from the standard-library mux.
 
-```json
-{
-  "error": "Not Found",
-  "code": "not_found"
-}
+```http
+HTTP/1.1 404 Not Found
+Content-Type: text/plain; charset=utf-8
+
+404 page not found
 ```
 
-Just means the URL path doesn't match any `[[endpoints]]` `path` in the config. Posthorn doesn't reveal which paths are configured (so attackers can't enumerate).
+The URL path doesn't match any `[[endpoints]]` `path` in the config. Posthorn doesn't reveal which paths *are* configured (so attackers can't enumerate by probing).
 
 ## 405 Method Not Allowed
 
-**Wrong method** (anything but POST).
+**Wrong method** (anything but POST). Plaintext body.
 
 ```http
 HTTP/1.1 405 Method Not Allowed
-Allow: POST
-```
+Content-Type: text/plain; charset=utf-8
 
-```json
-{
-  "error": "Method not allowed",
-  "code": "method_not_allowed"
-}
+method not allowed
 ```
 
 Common causes:
@@ -114,15 +123,16 @@ Common causes:
 
 ## 413 Payload Too Large
 
-**Body exceeded `max_body_size`.**
+**Body exceeded `max_body_size`.** Plaintext body.
 
-```json
-{
-  "error": "Request body too large",
-  "code": "body_too_large",
-  "max_bytes": 1048576
-}
+```http
+HTTP/1.1 413 Request Entity Too Large
+Content-Type: text/plain; charset=utf-8
+
+request body too large
 ```
+
+The exact cap is not echoed in the response (it's in the structured log line, `limit_bytes` field, on the `body_too_large` event).
 
 Common causes:
 
@@ -134,18 +144,16 @@ Common causes:
 
 ## 422 Unprocessable Entity
 
-**Validation failure** — required field missing or email malformed.
+**Validation failure** — required field missing or email malformed. JSON body (Posthorn's primary structured-error path).
 
-```json
-{
-  "error": "Validation failed",
-  "code": "validation_failed",
-  "fields": {
-    "name": "required field is missing or empty",
-    "email": "invalid email format"
-  }
-}
+```http
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json; charset=utf-8
+
+{"error":"validation failed","code":"validation_failed","fields":{"name":"required","email":"invalid email format"}}
 ```
+
+Per-field messages are terse machine-parseable strings (`"required"`, `"invalid email format"`) — your form code maps them to whatever UI copy you want.
 
 The `fields` object enumerates **every** failing field; the response isn't short-circuit. This lets clients display all errors at once.
 
@@ -159,21 +167,16 @@ Common causes:
 
 ## 429 Too Many Requests
 
-**Rate limit exceeded** for this client IP on this endpoint.
+**Rate limit exceeded** for this client IP on this endpoint. Plaintext body.
 
 ```http
 HTTP/1.1 429 Too Many Requests
-Retry-After: 12
+Content-Type: text/plain; charset=utf-8
+
+rate limit exceeded
 ```
 
-```json
-{
-  "error": "Too many requests",
-  "code": "rate_limited"
-}
-```
-
-`Retry-After` is the number of seconds until the next token is available.
+A `Retry-After` header is **not** emitted in v1.0 — the client gets a plain 429 and is expected to back off. (Adding `Retry-After` derived from token-bucket state is a planned post-v1.0 polish item.)
 
 Common causes:
 

@@ -20,10 +20,10 @@ A missing or empty field returns HTTP 422 with the failing fields enumerated:
 
 ```json
 {
-  "error": "Validation failed",
+  "error": "validation failed",
   "code": "validation_failed",
   "fields": {
-    "message": "required field is missing or empty"
+    "message": "required"
   }
 }
 ```
@@ -32,11 +32,11 @@ A missing or empty field returns HTTP 422 with the failing fields enumerated:
 
 ```json
 {
-  "error": "Validation failed",
+  "error": "validation failed",
   "code": "validation_failed",
   "fields": {
-    "name": "required field is missing or empty",
-    "email": "required field is missing or empty"
+    "name": "required",
+    "email": "required"
   }
 }
 ```
@@ -73,7 +73,7 @@ Failures return the same 422 schema:
 
 ```json
 {
-  "error": "Validation failed",
+  "error": "validation failed",
   "code": "validation_failed",
   "fields": {
     "email": "invalid email format"
@@ -87,14 +87,16 @@ Required-field and email-format checks both run; both contribute to the `fields`
 
 ```json
 {
-  "error": "Validation failed",
+  "error": "validation failed",
   "code": "validation_failed",
   "fields": {
-    "name": "required field is missing or empty",
+    "name": "required",
     "email": "invalid email format"
   }
 }
 ```
+
+Per-field messages are deliberately terse strings (`"required"`, `"invalid email format"`) rather than human-readable sentences — they're machine-parseable identifiers your form code maps to whatever UI copy you want.
 
 ## Display name passthrough
 

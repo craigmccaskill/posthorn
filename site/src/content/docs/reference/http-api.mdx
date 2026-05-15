@@ -80,21 +80,27 @@ Location: /thank-you
 
 ## Response — error
 
-Errors return JSON or redirect to `redirect_error` (if configured and `text/html` preferred), with the appropriate status code.
+Errors return either a **JSON body** (on `422 Unprocessable Entity` only) or a **plaintext body** (every other non-2xx status), or redirect to `redirect_error` if one is configured and the client prefers `text/html`.
 
-### JSON error schema
+### JSON error schema (422 only)
 
 ```json
 {
-  "error": "Human-readable summary",
-  "code": "machine_readable_code",
+  "error": "validation failed",
+  "code": "validation_failed",
   "fields": {
     "field_name": "field-specific error"
   }
 }
 ```
 
-`fields` is only populated for `422 Unprocessable Entity` (validation failures).
+The structured `fields` map is the contract clients should program against — it enumerates *every* failing field in one response so a form UI can render all errors at once.
+
+### Plaintext error bodies (all other non-2xx)
+
+Other status codes return a one-line plaintext body (`Content-Type: text/plain; charset=utf-8`). The exact strings are documented per-status in [Response codes](/reference/response-codes/). Programmatic callers should branch on **status code**, not body text — the strings are stable but not part of a versioned contract.
+
+Promoting every error to structured JSON is on the post-v1.0 polish list. If you'd find it useful, open a feature request describing the use case.
 
 ### Status codes
 
@@ -141,15 +147,20 @@ form.addEventListener('submit', async (e) => {
     body: new URLSearchParams(data),
     headers: { 'Accept': 'application/json' },
   });
-  const json = await res.json();
   if (res.ok) {
+    // 200 → JSON: { status: "ok", submission_id: "..." }
+    const json = await res.json();
     showSuccess(json.submission_id);
   } else if (res.status === 422) {
+    // 422 → JSON: { error, code, fields: { fieldName: "required" | "invalid email format" } }
+    const json = await res.json();
     showFieldErrors(json.fields);
   } else if (res.status === 429) {
-    showRetryAfter(res.headers.get('Retry-After'));
+    // Plaintext body; no Retry-After header in v1.0. Back off and retry.
+    showRateLimited();
   } else {
-    showGenericError(json.error);
+    // Plaintext body for 4xx/5xx other than 422. Use status code, not body text.
+    showGenericError(`HTTP ${res.status}`);
   }
 });
 ```

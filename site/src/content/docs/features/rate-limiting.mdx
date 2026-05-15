@@ -75,24 +75,18 @@ The 10K default is sized for typical homelab and indie-developer use. Larger dep
 
 ## What happens on 429
 
-Posthorn returns HTTP 429 with a JSON body:
+Posthorn returns HTTP 429 with a plaintext body:
 
-```json
-{
-  "error": "Too many requests",
-  "code": "rate_limited"
-}
+```http
+HTTP/1.1 429 Too Many Requests
+Content-Type: text/plain; charset=utf-8
+
+rate limit exceeded
 ```
 
 Or, if the request prefers `text/html` and `redirect_error` is configured, a 303 redirect to that URL.
 
-A `Retry-After` header is included on every 429, computed from the time until the next token is available:
-
-```http
-HTTP/1.1 429 Too Many Requests
-Content-Type: application/json
-Retry-After: 12
-```
+v1.0 does **not** emit a `Retry-After` header. Clients should back off on their own (a small fixed delay or progressive backoff is fine for a form-submit retry). Computed `Retry-After` from the bucket's refill schedule is on the post-v1.0 polish list — open a feature request if you'd find it useful.
 
 ## Choosing values
 

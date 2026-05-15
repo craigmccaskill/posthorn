@@ -87,17 +87,16 @@ On success:
 
 ```text
 $ posthorn validate --config posthorn.toml
-config is valid: 2 endpoint(s), 1 transport type(s)
+config OK: 2 endpoint(s)
 ```
 
 Exit 0.
 
-On failure, errors are printed to stderr and exit is non-zero:
+On failure, the first error is printed to stderr and exit is non-zero. Errors are surfaced one at a time — fix the reported error and re-run to see the next, if any:
 
 ```text
 $ posthorn validate --config posthorn.toml
-ERROR: endpoint 0 (/api/contact): transport.settings.api_key resolves to empty value: ${env.POSTMARK_API_KEY}
-ERROR: endpoint 1 (/api/newsletter): subject template parse error at line 1: function "foo" not defined
+posthorn: config: endpoints[0] (/api/contact): transport: postmark transport requires settings.api_key
 exit status 1
 ```
 
