@@ -116,6 +116,17 @@ func (Handler) CaddyModule() caddy.ModuleInfo {
 // Errors from this method surface via `caddy validate` and prevent the
 // server from starting with a misconfigured directive.
 func (h *Handler) Provision(ctx caddy.Context) error {
+	// Expand `{env.VAR}` and other Caddy placeholders in transport
+	// settings before constructing the transport. The api_key case is
+	// load-bearing: the literal "{env.POSTMARK_API_KEY}" would be
+	// rejected by Postmark with a 401 if not resolved.
+	repl := caddy.NewReplacer()
+	for k, v := range h.Transport.Settings {
+		if s, ok := v.(string); ok {
+			h.Transport.Settings[k] = repl.ReplaceAll(s, "")
+		}
+	}
+
 	cfg := h.toEndpointConfig()
 
 	if err := cfg.Validate(); err != nil {
