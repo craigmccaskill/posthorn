@@ -456,7 +456,7 @@ For threats explicitly out of scope, this table also documents the *non*-defense
 
 | Out-of-scope threat | Disposition |
 |---|---|
-| SMTP-ingress threats (open relay, MX spoofing, RCPT bombing) | v1.2 SMTP ingress will add: AUTH PLAIN/LOGIN, RCPT recipient cap, sender allowlist, body size cap. Architecture must not foreclose this — see "Forward compatibility" below. |
+| SMTP-ingress threats (open relay, MX spoofing, RCPT bombing) | v1.3 SMTP ingress will add: AUTH PLAIN/LOGIN, RCPT recipient cap, sender allowlist, body size cap. Architecture must not foreclose this — see "Forward compatibility" below. |
 | Botnet spam (many low-rate IPs) | No v1.0 defense; LRU eviction at 10K IPs gracefully degrades but does not protect. v3 captcha/PoW is the planned response. |
 | DDoS / Layer 7 attacks | CDN's responsibility; gateway trusts upstream proxy/load balancer to absorb. Documented in README. |
 | API key theft from misconfigured deployment | Operator concern; mitigated by `${env.VAR}` config + NFR3 (key never logged). Documented in README. |
@@ -616,11 +616,20 @@ PR against `github.com/caddyserver/website` adding the Caddy adapter to the modu
 
 ## Forward compatibility (v1.x roadmap)
 
-Architectural commitments that protect future scope:
+Architectural commitments that protect future scope. Version numbers updated 2026-05-15 to match the restructured roadmap (see brief §"Post-MVP Vision").
 
-### v1.1 (more transports)
+### v1.1 (API mode)
 
-The `Transport` interface accepts arbitrary configurations via `TransportConfig.Settings map[string]any`. Adding Resend, Mailgun, SES requires new files in `core/transport/` (e.g., `resend.go`, `mailgun.go`) and a registration step in the config loader. Zero changes to handler logic, zero changes to Caddy adapter, zero breaking config changes.
+A second auth + ingress shape alongside the v1.0 form-mode pipeline. None of the additions break the existing form-mode path.
+
+- New `EndpointConfig.Auth` field with values `"form"` (default; v1.0 behavior) and `"api-key"`. The handler routes per-mode: `"api-key"` mode skips Origin/Referer + honeypot checks, requires `Authorization: Bearer <key>`, accepts `application/json` body, and applies the same rate limit + transport pipeline.
+- JSON parsing on API-mode endpoints produces the same `url.Values`-shaped map the form parser produces, so template rendering, validation, and the transport layer are unchanged.
+- Idempotency keys: new package `core/idempotency/` providing an LRU cache keyed on `(api_key, idempotency_key)`. v1.1 is in-memory; v2 swaps the implementation for SQLite-backed without changing the interface. 24-hour TTL.
+- Batch send: new endpoint config field `batch = true`. Handler reads a JSON array of recipients, loops template render per recipient, calls `Transport.SendBatch` (new optional interface method — falls back to looping `Send` for transports that don't implement it; Postmark transport implements it via `/email/batch`).
+
+### v1.2 (multi-transport + operational maturity)
+
+The `Transport` interface accepts arbitrary configurations via `TransportConfig.Settings map[string]any`. Adding Resend, Mailgun, SES, outbound-SMTP requires new files in `core/transport/` (e.g., `resend.go`, `mailgun.go`, `ses.go`, `smtp.go`) and a registration step in the config loader. Zero changes to handler logic, zero changes to Caddy adapter, zero breaking config changes.
 
 Each new transport must:
 - Implement `Transport.Send`
@@ -628,21 +637,34 @@ Each new transport must:
 - Pass the header-injection test suite (NFR2 applies to every transport)
 - Pass the no-key-in-logs test suite (NFR3 applies to every transport)
 
-### v1.2 (SMTP ingress)
+Operational additions:
+- `/healthz` and `/metrics` endpoints registered on the main HTTP listener at fixed paths (not as configurable endpoints). Metrics exposed in Prometheus exposition format — submission count, latency histograms, error class breakdown, per-transport split.
+- Dry run mode: handler-level flag (per endpoint or global) that runs the full pipeline up to `Transport.Send` and short-circuits with a 200 response containing the prepared `Message`.
+- CSRF + time-based form tokens: new `spam` subpackage additions, opt-in per endpoint. Form-mode only.
 
-This is the architectural fork that requires deliberate forward-compatibility. The commitment:
+### v1.3 (SMTP ingress)
+
+The architectural fork that v1.0 has been protecting against. The commitment:
 
 - The `Message` struct is the boundary between ingress and egress. It does not change. SMTP ingress parses a MIME message into a `Message`; HTTP form ingress builds a `Message` from form fields + templates. Egress doesn't care which.
-- An `Ingress` interface will be defined in v1.2 to abstract over "thing that produces Messages." HTTP form ingress is the implicit first instance in v1.0; SMTP ingress is the second in v1.2.
+- An `Ingress` interface will be defined in v1.3 to abstract over "thing that produces Messages." HTTP form ingress is the implicit first instance in v1.0; SMTP ingress is the second in v1.3.
 - Config gets a new top-level section: `smtp_listener:` (parallel to `endpoints:`). Existing `endpoints:` config remains valid and unchanged.
 - The `cmd/posthorn` binary gains a new code path that starts both an HTTP listener (if `endpoints` are configured) and an SMTP listener (if `smtp_listener` is configured). Both share the same logger, transport pool, and graceful-shutdown machinery.
 - The Caddy adapter does not gain SMTP ingress — different deployment shape (the standalone binary is the natural sidecar for an app emitting SMTP, not a Caddy module).
 
-The threat model expansion for v1.2 (open relay, RCPT bombing, etc.) is deferred to that version's spec rewrite. The architectural commitment here is that v1.0 does not foreclose those defenses: the spam package (`core/spam`) is HTTP-form-specific and a separate `core/smtpspam` package can land in v1.2 without disturbing it.
+The threat model expansion for v1.3 (open relay, RCPT bombing, etc.) is deferred to that version's spec rewrite. The architectural commitment here is that v1.0 does not foreclose those defenses: the spam package (`core/spam`) is HTTP-form-specific and a separate `core/smtpspam` package can land in v1.3 without disturbing it.
 
-### v2 (persistent state)
+### v2 (platform maturity — persistent state + mail-platform features)
 
-Adds `core/storage/` for SQLite. Send queue with retry across restarts. The `Transport.Send` interface stays as the synchronous primitive; an outer queue layer wraps it. Existing v1.x code paths continue to work unchanged.
+Adds `core/storage/` for SQLite. The storage layer underpins five separate user-visible features that all need durability:
+
+- **Submission log + retry queue.** Every submission persisted; failed sends survive restart and retry later. The `Transport.Send` interface stays as the synchronous primitive; the queue wraps it.
+- **Suppression list.** Auto-populated on hard bounces and spam complaints (via the lifecycle webhook plumbing below). Refuses to send to suppressed addresses.
+- **Durable idempotency.** Replaces v1.1's in-memory cache. Same package interface, persistent backing.
+- **Lifecycle event callbacks.** Posthorn receives Postmark's bounce/delivery/click webhooks at a registered URL, looks up the originating endpoint by message ID, and forwards to the caller's `webhook_url` with an HMAC-SHA256 signature. Pairs with suppression — hard bounces auto-suppress AND fire the callback.
+- **Automatic unsubscribe link injection.** Per-recipient signed tokens, hosted unsubscribe endpoint, RFC 8058 one-click headers. Depends on the suppression list. Opt-in per endpoint.
+
+Plus: HTML body, file attachments, multiple outputs per endpoint (fan-out). Existing v1.x code paths continue to work unchanged.
 
 ## Architectural decisions log
 
@@ -656,7 +678,7 @@ Adds `core/storage/` for SQLite. Send queue with retry across restarts. The `Tra
 
 **ADR-5: Synchronous send, not async with queue.** v1.0 has no persistent storage, so an async queue would be lost on restart. The brief commits to "log on terminal failure" as the recovery mechanism, which works only if the failure is observed in the request log. v2 brings SQLite + async queue together. Unchanged from prior design.
 
-**ADR-6: Core has zero Caddy dependency. Adapter imports core; never the reverse.** This is the load-bearing decision that makes the standalone-with-adapter architecture work. The two-module workspace enforces it: `core/go.mod` does not import Caddy, so accidentally adding a Caddy import in core breaks the build. The Caddy adapter is a sibling consumer of core, not its frame. This decision is what makes v1.2 SMTP ingress (which has nothing to do with Caddy) possible without forking.
+**ADR-6: Core has zero Caddy dependency. Adapter imports core; never the reverse.** This is the load-bearing decision that makes the standalone-with-adapter architecture work. The two-module workspace enforces it: `core/go.mod` does not import Caddy, so accidentally adding a Caddy import in core breaks the build. The Caddy adapter is a sibling consumer of core, not its frame. This decision is what makes v1.3 SMTP ingress (which has nothing to do with Caddy) possible without forking.
 
 **ADR-7: Standalone is the primary deployment shape; Caddy adapter is optional.** The Caddy adapter is named in v1.0 scope because the secondary audience (Caddy users) overlaps with the author. But the headline distribution is the standalone Docker image. Documentation, CI, and release infrastructure put the standalone path first; the adapter is a sibling module that gets equal *correctness* attention but secondary *marketing* attention. This is the structural decision that follows from the project brief's audience reordering — primary audience is now "self-hosters on cloud-with-blocked-SMTP," not "Caddy users."
 
@@ -668,7 +690,7 @@ These are implementation decisions deferred from the brief and PRD that affect c
 
 1. **Logging library: `log/slog` (stdlib) vs `zap` (Caddy's choice).** Recommendation: `slog` in core (zero deps, stdlib), the Caddy adapter pipes Caddy's zap logger through a small `slog.Handler` shim. Decided during Story 4.2.
 
-2. **`trusted_proxies` syntax in v1.0.** Decision: CIDR-only. Named presets (`cloudflare`, etc.) are planned for v1.1 (see brief §"Post-MVP Vision"). Confirmed during Story 3.2.
+2. **`trusted_proxies` syntax in v1.0.** Decision: CIDR-only. Named presets (`cloudflare`, etc.) are planned for v1.2 (see brief §"Post-MVP Vision"). Confirmed during Story 3.2.
 
 3. **Body template — file path vs inline detection.** Recommendation: heuristic — if the value contains `{{` it's inline; otherwise it's a file path. Reject ambiguity at validation time. Decided during Story 2.4.
 
@@ -750,4 +772,4 @@ posthorn <path> {
 }
 ```
 
-The grammar is deliberately conservative: every directive is a single-line key-value pair except `transport` which is a sub-block (extensible — Resend, Mailgun, etc., will use the same pattern in v1.1).
+The grammar is deliberately conservative: every directive is a single-line key-value pair except `transport` which is a sub-block (extensible — Resend, Mailgun, etc., will use the same pattern in v1.2).

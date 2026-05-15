@@ -16,7 +16,7 @@ Scope is strictly v1.0. v1.1+ items are tracked in the project's Obsidian dashbo
 Defer to [the project brief](./01-project-brief.md) §"Goals and Success Metrics". Two reminders that shape decisions in this document:
 
 - **Done:** Author's blog runs on Posthorn for the contact form for 30 days with zero dropped submissions; README has copy-pasteable examples for both deployment shapes; tagged v1.0.0 with Docker image; Caddy adapter listed on caddyserver.com modules page within 7 days
-- **Worked:** External user in production within 90 days + Ghost roundtrip via v1.2 SMTP ingress within 6 months
+- **Worked:** External user in production within 90 days + Ghost roundtrip via v1.3 SMTP ingress within 6 months
 
 ## Functional requirements
 
@@ -32,7 +32,7 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 **FR3.** The gateway **must** ship a Postmark HTTP API transport that accepts a configurable API key (via `{env.VAR}` substitution) and sends submissions as email through `https://api.postmarkapp.com/email`.
 
-**FR4.** The gateway **must** expose a pluggable `Transport` interface such that additional transports (Resend, Mailgun, SES, outbound SMTP) can be added in v1.1+ without modifying handler logic or Caddy adapter code.
+**FR4.** The gateway **must** expose a pluggable `Transport` interface such that additional transports (Resend, Mailgun, SES, outbound SMTP) can be added in v1.2+ without modifying handler logic or Caddy adapter code.
 
 ### Spam protection
 
@@ -270,13 +270,15 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 
 Defer to [the project brief](./01-project-brief.md) §"MVP Scope > Out of scope" for the full list. Key v1.0 exclusions worth re-stating in PRD context because they're tempting to slip in:
 
-- **SMTP ingress** — v1.2. Implementation **must not** start during v1.0 even if time remains.
-- **Resend, Mailgun, SES, outbound-SMTP transports** — v1.1.
-- **CSRF / time-based tokens** — v1.1.
+- **SMTP ingress** — v1.3. Implementation **must not** start during v1.0 even if time remains.
+- **API-mode endpoints (API-key auth, JSON, batch, idempotency)** — v1.1.
+- **Resend, Mailgun, SES, outbound-SMTP transports** — v1.2.
+- **CSRF / time-based tokens** — v1.2.
 - **Persistent submission storage / retry queue** — v2. v1.0 retry is in-request only.
 - **File attachments** — v2.
-- **Webhook transport** — v2.
-- **Health check endpoint, dry run mode, Prometheus metrics** — v1.1.
+- **Webhook transport (outbound + lifecycle event forwarding)** — v2.
+- **Suppression list, automatic unsubscribe injection** — v2.
+- **Health check endpoint, dry run mode, Prometheus metrics** — v1.2.
 - **Multi-tenant / per-tenant config isolation** — post-v1.
 
 If implementation goes faster than budgeted, additional v1.0 polish (better error messages, more validator coverage, more documentation) is the right place to invest, not v1.1 features.

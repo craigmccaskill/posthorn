@@ -23,32 +23,51 @@ What you can do today:
 
 [Get started →](/getting-started/quick-start/)
 
-## v1.1 — more transports, better operations
+## v1.1 — API mode
 
-**Target:** ~4 weeks after v1.0 ships. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/1)
+[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/1)
 
-The version that proves the multi-API contract. Adds:
+The version where Posthorn becomes usable as **an internal mail API**, not just a contact-form gateway. Server-to-server callers (a worker, a backend job, a paid-event handler) can now hit Posthorn without needing browser-shaped defenses (Origin/Referer/honeypot).
 
-- **Resend transport** — alternative HTTP API provider for operators who prefer it over Postmark
-- **Mailgun transport** — same
-- **AWS SES transport** — for AWS-native deployments
-- **Outbound SMTP transport** — the historical baseline, for operators on hosts that don't block port 587 (Hetzner, OVH, etc.)
-- **CSRF + time-based form tokens** — second layer of spam protection on top of v1.0's honeypot + Origin/Referer + rate limit
-- **Health check endpoint** (`/healthz`) — for Docker / Kubernetes liveness probes
-- **Prometheus metrics endpoint** (`/metrics`) — submission count, latency histograms, error class breakdown
-- **Dry run mode** — parse + validate without sending, useful for CI of customer-facing form templates
-- **Named presets for `trusted_proxies`** (`cloudflare`, etc.) on top of the v1.0 CIDR-list syntax
-- **IP-stripping option** for GDPR contexts
+- **API-key auth per endpoint** — `auth = "api-key"` mode, mutually exclusive with the form-mode defenses. Callers send `Authorization: Bearer <key>`. Rate limit still applies.
+- **JSON content type on API-mode endpoints** — natural shape for server-to-server callers. Form-mode endpoints stay form-encoded only.
+- **Idempotency keys** — standard `Idempotency-Key` header, 24-hour TTL, in-memory cache. Safe retries for payment / license-delivery / one-shot transactional flows. *Durable across restarts in v2.*
+- **Batch send** — per-recipient template substitution against Postmark's `/email/batch` endpoint, hard cap aligned to Postmark's 500/batch limit, per-recipient response status.
 
-No breaking config changes — every v1.0 config keeps working untouched.
+No breaking config changes — every v1.0 form-mode config keeps working untouched. API-mode is opt-in per endpoint.
 
-## v1.2 — SMTP ingress
+## v1.2 — multi-transport + operational maturity
 
-**Target:** ~10–14 hours of focused work after v1.1. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/2)
+[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/4)
+
+The version that breaks Postmark-lock and makes Posthorn production-ready. Adding 4 transports is the moment operators care about metrics, health checks, dry-run validation, and tighter spam protection.
+
+**Transports** (any of these can be configured per endpoint, alongside Postmark):
+
+- **Resend** — alternative HTTP API provider
+- **Mailgun** — alternative HTTP API provider
+- **AWS SES** — AWS-native deployments
+- **Outbound SMTP relay** — the historical baseline, for operators on hosts that don't block port 587 (Hetzner, OVH, etc.)
+
+**Spam protection** (form-mode hardening on top of v1.0):
+
+- CSRF tokens + time-based form tokens — catches automated abuse the v1.0 honeypot + Origin/Referer doesn't
+
+**Observability + ergonomics:**
+
+- `/healthz` endpoint for Docker / Kubernetes liveness probes
+- `/metrics` endpoint (Prometheus exposition format) — submission count, latency histograms, error class breakdown
+- Dry run mode — parse + validate without sending, useful in CI for customer-facing form template changes
+- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of the v1.0 CIDR-list syntax
+- IP-stripping option for GDPR contexts
+
+## v1.3 — SMTP ingress
+
+[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/2)
 
 The strategic feature that completes the gateway thesis. **A TCP listener accepting SMTP from clients on the local network**, forwarding via whatever HTTP API transport is configured.
 
-The use case: self-hosted apps that emit SMTP for transactional mail — Ghost, Gitea, Mastodon, Discourse, Matrix, NextCloud, Authentik — currently broken on cloud hosts that block outbound SMTP. v1.2 makes them work.
+The use case: self-hosted apps that emit SMTP for transactional mail — Ghost, Gitea, Mastodon, Discourse, Matrix, NextCloud, Authentik — currently broken on cloud hosts that block outbound SMTP. v1.3 makes them work.
 
 The architectural commitments are already locked in v1.0:
 
@@ -56,19 +75,28 @@ The architectural commitments are already locked in v1.0:
 - New `Ingress` interface — HTTP form ingress is the first instance (in v1.0); SMTP listener is the second
 - New top-level config section `smtp_listener` alongside `endpoints`
 - Caddy adapter does **not** get SMTP ingress — the standalone binary is the natural sidecar
-- New threat model (open relay, RCPT bombing, sender allowlist, recipient caps) gets its own spec rewrite in v1.2
+- New threat model (open relay prevention, RCPT validation, sender allowlist, recipient caps, optional client-cert auth) gets its own spec rewrite in v1.3
 
-## v2 — persistent state
+## v2 — platform maturity
 
-**Target:** ~15–20 hours of work, no specific date. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/3)
+[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/3)
 
-The architectural shift that unlocks the things you can't do without a database:
+The architectural shift that unlocks operating Posthorn as a real mail platform: durable state, lifecycle awareness, deliverability hygiene.
+
+**Storage layer:**
 
 - **SQLite submission log** — every submission persisted, queryable
 - **Retry queue across restarts** — failed sends survive a container restart and retry later
-- **Multiple outputs per endpoint** — email + webhook + log fan-out for the same form
+
+**Mail-platform features built on storage:**
+
+- **Suppression list** — auto on hard bounces and spam complaints; admin API for inspection and manual entries. Refuses to send to suppressed addresses (returns 200 with `{"suppressed": true}` so callers treat it as final, not transient).
+- **Durable idempotency** — the v1.1 in-memory cache becomes restart-survivable
+- **Postmark lifecycle event callbacks** — delivery / bounce / open / click events forwarded to the originating caller with HMAC-signed webhook
+- **Automatic unsubscribe link injection** — per-recipient signed tokens, hosted unsubscribe endpoint, RFC 8058 one-click headers (which Gmail and Yahoo now require for senders &gt;5000/day)
+- **HTML body support** (alongside the originally-planned markdown body)
 - **File attachments** — multipart form uploads forwarded to the transport
-- **Webhook transport** — POST the parsed submission to a URL instead of sending mail
+- **Multiple outputs per endpoint** — email + webhook + log fan-out for the same submission
 
 The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.x deployments keep working unchanged.
 
@@ -98,7 +126,7 @@ These come up in conversation and are worth naming explicitly:
 
 | Feature | Why not |
 |---|---|
-| Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The v1.2 SMTP ingress accepts mail from known internal clients only. |
+| Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The v1.3 SMTP ingress accepts mail from known internal clients only. |
 | Markdown body rendering | Templates are plain text. v2 may add markdown with explicit escaping. |
 | Multi-tenancy / per-tenant config isolation | Post-v1 if at all — the project's audience is single-tenant self-hosters. |
 | GUI installer / first-run wizard | The TOML / Caddyfile config is the source of truth; no UI in front of it. |

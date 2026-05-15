@@ -62,7 +62,7 @@ The author's blog (craigmccaskill.com) currently uses Formspree for its contact 
 A standalone Go binary (`posthorn`), distributed primarily as a Docker image, that:
 
 1. **Accepts mail through pluggable ingress modes.** v1.0 ships with HTTP form ingress (form-encoded POST submissions on configured paths). v1.x adds SMTP ingress (TCP listener accepting SMTP from clients on the local docker network).
-2. **Delivers mail through pluggable HTTP API transports.** v1.0 ships with Postmark; v1.1+ adds Resend, Mailgun, AWS SES, and outbound-SMTP-relay (for operators on hosts that don't block it). Same `Transport` interface across ingress modes.
+2. **Delivers mail through pluggable HTTP API transports.** v1.0 ships with Postmark; v1.2 adds Resend, Mailgun, AWS SES, and outbound-SMTP-relay (for operators on hosts that don't block it). Same `Transport` interface across ingress modes.
 3. **Provides shared operational features** across all ingress/transport pairs: structured logging, rate limiting, retry policy, observability, secrets via env-var resolution.
 4. **Is configured via a single TOML file**, with `${env.VAR}` placeholders for secrets.
 5. **Offers an optional Caddy module adapter** as a sibling Go module (`github.com/craigmccaskill/posthorn/caddy`) for operators who already run Caddy and prefer Caddyfile syntax for the form-ingress mode.
@@ -117,7 +117,7 @@ GitHub stars, blog traffic, HN front page are noise relative to these. A real se
 
 **Egress (transports)**
 - Postmark HTTP API transport (only transport in v1.0)
-- Pluggable Transport interface ready for v1.1 additions
+- Pluggable Transport interface ready for v1.2 additions
 
 **Spam protection**
 - Honeypot field (configurable name)
@@ -163,46 +163,53 @@ GitHub stars, blog traffic, HN front page are noise relative to these. A real se
 
 ### Out of scope (v1.0)
 
-- **SMTP ingress** — v1.x (the headline post-v1.0 feature; see Post-MVP Vision)
-- SMTP outbound transport — v1.1
-- Resend, Mailgun, SES HTTP API transports — v1.1
-- Webhook transport — v2
-- CSRF / time-based token spam protection — v1.1
-- Captcha, proof-of-work — v3
-- File attachments, PGP encryption, confirmation auto-replies — post-v1
+- **SMTP ingress** — v1.3 (the strategic post-v1.0 feature; see Post-MVP Vision)
+- API-key auth per endpoint, JSON content type, batch send, idempotency keys — v1.1
+- SMTP outbound transport, Resend, Mailgun, SES HTTP API transports — v1.2
+- CSRF / time-based token spam protection — v1.2
+- Prometheus metrics, health check endpoint, dry run mode, IP stripping, trusted_proxies presets — v1.2
+- Webhook transport, lifecycle event callbacks — v2
+- Suppression list, durable idempotency, automatic unsubscribe injection — v2
 - SQLite submission log, retry queue across restarts — v2
-- Admin UI — v3
-- Prometheus metrics, health check endpoint, dry run mode — v1.1
-- Markdown body support — post-v1
+- File attachments, multi-output fan-out — v2
+- HTML body, markdown body, confirmation auto-replies — v2 / post-v1
 - Per-tenant config isolation, multi-config deployments — post-v1
+- Captcha, proof-of-work, admin UI, PGP encryption — v3
 
 ## Post-MVP Vision
 
-**v1.1** lands within ~4 weeks of v1.0:
-- Resend, Mailgun HTTP API transports — proves multi-API support, demonstrates transport interface flexibility
-- Outbound SMTP transport — the historical baseline, for operators on hosts that don't block 587
-- Time-based token + CSRF token spam protection
-- Max length limits per field
-- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of the v1.0 CIDR-list syntax
-- Health check endpoint, Prometheus metrics
-- Dry run mode
-- IP stripping option for GDPR contexts
+The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incoming GitHub issues (most driven by a concrete second-user integration — Pensum). Current structure ships value in coherent themed releases rather than one large v1.1 "lots of things" release. The canonical user-facing roadmap lives at [posthorn.dev/roadmap/](https://posthorn.dev/roadmap/); this section is the authoritative scope source it derives from.
 
-**v1.2** is the headline strategic feature — ~10–14 hours of work — that completes the gateway thesis:
-- **SMTP ingress.** TCP listener accepting SMTP from clients on the docker network. Connects via existing Transport interface to whatever HTTP API transport is configured. This is what unblocks the Ghost admin login use case.
-- New threat model: open-relay prevention, RCPT validation, recipient/size caps, optional client-cert auth
-- New config section for SMTP listener (port, TLS, auth, allowed senders/recipients)
-- Caddy adapter does NOT receive SMTP ingress — different deployment shape
+**v1.1 — API mode.** Posthorn becomes usable as an internal mail API, not just a contact-form gateway. Server-to-server callers (workers, daemons, paid-event handlers) can hit Posthorn without needing browser-shaped defenses.
+- API-key auth per endpoint (`auth = "api-key"` mode, mutex with form-mode defenses)
+- JSON content type on API-mode endpoints
+- Idempotency keys via standard `Idempotency-Key` header (24h TTL, in-memory; durable across restarts in v2)
+- Batch send with per-recipient template substitution against Postmark `/email/batch`
 
-**v2** is the architectural shift — ~15–20 hours — that unlocks persistent state:
-- SQLite submission log
-- Send queue with retry across restarts
+**v1.2 — multi-transport + operational maturity.** Posthorn isn't Postmark-locked, and it's now production-ready.
+- Resend, Mailgun, AWS SES, outbound-SMTP transports
+- CSRF + time-based form tokens (form-mode spam protection beyond v1.0 honeypot + Origin/Referer)
+- `/healthz` endpoint, `/metrics` (Prometheus exposition), dry run mode
+- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of v1.0 CIDR-list syntax
+- IP-stripping option for GDPR contexts
+
+**v1.3 — SMTP ingress.** The strategic feature that completes the gateway thesis. ~10-14 hours of focused work.
+- TCP listener accepting SMTP from clients on the local network, forwarding via the configured HTTP API transport
+- New threat model: open-relay prevention, RCPT validation, sender allowlist, recipient/size caps, optional client-cert auth
+- New `smtp_listener` config section, new `Ingress` interface
+- Caddy adapter does NOT receive SMTP ingress — different deployment shape (standalone is the natural sidecar)
+- This is what unblocks the Ghost admin login use case.
+
+**v2 — platform maturity.** The architectural shift that unlocks operating Posthorn as a real mail platform.
+- SQLite submission log + persistent retry queue across restarts
+- Suppression list (auto on hard bounces and spam complaints), durable idempotency (replaces v1.1 in-memory), Postmark lifecycle event callbacks forwarded to caller via HMAC-signed webhook, automatic unsubscribe link injection (RFC 8058 one-click)
+- HTML body support (alongside the planned markdown body)
+- File attachments (multipart uploads forwarded to transport)
 - Multiple outputs per endpoint (email + webhook + log fan-out)
-- File attachments
 
 **v3** is speculative and depends on community traction:
 - Admin UI (embedded web app, requires SQLite storage)
-- Proof-of-work spam challenge
+- Proof-of-work spam challenge (defeats botnet spam that per-IP rate limiting can't catch)
 - PGP encryption
 
 ## Technical Constraints (locked)

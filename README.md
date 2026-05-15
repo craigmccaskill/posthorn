@@ -121,9 +121,10 @@ The full operator checklist is on [posthorn.dev](https://posthorn.dev).
 | Version | Scope |
 |---|---|
 | **v1.0** | HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON+redirect responses, standalone Docker + Caddy adapter |
-| **v1.1** | Resend, Mailgun, AWS SES, outbound-SMTP transports; CSRF + time-based token spam protection; dry run; health check; Prometheus metrics |
-| **v1.2** | **SMTP ingress** — TCP listener accepting SMTP from internal apps (Ghost, Gitea, Mastodon) and forwarding via the configured HTTP API transport |
-| **v2** | SQLite submission log, retry queue across restarts, file attachments, webhook transport |
+| **v1.1** | **API mode** — Posthorn becomes an internal mail API alongside its form-ingress role. Per-endpoint API-key auth, JSON content type, idempotency keys (in-memory), batch send |
+| **v1.2** | **Multi-transport + ops polish** — Resend, Mailgun, AWS SES, outbound-SMTP transports; CSRF + time-based token spam protection; `/healthz`, `/metrics`, dry run mode |
+| **v1.3** | **SMTP ingress** — TCP listener accepting SMTP from internal apps (Ghost, Gitea, Mastodon) and forwarding via the configured HTTP API transport |
+| **v2** | **Platform maturity** — SQLite submission log, retry queue across restarts, suppression list, durable idempotency, lifecycle event callbacks, RFC 8058 unsubscribe, file attachments |
 | **v3** | Admin UI, proof-of-work spam challenge, PGP encryption |
 
 The full feature breakdown lives in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Post-MVP Vision".
