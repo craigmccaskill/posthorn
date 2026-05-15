@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/craigmccaskill/posthorn/security/advisories/new
+    about: Use private vulnerability reporting. Do not open public issues for security.
+  - name: Question or discussion
+    url: https://github.com/craigmccaskill/posthorn/discussions
+    about: Ask questions or share ideas with the community.
+  - name: Documentation
+    url: https://posthorn.dev
+    about: Operator docs — install, config, deployment, troubleshooting.

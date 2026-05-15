@@ -1,0 +1,117 @@
+---
+title: Roadmap
+description: What's shipped, what's next, and how to influence the order.
+---
+
+import { LinkCard, Aside } from '@astrojs/starlight/components';
+
+This page is the **canonical public roadmap**. The narrative lives here; the execution surface (open issues, in-flight work) lives in [GitHub Milestones](https://github.com/craigmccaskill/posthorn/milestones).
+
+Posthorn ships in deliberately small, scoped releases. Every version has a locked spec before code is written. The "Worked" criterion for the project is two binary signals: at least one external user in production within 90 days of v1.0, and the Ghost admin-login round-trip via v1.2 SMTP ingress within 6 months.
+
+## v1.0 — first public release
+
+**Status:** released or imminent (see the [GitHub Releases page](https://github.com/craigmccaskill/posthorn/releases) for the live date).
+
+**Scope:** HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON + redirect responses, standalone Docker container, optional Caddy adapter.
+
+What you can do today:
+
+- Drop in a self-hosted contact form on any host that blocks outbound SMTP
+- Run Posthorn as a Docker sidecar next to your blog / static site / app stack
+- Or load it as a Caddy v2 module if you're already running Caddy
+
+[Get started →](/getting-started/quick-start/)
+
+## v1.1 — more transports, better operations
+
+**Target:** ~4 weeks after v1.0 ships. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/1)
+
+The version that proves the multi-API contract. Adds:
+
+- **Resend transport** — alternative HTTP API provider for operators who prefer it over Postmark
+- **Mailgun transport** — same
+- **AWS SES transport** — for AWS-native deployments
+- **Outbound SMTP transport** — the historical baseline, for operators on hosts that don't block port 587 (Hetzner, OVH, etc.)
+- **CSRF + time-based form tokens** — second layer of spam protection on top of v1.0's honeypot + Origin/Referer + rate limit
+- **Health check endpoint** (`/healthz`) — for Docker / Kubernetes liveness probes
+- **Prometheus metrics endpoint** (`/metrics`) — submission count, latency histograms, error class breakdown
+- **Dry run mode** — parse + validate without sending, useful for CI of customer-facing form templates
+- **Named presets for `trusted_proxies`** (`cloudflare`, etc.) on top of the v1.0 CIDR-list syntax
+- **IP-stripping option** for GDPR contexts
+
+No breaking config changes — every v1.0 config keeps working untouched.
+
+## v1.2 — SMTP ingress
+
+**Target:** ~10–14 hours of focused work after v1.1. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/2)
+
+The strategic feature that completes the gateway thesis. **A TCP listener accepting SMTP from clients on the local network**, forwarding via whatever HTTP API transport is configured.
+
+The use case: self-hosted apps that emit SMTP for transactional mail — Ghost, Gitea, Mastodon, Discourse, Matrix, NextCloud, Authentik — currently broken on cloud hosts that block outbound SMTP. v1.2 makes them work.
+
+The architectural commitments are already locked in v1.0:
+
+- The `Message` struct doesn't change — it's the boundary between ingress (form parser, SMTP MIME parser) and egress (transports)
+- New `Ingress` interface — HTTP form ingress is the first instance (in v1.0); SMTP listener is the second
+- New top-level config section `smtp_listener` alongside `endpoints`
+- Caddy adapter does **not** get SMTP ingress — the standalone binary is the natural sidecar
+- New threat model (open relay, RCPT bombing, sender allowlist, recipient caps) gets its own spec rewrite in v1.2
+
+## v2 — persistent state
+
+**Target:** ~15–20 hours of work, no specific date. [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/3)
+
+The architectural shift that unlocks the things you can't do without a database:
+
+- **SQLite submission log** — every submission persisted, queryable
+- **Retry queue across restarts** — failed sends survive a container restart and retry later
+- **Multiple outputs per endpoint** — email + webhook + log fan-out for the same form
+- **File attachments** — multipart form uploads forwarded to the transport
+- **Webhook transport** — POST the parsed submission to a URL instead of sending mail
+
+The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.x deployments keep working unchanged.
+
+## v3 — speculative
+
+No date. Depends entirely on community traction:
+
+- **Admin UI** — embedded web app for browsing submissions, viewing logs, retrying failed sends (requires v2's SQLite storage)
+- **Proof-of-work spam challenge** — computational cost imposed on submitters; defeats botnet spam from many low-rate IPs that the v1.0 rate limiter can't catch
+- **PGP encryption** — encrypt outbound mail to recipient public keys at the gateway
+
+## How to influence the order
+
+<Aside type="tip">
+The roadmap order isn't set in stone after v1.0 ships. Adoption signals reshuffle priorities — if every early user asks for the same thing, that thing moves up.
+</Aside>
+
+If you want to push something forward:
+
+1. **Open a [feature request](https://github.com/craigmccaskill/posthorn/issues/new?template=feature.yml)** with a concrete use case. Pitches like "wouldn't it be cool if..." get less weight than "I want to use Posthorn for X, but Y is missing."
+2. **Comment on the relevant milestone or existing issue** with your use case. Adoption signal beats pure upvotes.
+3. **Start a [discussion](https://github.com/craigmccaskill/posthorn/discussions)** for half-formed ideas where the right framing isn't clear yet.
+
+## What's deliberately out of scope
+
+These come up in conversation and are worth naming explicitly:
+
+| Feature | Why not |
+|---|---|
+| Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The v1.2 SMTP ingress accepts mail from known internal clients only. |
+| Markdown body rendering | Templates are plain text. v2 may add markdown with explicit escaping. |
+| Multi-tenancy / per-tenant config isolation | Post-v1 if at all — the project's audience is single-tenant self-hosters. |
+| GUI installer / first-run wizard | The TOML / Caddyfile config is the source of truth; no UI in front of it. |
+| Replacing Postmark / providers entirely (e.g., running our own SMTP outbound) | That's "build a postfix replacement" territory; out of scope forever. |
+
+<LinkCard
+  title="Track current work on GitHub"
+  description="Live milestone view with the open issues, in-flight PRs, and what's already done."
+  href="https://github.com/craigmccaskill/posthorn/milestones"
+/>
+
+<LinkCard
+  title="Read the locked v1.0 spec"
+  description="The full project brief, PRD, and architecture document — what's settled and why."
+  href="https://github.com/craigmccaskill/posthorn/tree/main/spec"
+/>

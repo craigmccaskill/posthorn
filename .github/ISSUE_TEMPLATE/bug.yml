@@ -1,0 +1,83 @@
+name: Bug report
+description: Something is broken or behaving unexpectedly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. **For security issues, do not open a public issue** — use [private vulnerability reporting](https://github.com/craigmccaskill/posthorn/security/advisories/new) instead. See [SECURITY.md](https://github.com/craigmccaskill/posthorn/blob/main/SECURITY.md) for the disclosure process.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened?
+      placeholder: One or two sentences describing what went wrong.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Posthorn version
+      description: Output of `posthorn version`, or the Docker image tag (e.g., `ghcr.io/craigmccaskill/posthorn:1.0.0`).
+      placeholder: "e.g., v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment shape
+      options:
+        - Docker container
+        - Standalone binary
+        - Caddy adapter (xcaddy build)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: As specific as possible. A minimal config + a `curl` command beats a long prose description.
+      placeholder: |
+        1. Run `posthorn serve --config posthorn.toml`
+        2. POST a form to /api/contact with ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant structured JSON log lines. **Redact API keys.**
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (redacted)
+      description: The relevant slice of your `posthorn.toml` or Caddyfile. Redact secrets and recipient addresses.
+      render: toml
+    validations:
+      required: false

@@ -1,0 +1,49 @@
+name: Feature request
+description: Suggest a change for v1.1+
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. The v1.0 specification is **locked** — see [spec/01-project-brief.md §"MVP Scope > Out of scope"](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md) for the canonical exclusion list, and the [roadmap](https://posthorn.dev/roadmap/) for what's planned post-v1.0.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't you do today? Concrete use case beats abstract pitch.
+      placeholder: I want to send mail through Resend instead of Postmark because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How you'd like it to work. Sketches of config syntax welcome.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope check
+      description: Where does this fit on the roadmap?
+      options:
+        - An existing FR/NFR is unclear or incomplete
+        - Roadmapped for v1.1 (more transports, CSRF, health check, metrics, dry run)
+        - Roadmapped for v1.2 (SMTP ingress)
+        - Roadmapped for v2 (SQLite, retry queue, attachments, webhooks)
+        - Roadmapped for v3 (admin UI, proof-of-work, PGP)
+        - None of the above — new scope ask
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today? What would the world look like if we didn't do this?
+    validations:
+      required: false

@@ -92,6 +92,7 @@ export default defineConfig({
             { label: 'CLI', slug: 'reference/cli' },
           ],
         },
+        { label: 'Roadmap', slug: 'roadmap' },
         { label: 'FAQ', slug: 'faq' },
       ],
     }),
