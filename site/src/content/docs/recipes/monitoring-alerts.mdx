@@ -1,0 +1,151 @@
+---
+title: Monitoring alerts via webhook
+description: Receive uptime / monitoring alerts as email via a form-encoded webhook from your monitoring tool.
+---
+
+import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+You run a monitoring tool — Uptime Kuma, healthchecks.io, a custom cron-with-webhook, anything that fires a webhook when something goes wrong. You want those alerts as email, ideally in the inbox you actually check. Posthorn v1.0 handles this if the monitoring tool can be configured to POST `application/x-www-form-urlencoded` (most can, some can't).
+
+**At the end:** an `/api/alert` endpoint that takes form-encoded POSTs from your monitoring tool and emails you. Honeypot off (no humans). Origin check off (monitoring tools don't send `Origin` headers). Rate limit calibrated to your alert volume.
+
+<Aside type="note" title="JSON webhooks need v1.1 or a small shim">
+Some monitoring tools (Grafana, Prometheus Alertmanager) only emit JSON webhooks. v1.0 only accepts form-encoded; v1.1's JSON API ingress will accept those natively.
+
+For now, two options: (a) point the monitor at a small shim that translates JSON to form-encoded (a 20-line Cloudflare Worker or Go program), or (b) wait for v1.1 — it's the next milestone after v1.0 ships.
+</Aside>
+
+## Prerequisites
+
+- A monitoring tool that can be configured to send form-encoded webhooks. Confirmed compatible (with their respective configuration tricks): Uptime Kuma (`Generic` notification type, `Content-Type: application/x-www-form-urlencoded`), healthchecks.io (`Add Integration → Webhook`, set body to form-encoded), generic cron-with-curl.
+- Same Posthorn baseline as the other recipes — Postmark account, server token, Docker host.
+
+## Walkthrough
+
+<Steps>
+
+1. **Add an alert endpoint to `posthorn.toml`.**
+
+   ```toml
+   [[endpoints]]
+   path = "/api/alert"
+   to = ["alerts@yourdomain.com"]
+   from = "Posthorn Alerts <noreply@yourdomain.com>"
+   required = ["service", "status"]
+   subject = "[{{.status}}] {{.service}}"
+   body = """
+   Service: {{.service}}
+   Status: {{.status}}
+   Time: {{._timestamp}}
+
+   Details: {{.details}}
+   """
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+
+   [endpoints.rate_limit]
+   count = 30
+   interval = "1m"
+   ```
+
+   Note what's *not* in this config:
+
+   - No `honeypot` — there are no humans on this endpoint
+   - No `allowed_origins` — monitoring tools don't send `Origin` or `Referer` headers; setting `allowed_origins` would block every alert
+   - No `redirect_*` — monitoring tools don't follow redirects in a useful way
+   - Higher `rate_limit` — alert storms during outages are real, but bounded; 30/minute lets a burst through without the rate limiter eating the signal
+
+2. **Restart Posthorn.**
+
+   ```bash
+   docker compose restart posthorn
+   ```
+
+3. **Configure your monitoring tool to send form-encoded POSTs.**
+
+   <Tabs syncKey="monitor">
+     <TabItem label="Uptime Kuma">
+
+   In Uptime Kuma's notification settings:
+
+   - **Type:** Webhook
+   - **POST URL:** `https://yourdomain.com/api/alert`
+   - **Content-Type:** `application/x-www-form-urlencoded`
+   - **Custom body** (templated, Kuma syntax):
+
+     ```text
+     service={{name}}&status={{status}}&details={{msg}}
+     ```
+
+   Kuma URL-encodes the values automatically.
+
+     </TabItem>
+     <TabItem label="healthchecks.io">
+
+   In healthchecks.io's project integrations:
+
+   - **Add Integration → Webhook**
+   - **Method:** POST
+   - **URL (down):** `https://yourdomain.com/api/alert`
+   - **Body (down):** `service={{ name }}&status=DOWN&details=Check did not ping in time`
+   - **Headers:** `Content-Type: application/x-www-form-urlencoded`
+
+   Configure a corresponding "up" webhook with `status=UP` for recovery alerts.
+
+     </TabItem>
+     <TabItem label="curl from cron">
+
+   The simplest possible alert source. Drop this in `crontab -e`:
+
+   ```bash
+   */5 * * * * curl -s --fail https://api.yourservice.com/healthz || \
+     curl -s -X POST https://yourdomain.com/api/alert \
+       --data-urlencode "service=api.yourservice.com" \
+       --data-urlencode "status=DOWN" \
+       --data-urlencode "details=healthz check failed at $(date -Iseconds)"
+   ```
+
+     </TabItem>
+   </Tabs>
+
+4. **Send a test alert.**
+
+   ```bash
+   curl -i -X POST https://yourdomain.com/api/alert \
+     --data-urlencode "service=test-service" \
+     --data-urlencode "status=DOWN" \
+     --data-urlencode "details=Test alert from manual curl"
+   ```
+
+   Expect HTTP 200 with a submission_id. Email arrives within seconds with the subject `[DOWN] test-service`.
+
+</Steps>
+
+## Calibrating rate limits for alerts
+
+Alert traffic has a different shape than form traffic. A few patterns to think about:
+
+- **Quiet stretches punctuated by bursts.** Days of no alerts; then a network blip and your monitor fires 10 alerts in 2 minutes. The rate limit needs to let the burst through.
+- **Per-service vs. total.** v1.0 rate-limits per client IP, not per `service` field. If you have one monitoring tool firing all alerts, all alerts come from one IP — so the limit applies to *total* alert volume, not per-service.
+- **Trade-off:** too tight, you lose alerts during the outages you care about. Too loose, a misconfigured monitor in a tight loop fills your inbox.
+
+A sane starting point: `count = 30, interval = "1m"`. Bump higher if you have many services or a tool that emits separate alerts per check. Add `trusted_proxies` if your monitoring tool is behind a reverse proxy you control.
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 400 form-encoded body required` | The monitoring tool is sending JSON, not form-encoded | Switch the tool to form-encoded if it supports a custom body format, or wait for v1.1 JSON ingress, or write a 20-line JSON-to-form shim |
+| Alerts arrive without details | `details` isn't in the `required` list, so when it's missing or empty, Posthorn renders `Details: ` with nothing after it | Either add `details` to `required` (forces the monitor to include it) or accept the empty case |
+| First alert during an outage shows up, the rest get 429'd | Rate limit is set too tight for your alert volume | Bump `count` up; storms during outages are normal |
+| Alert email lands in spam | DKIM/SPF on the sending domain — same as every other Posthorn recipe | See [DNS](/security/dns/) |
+
+## Where to go next
+
+- [Configuration reference](/configuration/reference/) — every field
+- [Rate limiting](/features/rate-limiting/) — math behind the token bucket
+- [Roadmap](/roadmap/) — v1.1 JSON ingress is the natural fit for Grafana, Alertmanager, and other JSON-only monitors

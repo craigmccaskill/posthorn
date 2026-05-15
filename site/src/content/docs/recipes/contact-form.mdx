@@ -1,0 +1,209 @@
+---
+title: Contact form on a static site
+description: A 10-minute walkthrough from blank static site to a working contact form sending mail through Postmark.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, Eleventy, plain HTML — doesn't matter) and you want a contact form that sends a real email when someone submits it. No JavaScript framework, no SaaS form service, no $5/month subscription.
+
+**At the end:** a `/contact` page on your site with a working form. Submissions arrive in your inbox within seconds. Honeypot + Origin-check defenses are on. Rate limit is set so you don't get hammered.
+
+## Prerequisites
+
+- A Postmark account with a verified sender signature on your sending domain (SPF, DKIM, DMARC set up — see [DNS](/security/dns/))
+- Postmark **server token** (per-server, found under your server's API Tokens tab — not the account-level token)
+- A Docker host you control (homelab, VPS, anywhere)
+- A reverse proxy in front of your static site already (Caddy, nginx, Traefik, Cloudflare — any will work)
+
+## Walkthrough
+
+<Steps>
+
+1. **Create a directory for the Posthorn deployment.**
+
+   ```bash
+   mkdir -p posthorn && cd posthorn
+   ```
+
+   <FileTree>
+   - posthorn/
+     - docker-compose.yml
+     - posthorn.toml
+     - .env
+   </FileTree>
+
+2. **Write `posthorn.toml`.**
+
+   ```toml
+   [[endpoints]]
+   path = "/api/contact"
+   to = ["you@yourdomain.com"]
+   from = "Contact Form <noreply@yourdomain.com>"
+   reply_to_email_field = "email"
+   honeypot = "_gotcha"
+   allowed_origins = ["https://yourdomain.com", "https://www.yourdomain.com"]
+   required = ["name", "email", "message"]
+   subject = "Contact from {{.name}}"
+   body = """
+   From: {{.name}} <{{.email}}>
+
+   {{.message}}
+   """
+   redirect_success = "/thank-you/"
+   redirect_error = "/contact/?error=1"
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+
+   [endpoints.rate_limit]
+   count = 5
+   interval = "1m"
+   ```
+
+   Replace `yourdomain.com` with your actual domain, and `you@yourdomain.com` with where you want the contact mail delivered.
+
+3. **Write `.env`.**
+
+   ```bash
+   POSTMARK_API_KEY=your-server-token-here
+   ```
+
+   Add `.env` to your `.gitignore` if this directory is in a repo.
+
+4. **Write `docker-compose.yml`.**
+
+   ```yaml
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       ports:
+         - "127.0.0.1:8080:8080"   # loopback only; reverse-proxy from your front door
+   ```
+
+   The `127.0.0.1:` prefix is important — Posthorn doesn't terminate TLS, so it should never be reachable from the public internet directly.
+
+5. **Start the container.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   Expect a startup log line like:
+
+   ```json
+   {"time":"2026-05-15T20:00:00Z","level":"INFO","msg":"listening","addr":":8080"}
+   ```
+
+6. **Wire `/api/contact` through your reverse proxy.**
+
+   For Caddy:
+
+   ```nginx
+   yourdomain.com {
+       handle /api/contact {
+           reverse_proxy 127.0.0.1:8080
+       }
+
+       handle {
+           root * /var/www/yourdomain.com
+           file_server
+       }
+   }
+   ```
+
+   For nginx:
+
+   ```nginx
+   location = /api/contact {
+       proxy_pass http://127.0.0.1:8080;
+       proxy_set_header Host              $host;
+       proxy_set_header X-Real-IP         $remote_addr;
+       proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+       proxy_set_header Origin            $http_origin;
+       proxy_set_header Referer           $http_referer;
+   }
+   ```
+
+   See [Reverse proxy](/deployment/reverse-proxy/) for Traefik and other front doors.
+
+7. **Add the form to your contact page.**
+
+   ```html
+   <form method="POST" action="/api/contact">
+     <label>
+       Name
+       <input name="name" type="text" required>
+     </label>
+     <label>
+       Email
+       <input name="email" type="email" required>
+     </label>
+     <label>
+       Message
+       <textarea name="message" rows="6" required></textarea>
+     </label>
+
+     <!-- Honeypot: invisible to humans, visible to drive-by bots -->
+     <input type="text" name="_gotcha" tabindex="-1" autocomplete="off"
+            style="position:absolute;left:-9999px" aria-hidden="true">
+
+     <button type="submit">Send</button>
+   </form>
+   ```
+
+   Add a `/thank-you/` page so the post-submit redirect lands somewhere friendly. Add an error state to your contact page that triggers when the URL has `?error=1`.
+
+8. **Send a test submission with curl.**
+
+   ```bash
+   curl -i -X POST https://yourdomain.com/api/contact \
+     -H "Content-Type: application/x-www-form-urlencoded" \
+     -d "name=Test User" \
+     -d "email=test@example.com" \
+     -d "message=Hello from curl"
+   ```
+
+   Expect:
+
+   ```text
+   HTTP/2 200
+   content-type: application/json; charset=utf-8
+
+   {"status":"ok","submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"}
+   ```
+
+   Check your inbox. The message should arrive within seconds.
+
+</Steps>
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 403 forbidden` from a real form submission | `allowed_origins` doesn't include the variant of your domain the form is on (e.g., you listed `yourdomain.com` but the form is on `www.yourdomain.com`) | Add both variants to `allowed_origins` |
+| `HTTP 422 validation failed` with `{"name":"required"}` etc. | The form field names don't match the `required` list in TOML | Make sure each `<input name="...">` matches an entry in `required` exactly |
+| `HTTP 200` but no email arrives | DNS — your sending domain doesn't have SPF/DKIM/DMARC set up, so Postmark accepts the submission but the recipient drops it as spam | See [DNS](/security/dns/) and verify via the recipient's "show original" header view |
+| Real users keep hitting `HTTP 429 rate limit` | Multiple users behind the same NAT, or your reverse proxy isn't forwarding client IPs | Add `trusted_proxies = ["<your-proxy-CIDR>"]` to the endpoint and bump `count` up |
+| Honeypot doesn't fire on test bots | The honeypot field isn't actually rendered in the HTML | The honeypot must be in the HTML for bots to fill it in — hidden via CSS, but present |
+| Email body lands in spam folder | DKIM / SPF / DMARC misconfiguration on the sending domain | First-time gotcha for almost every new deployment — see [DNS](/security/dns/) |
+
+<Aside type="caution" title="Use the per-server token, not the account token">
+Postmark has two kinds of API tokens. The **account token** can do administrative things and should never be in an app config. The **server token** is per-server (under your server's API Tokens tab in the dashboard) and is the one Posthorn wants.
+</Aside>
+
+## Where to go next
+
+- [Configuration reference](/configuration/reference/) — every field documented
+- [Spam protection](/features/spam-protection/) — tune the defenses for your traffic shape
+- [Multi-form site](/recipes/multi-form-site/) — add a feedback form, a careers form, a newsletter signup alongside the contact form
+- [DNS](/security/dns/) — SPF, DKIM, DMARC setup if you haven't already

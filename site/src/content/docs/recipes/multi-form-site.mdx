@@ -1,0 +1,206 @@
+---
+title: Multi-form site
+description: One Posthorn instance handling several independent forms — contact, feedback, careers — each with its own recipient, template, and rate limit.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+A site that has more than one form. The contact form goes to `you@`. The feedback form goes to `product@`. The careers form goes to `hiring@` with attachments-disabled and a sterner rate limit. All three are independent endpoints on the same Posthorn container.
+
+**At the end:** three `/api/*` paths in one Posthorn config, each with its own template, recipients, and rate limit. Rate-limiting `/api/contact` doesn't affect `/api/careers`. Different forms can use different sending identities.
+
+## Prerequisites
+
+Same as [Contact form](/recipes/contact-form/) — a verified Postmark sender domain, a server token, a Docker host, a reverse proxy in front.
+
+## Walkthrough
+
+<Steps>
+
+1. **Write a multi-endpoint `posthorn.toml`.**
+
+   ```toml
+   [logging]
+   level = "info"
+   format = "json"
+
+   # ----- Contact form -----------------------------------------------
+
+   [[endpoints]]
+   path = "/api/contact"
+   to = ["you@yourdomain.com"]
+   from = "Contact Form <noreply@yourdomain.com>"
+   reply_to_email_field = "email"
+   honeypot = "_gotcha"
+   allowed_origins = ["https://yourdomain.com", "https://www.yourdomain.com"]
+   required = ["name", "email", "message"]
+   subject = "Contact: {{.name}}"
+   body = """
+   From: {{.name}} <{{.email}}>
+
+   {{.message}}
+   """
+   redirect_success = "/contact/thanks/"
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_CONTACT_KEY}"
+
+   [endpoints.rate_limit]
+   count = 5
+   interval = "1m"
+
+   # ----- Feedback form ----------------------------------------------
+
+   [[endpoints]]
+   path = "/api/feedback"
+   to = ["product@yourdomain.com"]
+   from = "Product Feedback <noreply@yourdomain.com>"
+   reply_to_email_field = "email"
+   honeypot = "_trap"
+   allowed_origins = ["https://yourdomain.com", "https://www.yourdomain.com"]
+   required = ["category", "feedback"]
+   email_field = "email"
+   subject = "Feedback ({{.category}}): {{.feedback}}"
+   body = """
+   Category: {{.category}}
+   Reporter: {{.email}}
+
+   {{.feedback}}
+   """
+   redirect_success = "/feedback/thanks/"
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_FEEDBACK_KEY}"
+
+   [endpoints.rate_limit]
+   count = 10
+   interval = "1m"
+
+   # ----- Careers form -----------------------------------------------
+
+   [[endpoints]]
+   path = "/api/careers"
+   to = ["hiring@yourdomain.com"]
+   from = "Careers Inbox <noreply@yourdomain.com>"
+   reply_to_email_field = "email"
+   honeypot = "_decoy"
+   allowed_origins = ["https://yourdomain.com", "https://www.yourdomain.com"]
+   required = ["name", "email", "role", "linkedin"]
+   subject = "Application: {{.name}} for {{.role}}"
+   body = """
+   Name: {{.name}}
+   Email: {{.email}}
+   Role: {{.role}}
+   LinkedIn: {{.linkedin}}
+   """
+   redirect_success = "/careers/thanks/"
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_CAREERS_KEY}"
+
+   [endpoints.rate_limit]
+   count = 2
+   interval = "1h"
+   ```
+
+2. **Decide on transport tokens.**
+
+   The example above uses three distinct env vars (`POSTMARK_CONTACT_KEY`, `POSTMARK_FEEDBACK_KEY`, `POSTMARK_CAREERS_KEY`). You have two patterns to choose between:
+
+   - **One server token, three endpoints.** Simplest. Same `api_key = "${env.POSTMARK_API_KEY}"` in all three. All forms send from the same Postmark server. Per-server statistics in Postmark conflate the three forms.
+   - **Three server tokens, three Postmark servers.** Better isolation. Each form has its own server in Postmark with its own DKIM signature, its own stats, its own rate limit upstream. Bounce one server's reputation, the other two are unaffected.
+
+   For low-volume sites, one token is fine. For mixed traffic shapes (contact form sees real humans, careers form sees recruiter spam, feedback form sees bug reports), separate tokens earn their keep.
+
+3. **`.env`.**
+
+   ```bash
+   # One-token shape:
+   # POSTMARK_API_KEY=your-token
+
+   # Or three-token shape:
+   POSTMARK_CONTACT_KEY=your-contact-server-token
+   POSTMARK_FEEDBACK_KEY=your-feedback-server-token
+   POSTMARK_CAREERS_KEY=your-careers-server-token
+   ```
+
+4. **Reverse-proxy all three paths.**
+
+   For Caddy:
+
+   ```nginx
+   yourdomain.com {
+       @forms path /api/contact /api/feedback /api/careers
+       handle @forms {
+           reverse_proxy 127.0.0.1:8080
+       }
+
+       handle {
+           root * /var/www/yourdomain.com
+           file_server
+       }
+   }
+   ```
+
+   For nginx, use a `location ~ ^/api/(contact|feedback|careers)$` match — see the [Reverse proxy](/deployment/reverse-proxy/) page.
+
+5. **Restart.**
+
+   ```bash
+   docker compose restart posthorn
+   docker compose logs --tail 20 posthorn
+   ```
+
+   Expect:
+
+   ```json
+   {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/contact","transport":"postmark","recipients":1}
+   {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/feedback","transport":"postmark","recipients":1}
+   {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/careers","transport":"postmark","recipients":1}
+   {"time":"...","level":"INFO","msg":"listening","addr":":8080"}
+   ```
+
+6. **Wire the three forms into your site.** Each form's `action="/api/..."` points at the matching endpoint. Different honeypot field names per form (so a generic bot scanner can't pattern-match across them).
+
+</Steps>
+
+## What's per-endpoint and what's global
+
+| Concern | Scope | Notes |
+|---|---|---|
+| Rate limit | Per-endpoint, per-IP | `/api/contact` rate limit doesn't affect `/api/careers` |
+| Recipients | Per-endpoint | Each form goes where it should |
+| Templates (`subject`, `body`) | Per-endpoint | Independent for each form |
+| Honeypot field name | Per-endpoint | Use different names for each form to avoid pattern-matched bot scrapers |
+| `allowed_origins` | Per-endpoint | Typically the same list for all forms on a site |
+| Transport settings | Per-endpoint | One Postmark token or three — your call |
+| `[logging]` | Global | One log stream for the whole container |
+| HTTP listener port | Global | One `:8080`, all endpoints multiplexed by path |
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Form on `/feedback` goes to the wrong inbox | Endpoints share path prefixes; Posthorn does exact-match routing | Make sure each endpoint's `path` is exact (`/api/feedback`, not `/api/feedback/` — the trailing slash matters) |
+| Rate limit on the careers endpoint blocks legitimate applicants | The `count = 2` per hour example is conservative; tune to your actual volume | Bump `count` up or shorten `interval` |
+| Different `from` addresses but mail all looks the same in Gmail | Gmail collapses threads by participants — three forms going from the same `noreply@` will thread together | Use distinct `from` display names (`Contact Form`, `Product Feedback`, `Careers Inbox`) so the From column distinguishes them |
+| Bots discover the careers endpoint via path enumeration | The endpoint paths are guessable; that's by design (operator-visible) | Tighter rate limit + stricter `required` fields (e.g., requiring a LinkedIn URL filters obvious spam) |
+
+<Aside type="tip" title="Validating the multi-endpoint config">
+After each change, run `posthorn validate --config /etc/posthorn/config.toml` (or `docker exec posthorn posthorn validate --config /etc/posthorn/config.toml`) to confirm all three endpoints parse, env vars resolve, and templates compile — before restarting the live container.
+</Aside>
+
+## Where to go next
+
+- [Configuration → Endpoints](/configuration/endpoints/) — full reference for the multi-endpoint shape
+- [Rate limiting](/features/rate-limiting/) — tune per-endpoint limits to your traffic
+- [Spam protection](/features/spam-protection/) — when generic-bot traffic crosses your threshold

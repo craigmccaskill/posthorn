@@ -74,6 +74,15 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Recipes',
+          items: [
+            { label: 'Contact form on a static site', slug: 'recipes/contact-form' },
+            { label: 'Newsletter signup notification', slug: 'recipes/newsletter-signup' },
+            { label: 'Multi-form site', slug: 'recipes/multi-form-site' },
+            { label: 'Monitoring alerts via webhook', slug: 'recipes/monitoring-alerts' },
+          ],
+        },
+        {
           label: 'Security',
           items: [
             { label: 'Threat model', slug: 'security/threat-model' },
