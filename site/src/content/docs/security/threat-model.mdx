@@ -5,7 +5,7 @@ description: What Posthorn defends against in v1.0, and what's deliberately out 
 
 import { Aside } from '@astrojs/starlight/components';
 
-Posthorn's threat model is scoped to **HTTP form ingress.** v1.0 does not accept SMTP, so SMTP-ingress threats (open relay, MX spoofing, recipient enumeration) are out of scope until v1.2.
+Posthorn's threat model is scoped to **HTTP form ingress.** v1.0 does not accept SMTP, so SMTP-ingress threats (open relay, MX spoofing, recipient enumeration) are out of scope until v1.3.
 
 This page summarizes what v1.0 defends against, what it doesn't, and how each defense maps to a configuration setting or code-level guarantee.
 
@@ -26,9 +26,9 @@ Threats 5 and 6 are **code-level guarantees**, not config options. There's no to
 
 | Threat | When addressed | Notes |
 |---|---|---|
-| Open relay (SMTP ingress) | v1.2 | Posthorn doesn't accept SMTP in v1.0. When v1.2 ships, defenses include allowlist of senders, RCPT validation, recipient caps, optional client-cert auth. |
-| MX spoofing / inbound MX abuse | v1.2 | Same — Posthorn doesn't publish MX records or accept inbound mail. |
-| Recipient enumeration attacks | v1.2 | Same. |
+| Open relay (SMTP ingress) | v1.3 | Posthorn doesn't accept SMTP in v1.0. When v1.3 ships, defenses include allowlist of senders, RCPT validation, recipient caps, optional client-cert auth. |
+| MX spoofing / inbound MX abuse | v1.3 | Same — Posthorn doesn't publish MX records or accept inbound mail. |
+| Recipient enumeration attacks | v1.3 | Same. |
 | Botnet spam from many low-rate IPs | v3 | Rate limit per IP doesn't catch this. Mitigation: captcha or proof-of-work (v3). |
 | DDoS / Layer 7 attacks | (not in scope) | This is the CDN/reverse-proxy's responsibility, not Posthorn's. |
 | API key theft from misconfigured deployment | documentation | If you commit your key to git or expose it in a public env file, Posthorn can't help. Treat keys as secrets; use [secret-injection mechanisms](/configuration/environment-variables/). |

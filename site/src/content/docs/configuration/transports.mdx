@@ -1,11 +1,11 @@
 ---
 title: Transports
-description: Per-endpoint transport configuration. v1.0 ships Postmark; v1.1+ adds more.
+description: Per-endpoint transport configuration. v1.0 ships Postmark; v1.2 adds Resend, Mailgun, SES, and outbound-SMTP.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-A **transport** is the egress side — the thing that turns a parsed form submission into a delivered email. v1.0 ships one (Postmark); the interface is designed so v1.1+ can add Resend, Mailgun, SES, and outbound-SMTP without changes to the request pipeline.
+A **transport** is the egress side — the thing that turns a parsed form submission into a delivered email. v1.0 ships one (Postmark); the interface is designed so v1.2 can add Resend, Mailgun, SES, and outbound-SMTP without changes to the request pipeline.
 
 Each endpoint declares its own transport:
 
@@ -63,22 +63,22 @@ See [Retry policy](/features/retry-policy/) for the full state machine.
 
 Posthorn embeds a ~80-line HTTP client for Postmark rather than depending on a third-party SDK. The reasoning:
 
-- Postmark's API is small and stable — the entire surface we use is two endpoints (`/email`, `/email/batch` for v1.1+) with structured JSON bodies.
+- Postmark's API is small and stable — the entire surface we use is two endpoints (`/email`, `/email/batch` for v1.1 batch send) with structured JSON bodies.
 - Third-party SDKs would bring transitive dependencies and a maintenance burden disproportionate to the value.
 - A bespoke client lets us guarantee that submitter-controlled fields **never** become raw header strings — every header passes through structured JSON. See [Header injection](/security/header-injection/).
 
 This is [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) in the architecture doc.
 
-## Future transports (v1.1+)
+## Future transports (v1.2)
 
 These are designed-in but not implemented in v1.0:
 
 | Transport | Status | Use case |
 |---|---|---|
-| `resend` | v1.1 | Alternative HTTP API provider |
-| `mailgun` | v1.1 | Alternative HTTP API provider |
-| `ses` | v1.1 | AWS-native deployments |
-| `smtp` | v1.1 | Operators on hosts that don't block port 587 |
+| `resend` | v1.2 | Alternative HTTP API provider |
+| `mailgun` | v1.2 | Alternative HTTP API provider |
+| `ses` | v1.2 | AWS-native deployments (bespoke SigV4, no AWS SDK) |
+| `smtp` | v1.2 | Outbound-SMTP relay for operators on hosts that don't block port 587 (Hetzner, OVH, on-prem) |
 
 The `Transport` interface is intentionally narrow:
 
@@ -91,5 +91,5 @@ type Transport interface {
 Adding a new transport means implementing that interface and registering it in the transport factory. No changes to the gateway handler, the config loader, the rate limiter, or the response writer.
 
 <Aside type="caution">
-**Don't add a custom transport in a fork** for v1.0. The interface may evolve before v1.1 ships, and the registration mechanism isn't a stable extension point yet. Open an issue if you have a transport you'd like to see — chances are it's already on the v1.1 list.
+**Don't add a custom transport in a fork** for v1.0. The interface may evolve before v1.2 ships, and the registration mechanism isn't a stable extension point yet. Open an issue if you have a transport you'd like to see — chances are it's already on the v1.2 list.
 </Aside>

@@ -124,7 +124,7 @@ Subdomain sending is often a good idea — keeps your transactional mail isolate
 | Concern | Posthorn? |
 |---|---|
 | Set up DNS for you | **No.** Pre-deployment manual step. |
-| Verify DNS before sending | **No** in v1.0. v1.1+ may add a `posthorn dns check` subcommand. |
+| Verify DNS before sending | **No** in v1.0. A `posthorn dns check` subcommand is post-v1.0; not yet on a specific milestone. |
 | Sign DKIM itself | **No.** Postmark does this. Posthorn is just the HTTP client. |
 | Re-send mail when deliverability fails post-hoc | **No.** Deliverability is recipient-side — once Postmark says "accepted," it's out of Posthorn's hands. |
 

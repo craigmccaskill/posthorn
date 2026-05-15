@@ -5,7 +5,7 @@ description: Common questions about Posthorn — scope, alternatives, deployment
 
 ## What is Posthorn for, in one sentence?
 
-A self-hosted email gateway that lets web forms and self-hosted apps send mail through an HTTP API like Postmark when your hosting provider blocks outbound SMTP.
+A self-hosted email gateway that gives every app in your stack — contact forms, Ghost, Gitea, Mastodon, payment workers — one shared outbound mail layer pointing at the transactional provider you've already picked, so you don't integrate that provider's API into five different apps independently.
 
 ## Why does my host block SMTP?
 
@@ -21,7 +21,7 @@ Formspree (and similar SaaS form services) work fine for the form case. The reas
 
 - **Cost.** Posthorn is one container next to your other services — no per-submission pricing.
 - **Privacy.** Form submissions go from your visitor straight to your Postmark account and your inbox. No third party in the middle.
-- **The other half of the problem.** Formspree only handles forms. It doesn't unblock Ghost, Gitea, Mastodon, etc., which emit SMTP for their own transactional mail. Posthorn's v1.2 SMTP ingress fixes that too.
+- **The other half of the problem.** Formspree only handles forms. It doesn't unblock Ghost, Gitea, Mastodon, etc., which emit SMTP for their own transactional mail. Posthorn's v1.3 SMTP ingress fixes that too.
 - **No vendor lock-in.** If Formspree disappears or changes pricing, your contact forms break. Self-hosted is stable.
 
 ## Why not run Postfix as an HTTP-to-SMTP relay?
@@ -30,13 +30,13 @@ You can — but Postfix doesn't speak HTTP natively. You'd need a custom milter 
 
 ## What if I want to use SendGrid / Mailgun / Resend / SES instead of Postmark?
 
-v1.0 ships only the Postmark transport. v1.1 adds Resend, Mailgun, SES, and outbound-SMTP. Each new transport implements the same `Transport` interface — config and behavior are identical from the operator's perspective.
+v1.0 ships only the Postmark transport. v1.2 adds Resend, Mailgun, SES, and outbound-SMTP. Each new transport implements the same `Transport` interface — config and behavior are identical from the operator's perspective.
 
-If you need a different transport before v1.1 ships, opening an issue is the right move.
+If you need a different transport before v1.2 ships, opening an issue is the right move.
 
 ## Why Postmark first?
 
-Single author, working part-time, finite budget. Postmark was the author's existing account (they sponsor open-source projects) and has clean API docs. Shipping one transport well in v1.0 beats shipping four poorly. v1.1's transport additions validate the abstraction.
+Single author, working part-time, finite budget. Postmark was the author's existing account (they sponsor open-source projects) and has clean API docs. Shipping one transport well in v1.0 beats shipping four poorly. v1.2's transport additions validate the abstraction.
 
 ## Can I run multiple Posthorn instances behind a load balancer?
 

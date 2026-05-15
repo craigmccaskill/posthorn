@@ -121,4 +121,4 @@ If you suspect a leak: revoke, rotate, audit Postmark's send logs for unfamiliar
 
 ## Future transports
 
-The same guarantee applies to v1.1+ transports (Resend, Mailgun, SES). Each transport implementation has its own per-transport key, configured the same way, with the same NFR3 test coverage on every new transport before it merges.
+The same guarantee applies to v1.2+ transports (Resend, Mailgun, SES, outbound-SMTP). Each transport implementation has its own per-transport credential — API key for the HTTP transports, username/password for outbound SMTP — configured the same way, with the same NFR3 test coverage on every new transport before it merges.

@@ -120,9 +120,9 @@ The `reply_to_email_field` config sets the email's `Reply-To` header to the valu
 
 | Check | When | Notes |
 |---|---|---|
-| Max field length | v1.1 | Currently bounded only by `max_body_size` |
-| Allowed values (enum) | v1.1 | e.g. `category` must be one of `["bug", "feature"]` |
-| Regex pattern match | v1.1 | e.g. `phone` must match a pattern |
+| Max field length | v1.2 | Currently bounded only by `max_body_size` |
+| Allowed values (enum) | v1.2 | e.g. `category` must be one of `["bug", "feature"]` |
+| Regex pattern match | v1.2 | e.g. `phone` must match a pattern |
 | Custom validators | (not planned) | Adds plugin complexity disproportionate to value |
 
 For v1.0, complex validation belongs in your application or your form's client-side JavaScript. Posthorn's job is to keep obviously-malformed submissions out of Postmark and out of your inbox.
