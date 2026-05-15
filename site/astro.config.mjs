@@ -21,10 +21,6 @@ export default defineConfig({
           href: 'https://github.com/craigmccaskill/posthorn',
         },
       ],
-      editLink: {
-        baseUrl:
-          'https://github.com/craigmccaskill/posthorn/edit/main/site/',
-      },
       head: [
         {
           tag: 'meta',
