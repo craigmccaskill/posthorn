@@ -21,6 +21,7 @@ Initial public release. The full v1.0 spec — locked 2026-04-27 — is in [`spe
 - Required-field and email-format validation returning structured 422 (FR10, FR11)
 - Go `text/template` rendering for subject and body with custom-fields passthrough block (FR12, FR13)
 - JSON responses, content negotiation, `redirect_success` / `redirect_error` (FR14-FR16)
+- Per-request UUIDv4 `submission_id` returned in the 200 JSON body (`{"status":"ok","submission_id":"..."}`) on both real-success and silent-honeypot paths — the two response shapes are byte-identical except for the ID value, so a bot inspecting the body cannot distinguish honeypot rejection from a successful send (FR5, NFR5)
 - One retry on transient/5xx after 1s, one retry on 429 after 5s, no retry on 4xx config errors, 10s hard request timeout (FR19-FR22)
 - Structured JSON logging with UUIDv4 submission IDs propagated through every log line (FR17, FR18, NFR7, NFR8)
 - Standalone binary `cmd/posthorn` with `serve` and `validate` subcommands, SIGTERM/SIGINT graceful shutdown (FR24-FR26)

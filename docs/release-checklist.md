@@ -155,24 +155,30 @@ go list -m github.com/craigmccaskill/posthorn/caddy@v1.0.0
 ## 7. Create the GitHub Release
 
 ```bash
+# Extracts everything from the v1.0.0 heading to EOF. v1.0.0 is the last
+# entry in CHANGELOG.md so EOF is the right terminator; for a later patch
+# release that's no longer true, swap the awk for a `[1.0.0]...[other]`
+# range expression.
 gh release create v1.0.0 \
   --title "v1.0.0 — first public release" \
-  --notes-file <(awk '/^## \[1.0.0\]/,/^## \[/{print}' CHANGELOG.md | head -n -1)
+  --notes "$(awk '/^## \[1\.0\.0\]/{flag=1} flag' CHANGELOG.md)"
 ```
 
-Or use the GitHub UI to attach the same notes.
+Or use the GitHub UI to paste the same notes.
 
 ## 8. File the Caddy modules-page submission
 
 Per R3 in the project brief — discoverability for the adapter. Within 7 days of the tag:
 
 ```bash
-# Fork caddyserver/website if you haven't already, then:
-gh repo clone craigmccaskill/website
+# One-time: fork caddyserver/website to your GitHub account.
+gh repo fork caddyserver/website --clone --remote
 cd website
+
 # Add an entry to the modules listing (check the current data layout
-# at caddyserver/website — past PRs are a good template)
-# Open a PR pointing at github.com/craigmccaskill/posthorn/caddy
+# at caddyserver/website — past PRs are a good template).
+# Open a PR pointing at github.com/craigmccaskill/posthorn/caddy.
+gh pr create --title "Add posthorn module" --body-file <pr-body>
 ```
 
 The acceptance criterion is "PR submitted within 7 days," not "PR merged" — landing is up to the Caddy team's review cadence.
