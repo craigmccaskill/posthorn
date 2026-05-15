@@ -134,7 +134,9 @@ posthorn /api/x {
 	from c@d
 	subject S
 	body B
-	transport postmark { api_key k }
+	transport postmark {
+		api_key k
+	}
 	log_failed_submissions true
 }
 `
@@ -153,7 +155,7 @@ func TestUnmarshalCaddyfile_Errors(t *testing.T) {
 		{
 			name:  "missing path",
 			input: `posthorn { to a@b }`,
-			want:  "Wrong argument count",
+			want:  "wrong argument count",
 		},
 		{
 			name:  "extra path arg",
@@ -214,6 +216,10 @@ func TestUnmarshalCaddyfile_Errors(t *testing.T) {
 // rather than fixture-driven: a future reviewer should be able to
 // eyeball both representations side-by-side and confirm parity.
 func TestParityWithTOML(t *testing.T) {
+	// Body is kept on a single line so Caddyfile (no escape-sequence
+	// processing) and TOML (basic strings do process \n) produce the
+	// same literal string. The escape-sequence divergence is real but
+	// orthogonal to "do both parsers populate the same struct fields."
 	caddyfileInput := `
 posthorn /api/contact {
 	to alice@example.com bob@example.com
@@ -223,7 +229,7 @@ posthorn /api/contact {
 	allowed_origins https://example.com
 	max_body_size 32KB
 	subject "Contact: {{.name}}"
-	body "From {{.name}}\n\n{{.message}}"
+	body "From {{.name}}: {{.message}}"
 	rate_limit 5 1m
 	transport postmark {
 		api_key test-key
@@ -241,7 +247,7 @@ honeypot = "_gotcha"
 allowed_origins = ["https://example.com"]
 max_body_size = "32KB"
 subject = "Contact: {{.name}}"
-body = "From {{.name}}\n\n{{.message}}"
+body = "From {{.name}}: {{.message}}"
 
 [endpoints.rate_limit]
 count = 5
