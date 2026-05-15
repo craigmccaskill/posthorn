@@ -209,6 +209,22 @@ To save you a wrong turn. Three categories of self-hosted email infrastructure e
 
 The wedge is **the integration layer** between your self-hosted apps and the transactional provider you've already picked. If you need a different tool above, those projects are better at their thing than Posthorn would ever be — and Posthorn is intentionally a different shape.
 
+## How Posthorn is built
+
+Four principles that shape every decision. Full reasoning in [the brief](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md#design-principles).
+
+**Integration layer, not mail-receiving layer.**
+Posthorn unifies how your apps *send* mail — many ingress shapes converge on one transport surface, talking to your provider. Receiving mail (MX hosting, inbound spam filtering, mailbox storage) is mail-server territory and Posthorn doesn't go there. The unification is one-way: many inputs, one output. The mailbox is somebody else's job.
+
+**Configuration as truth.**
+A TOML file (or Caddyfile via the adapter) is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
+
+**Bespoke transports, audit in an afternoon.**
+Every transport integration is ~80-200 lines of Go in this repo. Postmark is ~80 lines. SES will be ~200 (SigV4 + send). No vendor SDKs in transport code, no transitive dep trees to track for CVEs, no opaque wrappers between you and the upstream API. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
+
+**Public roadmap, locked v1.0.**
+The v1.0 scope is fixed; what ships is what was specified. v1.x themes (API mode in v1.1, multi-transport in v1.2, SMTP ingress in v1.3, platform maturity in v2) ship as separate releases on a [public roadmap](/roadmap/) tied to GitHub milestones. No surprise scope expansions, no quiet feature drops, no version drift between docs and behavior.
+
 ## Not related to PostHog
 
 PostHog is product analytics. Posthorn is an email gateway. Similar names, different categories, zero functional overlap.
