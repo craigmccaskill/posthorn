@@ -6,14 +6,41 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the idea. The v1.0 specification is **locked** — see [spec/01-project-brief.md §"MVP Scope > Out of scope"](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md) for the canonical exclusion list, and the [roadmap](https://posthorn.dev/roadmap/) for what's planned post-v1.0.
+        Thanks for the idea. Two things before you fill this out:
+
+        - **v1.0 is locked.** See [spec/01-project-brief.md §"MVP Scope > Out of scope"](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md) for what's deliberately deferred.
+        - **The roadmap is public.** Check [posthorn.dev/roadmap](https://posthorn.dev/roadmap/) and the [open milestones](https://github.com/craigmccaskill/posthorn/milestones) — your idea may already be tracked.
+
+        The clearer the problem statement, the faster this lands in the right milestone (or gets pushed back with a good reason).
 
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What can't you do today? Concrete use case beats abstract pitch.
-      placeholder: I want to send mail through Resend instead of Postmark because ...
+      description: |
+        What specifically happens today? Describe the **concrete symptom**, not the missing capability.
+
+        Strong: "When my Cloudflare Worker POSTs to /api/contact, it has to fabricate an Origin header to pass v1.0's form-mode check. There's no clean way to authenticate server-to-server callers."
+
+        Weak: "Add API auth."
+      placeholder: When I try to <do thing>, <what happens that shouldn't> ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: today_after
+    attributes:
+      label: Today → After this ships
+      description: |
+        The load-bearing question: what changes for a user?
+
+        Fill in both halves. If you can't articulate the "after" without paraphrasing the "today" backwards, the proposal may not be solving a real friction.
+      value: |
+        **Today** (workaround / friction / accepted gap):
+
+
+        **After this ships**:
+
     validations:
       required: true
 
@@ -21,7 +48,14 @@ body:
     id: solution
     attributes:
       label: Proposed solution
-      description: How you'd like it to work. Sketches of config syntax welcome.
+      description: |
+        How you'd like it to work. **Config sketches welcome** — TOML snippets, Caddyfile examples, `curl` invocations, JSON request/response shapes. The more concrete, the easier to evaluate.
+      placeholder: |
+        ```toml
+        [[endpoints]]
+        path = "/api/example"
+        # ...
+        ```
     validations:
       required: true
 
@@ -29,21 +63,73 @@ body:
     id: scope
     attributes:
       label: Scope check
-      description: Where does this fit on the roadmap?
+      description: Where does this fit on the [roadmap](https://posthorn.dev/roadmap/)?
       options:
-        - An existing FR/NFR is unclear or incomplete
-        - Roadmapped for v1.1 (more transports, CSRF, health check, metrics, dry run)
-        - Roadmapped for v1.2 (SMTP ingress)
-        - Roadmapped for v2 (SQLite, retry queue, attachments, webhooks)
-        - Roadmapped for v3 (admin UI, proof-of-work, PGP)
-        - None of the above — new scope ask
+        - "An existing FR/NFR is unclear or needs spec clarification (v1.0 patch)"
+        - "v1.1 — API mode (API-key auth, JSON content type, idempotency, batch send)"
+        - "v1.2 — Multi-transport + operational maturity"
+        - "v1.3 — SMTP ingress"
+        - "v2 — Platform maturity (storage, suppression, lifecycle, attachments)"
+        - "v3 — Speculative (admin UI, proof-of-work, PGP)"
+        - "None of the above — new scope ask"
     validations:
       required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: |
+        How will we know it's done? List **observable** signals.
+      placeholder: |
+        - [ ] `curl ...` returns 200 with `{"status":"ok"}`
+        - [ ] `posthorn validate --config ...` exits 0 with the new field accepted
+        - [ ] Logs contain a structured `feature_xyz_used` event
+        - [ ] Documentation page exists at posthorn.dev/...
+    validations:
+      required: false
+
+  - type: input
+    id: depends_on
+    attributes:
+      label: Dependencies
+      description: Does this depend on or block other issues? List by `#number`.
+      placeholder: "e.g., depends on #21 (storage foundation); blocks #4, #9"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: dimensions
+    attributes:
+      label: Risk / impact dimensions
+      description: Tick anything that applies. Helps triage prioritize and flag NFR considerations early.
+      options:
+        - label: Affects a security NFR (header injection, API-key handling, fail-closed defaults, rate limiting)
+        - label: Breaking config change (existing TOML / Caddyfile configs need migration)
+        - label: Affects email deliverability (DKIM / SPF / DMARC, bounce handling, sender reputation)
+        - label: New operator-facing UX surface (new config keys, new docs page needed)
+        - label: Depends on persistent storage (only deliverable in v2+)
+    validations:
+      required: false
 
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: What workarounds exist today? What would the world look like if we didn't do this?
+      description: |
+        What workarounds exist today, or what other shapes did you consider before picking the one above?
+      placeholder: |
+        1. <workaround in caller code> — works but <downside>
+        2. <other Posthorn shape> — considered but rejected because <reason>
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / motivation
+      description: |
+        Optional but useful: where is this coming from? An integration you're building, a deployment pattern you're trying, a production incident? Background helps triage.
+      placeholder: "Filed from the X integration — we're trying to ..."
     validations:
       required: false
