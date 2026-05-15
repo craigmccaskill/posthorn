@@ -41,11 +41,23 @@ jobs:
           go-version: '1.25'
           cache-dependency-path: ${{ matrix.module }}/go.mod
 
+      - name: Check for Go sources
+        id: sources
+        run: |
+          if find . -name '*.go' | grep -q .; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No Go source files in ${{ matrix.module }} yet; skipping vet/test."
+          fi
+
       - name: Verify modules
         run: go mod verify
 
       - name: Vet
+        if: steps.sources.outputs.found == 'true'
         run: go vet ./...
 
       - name: Test
+        if: steps.sources.outputs.found == 'true'
         run: go test -race -count=1 -timeout=2m ./...
