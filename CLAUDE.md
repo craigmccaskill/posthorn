@@ -4,9 +4,23 @@ Auto-loaded by Claude Code at session start. Captures the durable project contex
 
 ## Project context
 
-Posthorn is a self-hosted email gateway for cloud platforms that block outbound SMTP. v1.0 ships an HTTP form ingress and a Postmark HTTP API transport, deployed as a standalone Go binary (Docker primary) or as an optional Caddy module adapter.
+Posthorn is the **unified outbound mail layer for self-hosted projects** — the gateway between an operator's apps and a transactional mail provider they already chose (Postmark, Resend, Mailgun, AWS SES, outbound SMTP). v1.0 ships HTTP form ingress + Postmark transport; v1.x grows to JSON API ingress (v1.1), multi-transport (v1.2), SMTP ingress for self-hosted-apps-that-emit-SMTP (v1.3), and platform features in v2 (suppression, lifecycle, attachments, durable retry).
 
-The full project history (initial scope as a Caddy form handler called `caddy-formward`, the 2026-04-27 scope expansion to email gateway, the rename to Posthorn) is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Status log". Don't re-derive — read the spec.
+The original wedge — cloud-blocks-SMTP — is preserved as the canonical discovery entry point. The broader value is the unified-layer pattern (the same outbound concern duplicated across N self-hosted apps now centralizes through one Posthorn gateway), which applies even where SMTP is unblocked.
+
+The full project history (initial scope as a Caddy form handler called `caddy-formward`, the 2026-04-27 scope expansion, the 2026-05-15 positioning sharpening) is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Status log". Don't re-derive — read the spec.
+
+## Design principles (short)
+
+These pin the shape of Posthorn across versions and override new feature requests that conflict with them. Full reasoning in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Design principles".
+
+1. **Gateway, not infrastructure.** Posthorn sits between apps and a provider — it doesn't replace the provider, doesn't run its own outbound SMTP, doesn't manage IP reputation, doesn't host mailboxes.
+2. **Integration layer, not mail-receiving layer.** Posthorn unifies outbound (many ingress shapes → one transport surface). It does not unify inbound (MX hosting / receive-side filtering / mailbox storage); those are mail-server concerns.
+3. **No feature-count competition with category leaders.** Stalwart owns mail-server territory; Postal owns outbound-platform territory; Listmonk owns marketing. We don't try to match them on feature count in their lanes.
+4. **Config files over admin UIs.** TOML / Caddyfile is the source of truth. No runtime mutation surface that could drift from the config file. v3+ may add read-only UIs for browsing logs; not for configuration.
+5. **Bespoke before SDK, when the surface is small.** Postmark / Resend / Mailgun / SES integrations are written directly (stdlib + minimal deps), not via vendor SDKs. The rule of thumb: bespoke when ~200 lines suffices; SDK when bespoke would be 1000+. [ADR-1](./spec/03-architecture.md#architectural-decisions-log) elevated project-wide.
+
+When a feature request or implementation proposal conflicts with one of these, the principle wins. Take it back to spec discussion before changing code.
 
 ## Status (as of 2026-05-15)
 

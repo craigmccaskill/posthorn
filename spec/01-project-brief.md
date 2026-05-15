@@ -25,6 +25,42 @@ The cloud-blocks-SMTP problem is the canonical entry point — DigitalOcean, AWS
 - **2026-04-27** — Scope expanded to email gateway (two ingress modes: HTTP form, SMTP listener) after analyzing the broader audience experiencing the same DigitalOcean SMTP-block pain. Project renamed to *Posthorn*. Repo renamed in place from `caddy-formward` to `posthorn`. Caddy module status changed from primary deliverable to optional adapter. Spec rewritten from scratch (this document); previous brief, PRD, and architecture documents replaced.
 - **2026-05-15** — Positioning sharpened from "gateway for cloud platforms that block outbound SMTP" to "unified outbound mail layer for self-hosted projects" after triaging 10 incoming GitHub issues (most from the Pensum integration POV). The cloud-SMTP-block wedge is preserved as the canonical discovery entry point; the broader unified-layer framing is the durable value proposition. v1.x roadmap restructured (v1.1 API mode, v1.2 multi-transport + ops polish, v1.3 SMTP ingress) to support this positioning.
 
+## Design principles
+
+Five principles that pin the shape of Posthorn across versions. These sit above the ADRs (in [the architecture doc](./03-architecture.md)) — the ADRs answer "why this technical choice"; these answer "what shape is Posthorn?" When a new feature, ADR, or roadmap item conflicts with one of these, the principle wins and the proposal needs revisiting.
+
+### 1. Gateway, not infrastructure
+
+Posthorn sits between an operator's apps and a transactional mail provider the operator already chose. It does not replace the provider. It does not run its own outbound SMTP fleet, manage its own IP reputation, or host mailboxes. Operators bring an API key from a provider; Posthorn handles the gateway logic.
+
+This is why feature requests like "manage DKIM rotation," "publish DMARC reports," or "run an outbound MTA" are out of scope — those are mail-server / mail-platform features, and we don't run mail servers or mail platforms.
+
+### 2. Integration layer, not mail-receiving layer
+
+Posthorn unifies the **outbound** integration concern across an operator's stack. Many ingress shapes (HTTP forms today, JSON APIs in v1.1, SMTP from internal apps in v1.3) converge on a single transport surface that talks to the operator's provider. The integration layer is one-way: many inputs → one output.
+
+Posthorn does not unify the **inbound** mail-receiving concern. Acting as the MX target for a domain, performing receive-side SPF/DKIM verification, doing inbound spam filtering, managing mailbox storage — these are mail-server responsibilities. When operators need them, the right answer is a mail server (Stalwart) or a hosted inbound provider (Postmark Inbound, Mailgun Routes, Cloudflare Email Workers) — not Posthorn.
+
+### 3. No feature-count competition against category leaders
+
+Three established categories of self-hosted email infrastructure exist (see Problem Statement §"Adjacent projects we deliberately don't compete with"). Posthorn occupies exactly one of them — the gateway slot. Operators who need a mail server should use Stalwart; operators who want to be their own transactional provider should use Postal; operators who need marketing email should use Listmonk. We do not match those projects on feature count in their lanes; that's a known-losing fight.
+
+The corollary: if a feature request would push Posthorn deeper into one of those adjacent categories, the answer is "no, use the better tool for that," not "let's add it." This applies to webmail UIs, mailbox storage, IP reputation management, campaign dashboards, segmentation engines, and similar features that look reasonable in isolation but commit us to category fights we'd lose.
+
+### 4. Config files over admin UIs
+
+Posthorn is configured via TOML (standalone) or Caddyfile (adapter). There is no runtime mutation surface that could drift from the config file. Reviewing a config diff is reviewing the system's behavior — there's no `posthorn admin` CLI, no settings page, no live-reload-this-endpoint operation that bypasses the file.
+
+This is a deliberate trade. Admin UIs add ops complexity (auth, audit logging, state reconciliation) and create surface for the configured behavior to diverge from the documented behavior. The cost is real — operators editing TOML by hand instead of clicking a UI — and we pay it intentionally. v3+ may introduce a read-only UI for browsing submissions / logs; it will not be a configuration surface.
+
+### 5. Bespoke before SDK, when the surface is small
+
+For integrations with small, stable surfaces (Postmark's ~2 endpoints; SES's SigV4 + send call; Resend / Mailgun similarly), Posthorn writes the integration directly using stdlib + minimal dependencies. We don't pull in `aws-sdk-go-v2` for SES, `postmark-go` for Postmark, etc. The bias is toward bespoke for two reasons: a smaller dep tree (security audit surface, build complexity, version-pin maintenance) and a more auditable integration (every byte touching the upstream API is in our repo).
+
+The exception is integrations against systems with huge surfaces and meaningful semantics — Caddy's module API, for instance, where reimplementing the host's contract would be larger than the gain. There, we depend. The rule of thumb: bespoke when the integration is ~200 lines or less; SDK when bespoke would be ~1000+.
+
+This is [ADR-1](./03-architecture.md#architectural-decisions-log) elevated to a project-wide principle, not just a Postmark decision.
+
 ## Problem Statement
 
 ### The gap

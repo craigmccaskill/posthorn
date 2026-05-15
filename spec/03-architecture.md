@@ -618,6 +618,8 @@ PR against `github.com/caddyserver/website` adding the Caddy adapter to the modu
 
 Architectural commitments that protect future scope. Version numbers updated 2026-05-15 to match the restructured roadmap (see brief §"Post-MVP Vision").
 
+These commitments serve the project's [Design principles](./01-project-brief.md#design-principles) in the brief — especially "Gateway, not infrastructure" (principle #1) and "Integration layer, not mail-receiving layer" (principle #2). When adding a new forward-compat commitment, check both the principles and the existing ADRs (below); architecture decisions that contradict the principles need spec discussion first.
+
 ### v1.1 (API mode)
 
 A second auth + ingress shape alongside the v1.0 form-mode pipeline. None of the additions break the existing form-mode path.
