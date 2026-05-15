@@ -47,6 +47,20 @@ The Caddy v1 `mailout` plugin filled half this gap (web-form-to-email) for Caddy
 
 There is no actively maintained, self-hosted, HTTP-API-first email gateway in 2026.
 
+### Adjacent projects we deliberately don't compete with
+
+Three categories of self-hosted email infrastructure exist in 2026. Posthorn occupies exactly one of them.
+
+| Category | What it does | Leaders | Posthorn |
+|---|---|---|---|
+| Modern mail server | SMTP + IMAP/JMAP + storage + webmail. Replaces Gmail/Workspace as a destination mailbox. | Stalwart, Mailcow, iRedMail | Out of scope — would never match feature count |
+| Self-hosted outbound delivery platform | Mailgun/SendGrid clone. Runs its own outbound SMTP fleet, manages IP reputation, ships a campaign dashboard. | Postal, Hyvor Relay | Out of scope — different audience, different shape |
+| **Email gateway** | Sits between an operator's apps and an external transactional provider the operator already chose. Owns the integration layer, not the mailbox or the delivery infrastructure. | No clear leader | **Target slot** |
+
+The first two categories have established projects with multi-year head starts. Posthorn does not try to match them on feature count in their lanes — that's a known-losing fight. Operators who need a real mail server should use Stalwart; operators who want to be their own transactional mail provider should use Postal. Posthorn is for the operator who has already picked a transactional provider (Postmark, Resend, Mailgun, SES) and wants one gateway in front of it that all their apps point at.
+
+This positioning explicitly avoids the "Mailgun killer" framing — Postal owns that lane and would win head-to-head on feature count and reputation. Posthorn is a different shape: it doesn't replace the provider, it unifies the operator's integration with the provider.
+
 ### The deployment reality
 
 Indie/homelab self-hosters running on cloud platforms experience this as two separate problems that share a root cause. They typically solve each independently:
@@ -184,6 +198,7 @@ GitHub stars, blog traffic, HN front page are noise relative to these. A real se
 - HTML body, markdown body, confirmation auto-replies — v2 / post-v1
 - Per-tenant config isolation, multi-config deployments — post-v1
 - Captcha, proof-of-work, admin UI, PGP encryption — v3
+- **Inbound mail parsing (MX-target reception + IMAP polling + MIME → JSON webhook delivery)** — **deliberately deferred to v3+**. Would complete the "bidirectional gateway for apps and agents" framing some reviewers suggest, but materially expands scope: different threat model (anyone can send mail to MX; requires spam handling, abuse policy, possibly Rspamd integration), no concrete user surfacing it (Pensum is send-only), and no agent-shaped consumer that would need it as a precondition. Reconsidered if a second concrete user surfaces with the need.
 
 ## Post-MVP Vision
 
@@ -254,10 +269,32 @@ The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incomin
 
 ### Out of scope for v1.0
 
-- **SMTP-ingress threats** (open relay, MX spoofing, RCPT bombing, recipient enumeration) — defended in v1.2 when SMTP ingress ships. Architecture must not foreclose those defenses.
+- **SMTP-ingress threats** (open relay, MX spoofing, RCPT bombing, recipient enumeration) — defended in v1.3 when SMTP ingress ships. Architecture must not foreclose those defenses.
 - Botnet spam from many low-rate IPs — v3 (captcha or proof-of-work)
 - DDoS / Layer 7 attacks — CDN's responsibility, not the gateway's
 - API key theft from misconfigured deployment — operator concern, addressed via documentation
+
+### Outbound abuse posture
+
+Because Posthorn relays through an external transactional provider (Postmark, Resend, Mailgun, SES), **outbound IP reputation management is the provider's concern, not Posthorn's**. The provider controls the sending IPs, enforces sender quotas, monitors complaint rates, and suspends abusive accounts. Posthorn never operates as the outbound MTA itself in v1.x.
+
+Posthorn's role in the outbound abuse chain is narrower:
+
+| Mechanism | What it does | Why Posthorn handles it |
+|---|---|---|
+| Token-bucket rate limit (FR8) | Bounds per-endpoint, per-IP submission volume | Prevents one compromised caller from draining a Postmark quota before the provider's own throttle kicks in |
+| Max body size cap (FR7) | Bounds individual message size | Protects Posthorn process memory; secondary defense against payload-volume attacks |
+| Suppression list (v2, #4) | Refuses to send to known-bouncing addresses | Prevents repeated sends that harm sender reputation at the provider level |
+| Structured logs (FR17, NFR7) | Every outbound decision logged with submission_id, endpoint, transport, payload | Operator-side forensics for identifying abuse patterns |
+
+Posthorn does **not**:
+
+- Manage its own sender reputation (no IPs it controls)
+- Throttle based on global reputation signals (the provider's job)
+- Implement content-based abuse detection or spam classification (the provider's spam systems handle this; Posthorn is a thin relay, not a filter)
+- Coordinate quota across multiple providers (one provider per endpoint; per-endpoint quotas independent)
+
+This is a deliberate posture. Operators who need stronger guarantees — running their own outbound infrastructure with reputation management, or operating at scale where provider quotas matter — should use Postal, not Posthorn. Posthorn's value is in the gateway abstraction, not in being the outbound MTA.
 
 ## Constraints and Assumptions
 

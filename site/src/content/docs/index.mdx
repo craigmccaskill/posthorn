@@ -196,6 +196,19 @@ Full walkthrough: [posthorn.dev/getting-started/quick-start](/getting-started/qu
   href="/roadmap/"
 />
 
+## What Posthorn is not
+
+To save you a wrong turn. Three categories of self-hosted email infrastructure exist; Posthorn occupies exactly one.
+
+| | What Posthorn doesn't do | Look at instead |
+|---|---|---|
+| **Not a mail server** | No mailbox storage, no IMAP / JMAP, no DKIM key management. | [Stalwart](https://stalw.art), [Mailcow](https://mailcow.email), [iRedMail](https://www.iredmail.org) |
+| **Not its own outbound infrastructure** | Posthorn relays through a provider you chose; it doesn't run its own SMTP fleet, doesn't manage IP reputation, doesn't compete on feature count with Mailgun-class platforms. | [Postal](https://postalserver.io), [Hyvor Relay](https://hyvor.com/relay) |
+| **Not a marketing email platform** | No list management, no segmentation, no campaign dashboard. | [Listmonk](https://listmonk.app) |
+| **Not webmail / a mailbox UI** | No interface for reading mail. | Roundcube, Snappymail (paired with a real mail server) |
+
+The wedge is **the integration layer** between your self-hosted apps and the transactional provider you've already picked. If you need a different tool above, those projects are better at their thing than Posthorn would ever be — and Posthorn is intentionally a different shape.
+
 ## Not related to PostHog
 
 PostHog is product analytics. Posthorn is an email gateway. Similar names, different categories, zero functional overlap.

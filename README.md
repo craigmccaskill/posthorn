@@ -27,6 +27,19 @@ Posthorn is the bridge. One container, one config, one set of credentials. Your 
 
 The full trajectory is on the [roadmap page](https://posthorn.dev/roadmap/).
 
+## What Posthorn is not
+
+To save you a wrong turn:
+
+| | What it does | Look at instead |
+|---|---|---|
+| **Not a mail server** | No mailbox storage, no IMAP/JMAP, no DKIM key management. | [Stalwart](https://stalw.art), [Mailcow](https://mailcow.email), [iRedMail](https://www.iredmail.org) |
+| **Not its own outbound infrastructure** | Posthorn relays through a provider you chose; it doesn't run its own SMTP fleet or manage IP reputation. | [Postal](https://postalserver.io), [Hyvor Relay](https://hyvor.com/relay) |
+| **Not a marketing email platform** | No list management, no segmentation, no campaign dashboard. | [Listmonk](https://listmonk.app) |
+| **Not webmail / a mailbox UI** | No interface for reading mail. | Roundcube, Snappymail (with a mail server) |
+
+The wedge is **the integration layer** between your self-hosted apps and the transactional provider you've already picked.
+
 ## Documentation
 
 **[posthorn.dev](https://posthorn.dev)** — full docs: getting started, configuration reference, deployment guides, feature deep-dives, security model, HTTP API reference, FAQ.
