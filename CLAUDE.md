@@ -42,7 +42,7 @@ The full request pipeline is wired end-to-end: body cap → method → content-t
 **Remaining story (1 of 21):**
 - ⏳ Epic 7 Story 7.3 — tag v1.0.0, verify GHCR publish. **Gated on operator validation:** Docker smoke test, end-to-end manual test ([docs/manual-test.md](./docs/manual-test.md)).
 
-**Current task:** Operator validation pass scheduled 2026-05-16/17. See [docs/release-checklist.md](./docs/release-checklist.md) for the tag-day procedure.
+**Current task:** Operator validation pass scheduled 2026-05-16/17. See [docs/release-checklist.md](./docs/release-checklist.md) for the tag-day procedure. The checklist was tightened during 2026-05-15 pre-flight (broken release-notes awk fixed; Caddy-adapter-specific tag-day steps removed).
 
 **Budget:** ~14.5h burned of 25h v1.0 budget. Site work (~6h, off-budget) was launch infrastructure. Comfortable margin remaining for any validation rework.
 
@@ -53,8 +53,14 @@ After each story ships, update this "Current story" pointer.
 - Retry timing constants (`requestTimeout`, `transientRetryDelay`, `rateLimitedRetryDelay`) declared as package vars, not consts, so tests can override via the test-only helper `gateway.SetRetryDelaysForTest` (in `core/gateway/export_test.go`). Production never mutates them.
 - [`site/`](./site/) Astro + Starlight directory added at repo root for the posthorn.dev marketing/docs site (2026-05-14). Not in original v1.0 spec scope — treated as launch infrastructure outside the 25h budget. Deploys to GitHub Pages via [`.github/workflows/site-deploy.yml`](./.github/workflows/site-deploy.yml). Custom domain in [`site/public/CNAME`](./site/public/CNAME). Build: `cd site && npm ci && npm run build`. Sidebar config and theming live in [`site/astro.config.mjs`](./site/astro.config.mjs).
 - **2026-05-15: Caddy v2 adapter module cut.** Originally Epic 6 (Stories 6.1–6.3) shipped a `caddy/` sibling Go module providing `http.handlers.posthorn`. On tag eve, the adapter was cut after a product-level conversation about single-shape simplicity (see brief's status log). The `caddy/` directory, `go.work` file, parity test, and manual parity procedure were removed. FR27–FR30 and NFR10 were deleted from the PRD; ADR-6 and ADR-7 were retired in-place in the architecture doc.
+- **2026-05-15: Honeypot 200 response shape parity** (commit `0f27f4c`). The honeypot silent-200 was returning an empty `{}` JSON body, while the real-success path also returned `{}` — meaning the bodies were trivially identical but contained no information that would let a bot mistakenly think it had succeeded. Updated both paths to return `{"status":"ok","submission_id":"<uuid>"}` with a fresh submission_id on every request, so a bot inspecting the body cannot distinguish honeypot from real success. Added `TestHandler_HoneypotBodyMatchesSuccessShape` regression test.
+- **2026-05-15: Recipes shipped to docs site** (commit `250f460`, closes #26). Four v1.0 use-case recipes under [`site/src/content/docs/recipes/`](./site/src/content/docs/recipes/): contact-form, newsletter-signup (signup-notification flavor, not double-opt-in), multi-form-site, monitoring-alerts. Sidebar updated. The v1.1 / v1.3 recipes (license delivery, batch announcements, Ghost-on-blocked-host) are deferred to those milestones; #26 closed as the v1.0 scope was the meaningful deliverable.
 
 **Deps added during implementation:** `github.com/BurntSushi/toml` (config), `github.com/hashicorp/golang-lru/v2` (rate limiter), `github.com/google/uuid` (submission IDs). All three were named in the architecture doc's allowed-deps list.
+
+**Launch artifacts in the vault (not in this repo):**
+- [`~/vaults/cmcc/Areas/Blog/Posthorn Launch.md`](~/vaults/cmcc/Areas/Blog/Posthorn Launch.md) — full launch blog post, ~985 words, drafted through 12 revisions on 2026-05-15. Written as if v1.3 has shipped (per author preference); will publish at the v1.3 milestone, not v1.0. Title: "The missing layer in self-hosted email."
+- [`~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md`](~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md) — seven-channel launch distribution plan (HN Show post draft, awesome-self-hosted PR draft, Docker Hub README, blog cross-posting, Reddit, SEO, awesome-postmark check) plus a pre-staged hand-written GitHub Release notes blob for tag day.
 
 ## Read the spec before touching code
 
