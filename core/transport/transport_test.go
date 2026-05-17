@@ -19,20 +19,23 @@ type mockTransport struct {
 	// the Transport contract.
 	SendErr error
 
+	// SendResult is returned on success (when SendErr is nil). Zero by default.
+	SendResult SendResult
+
 	// Sent records every Message passed to Send, in order.
 	Sent []Message
 
 	// SendFn, if set, overrides the default behavior. Useful for tests that
 	// want to inspect ctx or vary behavior across calls.
-	SendFn func(ctx context.Context, msg Message) error
+	SendFn func(ctx context.Context, msg Message) (SendResult, error)
 }
 
-func (m *mockTransport) Send(ctx context.Context, msg Message) error {
+func (m *mockTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
 	m.Sent = append(m.Sent, msg)
 	if m.SendFn != nil {
 		return m.SendFn(ctx, msg)
 	}
-	return m.SendErr
+	return m.SendResult, m.SendErr
 }
 
 // Compile-time check: mockTransport must satisfy Transport.
@@ -47,7 +50,7 @@ func TestMockTransport_RecordsSentMessages(t *testing.T) {
 		BodyText: "World",
 	}
 
-	if err := mt.Send(context.Background(), msg); err != nil {
+	if _, err := mt.Send(context.Background(), msg); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if got := len(mt.Sent); got != 1 {
@@ -66,7 +69,7 @@ func TestMockTransport_ReturnsConfiguredError(t *testing.T) {
 	}
 	mt := &mockTransport{SendErr: want}
 
-	err := mt.Send(context.Background(), Message{})
+	_, err := mt.Send(context.Background(), Message{})
 	if err == nil {
 		t.Fatal("Send returned nil, want error")
 	}

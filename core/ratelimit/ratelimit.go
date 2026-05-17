@@ -196,18 +196,31 @@ func ipInPrefixes(ipStr string, prefixes []netip.Prefix) bool {
 	return false
 }
 
-// ParsePrefixes parses a list of CIDR strings into netip.Prefix values
-// suitable for [ClientIP]. Reports the first parse failure with the
-// offending string.
-func ParsePrefixes(cidrs []string) ([]netip.Prefix, error) {
-	if len(cidrs) == 0 {
+// ParsePrefixes parses a list of CIDR strings or named presets into
+// netip.Prefix values suitable for [ClientIP]. Presets (FR58) expand
+// to their canonical CIDR list at parse time; operators can mix
+// presets and explicit CIDRs in one list.
+//
+// Reports the first parse failure with the offending string.
+func ParsePrefixes(items []string) ([]netip.Prefix, error) {
+	if len(items) == 0 {
 		return nil, nil
 	}
-	out := make([]netip.Prefix, 0, len(cidrs))
-	for _, c := range cidrs {
-		p, err := netip.ParsePrefix(c)
+	var out []netip.Prefix
+	for _, item := range items {
+		if IsPreset(item) {
+			for _, c := range Presets[item] {
+				p, err := netip.ParsePrefix(c)
+				if err != nil {
+					return nil, errors.New("preset " + item + ": invalid CIDR " + c)
+				}
+				out = append(out, p)
+			}
+			continue
+		}
+		p, err := netip.ParsePrefix(item)
 		if err != nil {
-			return nil, errors.New("invalid CIDR: " + c)
+			return nil, errors.New("invalid CIDR or unknown preset: " + item)
 		}
 		out = append(out, p)
 	}

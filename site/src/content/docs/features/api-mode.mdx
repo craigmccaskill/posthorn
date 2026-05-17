@@ -1,0 +1,226 @@
+---
+title: API mode
+description: Authenticated server-to-server endpoints with JSON body parsing and idempotent retries.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+API mode is the endpoint shape for server-to-server callers — Cloudflare Workers, background jobs, internal services. It's the alternative to form-mode endpoints, which are designed for browser POSTs.
+
+The two modes are mutually exclusive per endpoint. A single Posthorn instance can host both — a contact form on `/api/contact` (form mode) alongside a transactional endpoint on `/api/transactional` (API mode) — but each individual endpoint is one or the other.
+
+## When to use API mode
+
+Pick API mode when **the caller is your own code** rather than a browser:
+
+- A worker sending password-reset emails after a click event
+- A cron job sending daily digest notifications
+- A monitoring tool firing alert webhooks
+- An internal API that proxies email through Posthorn rather than calling the provider directly
+
+Pick form mode for browser submissions (contact forms, feedback widgets) — see [Spam protection](/features/spam-protection/).
+
+## Configuration
+
+```toml
+[[endpoints]]
+path = "/api/transactional"
+to = ["alerts@yourcompany.com"]
+from = "Notifications <noreply@yourcompany.com>"
+
+auth = "api-key"
+api_keys = [
+  "${env.WORKER_KEY_PRIMARY}",
+  "${env.WORKER_KEY_BACKUP}",
+]
+
+required = ["subject_line", "message"]
+subject = "{{.subject_line}}"
+body = "{{.message}}"
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+
+[endpoints.rate_limit]
+count = 100
+interval = "1m"
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `auth = "api-key"` | yes | Enables API mode. Default `"form"` preserves v1.0 behavior. |
+| `api_keys = [...]` | yes (when `auth = "api-key"`) | List of Bearer tokens accepted on this endpoint. Multiple keys support rotation without downtime. `${env.VAR}` substitution honored. |
+| `idempotency_cache_size` | no (default 10000) | Per-endpoint cache capacity. See [Idempotency](#idempotency) below. |
+
+<Aside type="caution" title="API mode mutexes with form-mode fields">
+Configuring `honeypot`, `allowed_origins`, `redirect_success`, or `redirect_error` on an API-mode endpoint is a config-parse error, not silently ignored. Posthorn will refuse to start with a clear message naming the offending field — this exists so an operator who flips a form-mode endpoint to API mode can't accidentally leave dead spam-defense config in place and assume they're still protected.
+</Aside>
+
+## Making a request
+
+API-mode endpoints accept JSON request bodies with an `Authorization: Bearer <key>` header:
+
+```bash
+curl -X POST https://yourdomain.com/api/transactional \
+  -H "Authorization: Bearer $WORKER_KEY_PRIMARY" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "subject_line": "Daily digest for May 16",
+    "message": "Here is your daily digest..."
+  }'
+```
+
+Response on success:
+
+```json
+{"status":"ok","submission_id":"f9c7..."}
+```
+
+## What's different from form mode
+
+| Concern | Form mode | API mode |
+|---|---|---|
+| Body shape | `application/x-www-form-urlencoded` or `multipart/form-data` | `application/json` |
+| Authentication | None (origin/honeypot defend against bots) | `Authorization: Bearer <key>` (constant-time compare) |
+| Rate-limit bucket | Per client IP | Per matched API key |
+| Honeypot field | Available | Not applicable (no bots) |
+| Origin / Referer check | Optional via `allowed_origins` | Not applicable (servers don't send `Origin`) |
+| Redirect on success/error | Optional via `redirect_*` | Not applicable (servers don't follow redirects) |
+| Idempotency keys | Not applicable | Honored via `Idempotency-Key` header |
+
+## Authentication
+
+API mode uses `Authorization: Bearer <key>`. Key comparison is constant-time (`crypto/subtle.ConstantTimeCompare`) so a timing attack can't leak which key matched.
+
+**Multiple keys** in `api_keys` are supported so you can rotate without downtime:
+
+1. Add the new key to `api_keys` alongside the existing one
+2. Restart Posthorn (or reload via your process manager)
+3. Switch callers to the new key
+4. Remove the old key, restart again
+
+Failed auth returns HTTP 401. The failed key is **never written to logs** — operators investigating auth failures see a `auth_failed` log line with the endpoint and timestamp, but no key material.
+
+## JSON body shape
+
+The JSON body is a flat object whose keys become template variables. Primitive types coerce automatically:
+
+```json
+{
+  "name": "Alice",
+  "count": 42,
+  "confirmed": true,
+  "tags": ["urgent", "support"]
+}
+```
+
+In the template:
+
+```
+Name: {{.name}}            → Alice
+Count: {{.count}}          → 42
+Confirmed: {{.confirmed}}  → true
+Tags: {{.tags}}            → [urgent support]
+```
+
+**Coercion rules:**
+
+- Strings pass through unchanged
+- Numbers render without a decimal when integer-valued (`42` not `42.0`); arbitrary-precision via `strconv.FormatFloat`
+- Booleans render as `true` / `false`
+- Arrays of primitives become multi-value fields (same shape as `?name=a&name=b` in form mode)
+- `null` values are omitted (treated as if the field were absent)
+
+**Rejected:**
+
+- Nested objects (`{"user": {"name": "Alice"}}`) → HTTP 400
+- Arrays containing objects or arrays → HTTP 400
+- Top-level arrays or primitives (must be an object) → HTTP 400
+
+Nested objects are a v1.0 limitation — operators wanting structured data should flatten at the caller (e.g. `user_name` and `user_email` rather than `user.name` / `user.email`).
+
+## Per-request recipients (`to_override`)
+
+API-mode JSON bodies may include an optional `to_override` field that replaces the endpoint's configured recipients for that one request:
+
+```json
+{
+  "to_override": "alice@example.com",
+  "subject_line": "Reset your password",
+  "message": "Click here: ..."
+}
+```
+
+Or an array for multiple recipients:
+
+```json
+{
+  "to_override": ["alice@example.com", "audit-log@yourcompany.com"],
+  "subject_line": "Receipt for order #12345",
+  "message": "Thanks for your purchase..."
+}
+```
+
+This is the load-bearing primitive for transactional sends: a Worker sending password resets, receipts, or notifications inherently sends to a different user each time. The recipient can't be pre-declared in TOML.
+
+**Validation:** every address must pass the same email-syntax check used for form-mode submitters. Any invalid address returns HTTP 422 — the whole request fails (no partial sends).
+
+**Empty array (`"to_override": []`) is rejected** with 422. Either name at least one recipient or omit the field.
+
+**Absent `to_override`** falls back to the endpoint's configured `to` list. This is useful when the same endpoint serves both per-recipient transactional sends and operator-routed sends.
+
+<Aside type="caution" title="Why `from` isn't overridable">
+Posthorn's API mode lets callers override recipients but not sender identity. A leaked API key with per-request `to` can spam arbitrary addresses (recoverable: revoke the key, Postmark catches volume patterns). A leaked API key with per-request `from` could spoof email from any identity — pretending to be `ceo@yourcompany.com`, `support@yourbank.com`, etc. — which is much harder to recover from.
+
+Need different sender identities? Configure separate endpoints with separate `from` fields and separate API keys. See [Configuration → Endpoints](/configuration/endpoints/) for the multi-endpoint pattern.
+</Aside>
+
+## Idempotency
+
+API mode honors the standard `Idempotency-Key` request header. When present, Posthorn caches the response and returns a byte-identical replay for any retry with the same key within 24 hours:
+
+```bash
+curl -X POST https://yourdomain.com/api/transactional \
+  -H "Authorization: Bearer $WORKER_KEY_PRIMARY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ord-12345-welcome-email" \
+  --data '{"subject_line":"Welcome","message":"..."}'
+```
+
+A subsequent request with the same `Idempotency-Key` (within 24 hours) returns the **exact original response** without re-sending the email. This is the primitive that lets a worker safely retry on a transient failure without duplicate sends.
+
+**Key shape:** 1–255 printable ASCII characters. UUIDs, ULIDs, hex digests, or operator-meaningful strings all work. Malformed keys return HTTP 400.
+
+**Concurrent collisions:** if a second request with the same key arrives while the first is still processing, the second gets HTTP 409 Conflict — not a wait-for-the-first. Callers retrying without backoff will see 409s, which is intentional: 409 surfaces a retry-without-backoff caller bug rather than hiding it.
+
+**What gets cached:**
+
+- HTTP 200 success responses — including the `submission_id` and `transport_message_id`
+- HTTP 422 validation failures — same input gives the same answer, no point re-validating
+
+**What doesn't:**
+
+- HTTP 429 (rate limit) — transient; the bucket will refill
+- HTTP 502 (transport failure) — retry is the whole point of idempotency for this case
+- HTTP 5xx generally — retries should get a fresh shot
+
+**Scope:** keys are per-endpoint. The same `Idempotency-Key` used against `/api/transactional` and `/api/notifications` does **not** collide — each endpoint has its own cache.
+
+**Cache size:** default 10,000 entries per endpoint, LRU-evicted. Configurable via `idempotency_cache_size`. Persistence across restarts is deferred to v2; for v1.0 a Posthorn restart wipes the cache.
+
+## Rate limiting in API mode
+
+Unlike form mode (which keys on client IP), API mode rate-limits **per matched API key**. Two workers using different keys on the same endpoint have independent buckets.
+
+This matters because server-to-server callers commonly NAT through shared egress IPs — Cloudflare Workers, for example. IP-keyed rate limiting would conflate independent callers.
+
+`trusted_proxies` does not apply to API mode (the rate-limit key isn't an IP, so there's no proxy to unwrap).
+
+## Logging
+
+API-mode requests log the same shape as form mode (per-request `submission_id`, `endpoint`, `transport`, `latency_ms`). Auth failures log `auth_failed` (without the rejected key value). Idempotent replays log `idempotent_replay` with the replayed status. In-flight collisions log `idempotent_conflict`.
+
+The matched API key is **never** logged. Operators wanting to identify which key was used on a successful request need to design that into the endpoint shape (e.g. one endpoint per caller).

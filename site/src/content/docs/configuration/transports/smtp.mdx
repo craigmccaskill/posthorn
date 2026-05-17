@@ -1,0 +1,89 @@
+---
+title: Outbound SMTP
+description: SMTP relay transport — STARTTLS + AUTH PLAIN against any operator-controlled SMTP server. Stdlib net/smtp under the hood.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "smtp"
+
+[endpoints.transport.settings]
+host     = "smtp.mailgun.org"
+port     = 587
+username = "postmaster@mg.yourdomain.com"
+password = "${env.SMTP_PASSWORD}"
+```
+
+## Settings
+
+| Setting | Required | Default | Description |
+|---|---|---|---|
+| `host` | yes | — | SMTP server hostname. |
+| `port` | yes | — | SMTP server port. Typically `587` (STARTTLS) or `2525` (alternative STARTTLS port). Port `25` is blocked outbound on most cloud providers. |
+| `username` | yes | — | SMTP AUTH PLAIN username. |
+| `password` | yes | — | SMTP AUTH PLAIN password. **Never logged** ([NFR3](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)). |
+| `require_tls` | no | `true` | Require STARTTLS before sending credentials. Setting to `false` is **not recommended** outside of local testing. |
+| `tls_insecure_skip_verify` | no | `false` | Skip TLS certificate validation. **Test-only escape hatch** for self-signed certs in local dev. |
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| Protocol flow | EHLO → STARTTLS → AUTH PLAIN → MAIL FROM → RCPT TO → DATA → QUIT |
+| Per-request timeout | 30s (longer than HTTP transports because SMTP has slower greeting + DATA round trips) |
+| Connection reuse | None — one TCP connection per Send. (Connection pooling is a v2 optimization.) |
+| Message body | Hand-constructed RFC 5322 message (From/To/Subject/Reply-To headers + plain-text body, UTF-8) |
+| Subject encoding | RFC 2047 B-encoding for non-ASCII subjects; ASCII passes through unchanged |
+| `transport_message_id` | **Empty** — stdlib `net/smtp` doesn't expose the server's `queued as <id>` response. Operators must correlate by timestamp + recipient in the relay's own logs. |
+
+## Use cases
+
+The SMTP transport is for operators who want Posthorn to relay to an **SMTP server they already trust** rather than calling an HTTP API. Common shapes:
+
+- **Mailgun's SMTP gateway** (`smtp.mailgun.org:587`) — same Mailgun account, SMTP wire instead of HTTP
+- **SendGrid's SMTP relay** (`smtp.sendgrid.net:587`)
+- **A self-hosted Postfix smarthost** that handles the actual delivery to recipients
+- **Mailtrap or MailHog** for testing in a local development environment
+- **An internal mail server** for org-internal-only notifications that never leave the network
+
+If you're not sure which to pick, prefer one of the HTTP API transports (Postmark, Resend, Mailgun) — they have better operational ergonomics (per-request error responses, structured rate-limit headers, dashboards). SMTP is the "I need SMTP wire" fallback.
+
+## Error classification
+
+| Condition | Error class | Retry? |
+|---|---|---|
+| Connect / TCP timeout / DNS failure | `ErrTransient` | yes, after 1s |
+| STARTTLS not advertised when `require_tls=true` | `ErrTerminal` | no — operator must fix config or pick a different server |
+| TLS handshake failure | `ErrTransient` | yes, after 1s |
+| `AUTH` rejected (typically `535 5.7.8`) | `ErrTerminal` (bad credentials) | no |
+| `MAIL FROM` / `RCPT TO` `4xx` (greylisting, `450 4.7.1`) | `ErrTransient` | yes, after 1s |
+| `MAIL FROM` / `RCPT TO` `5xx` (relay-rejected, bad address, `550 5.1.1`) | `ErrTerminal` | no |
+| `DATA` initial command `5xx` (e.g., `552 5.3.4 Message too big`) | `ErrTerminal` | no |
+| CRLF in `From` / `To` / `Subject` / `Reply-To` ([NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | `ErrTerminal` | no (rejected at Posthorn's edge before dialing) |
+
+## Header injection defense
+
+SMTP is the only Posthorn transport that hand-writes the RFC 5322 message envelope (because there's no JSON struct to lean on). The structural NFR1 defense is **pre-write validation**: before the wire conversation starts, Posthorn checks that no submitter-controlled header value contains CR or LF. Any CRLF in `From`/`To`/`Subject`/`Reply-To` is rejected with `ErrTerminal` and the dial never happens.
+
+Additionally:
+
+- **MAIL FROM / RCPT TO** envelopes go through stdlib `net/smtp.Client` which has its own CRLF validation
+- **DATA body** is wrapped in `net/textproto.DotWriter` which handles dot-stuffing automatically — a body line starting with `.` cannot prematurely terminate the DATA section
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `smtp: server does not advertise STARTTLS but require_tls=true` | Server's EHLO response omits STARTTLS (rare for legitimate relays) | Verify server hostname/port; if intentional (local-network plaintext), set `require_tls = false` explicitly |
+| `535 5.7.8 Authentication failed` | Wrong username or password, or AUTH PLAIN not supported by server | Check creds; some servers require username to be the literal email address, not a username |
+| Connection times out on connect | Cloud provider blocking outbound port 25 (and sometimes 587) | Use port 2525 if your provider blocks 587, or switch to an HTTP-API transport |
+| `450 4.7.1` errors retry but then succeed | Greylisting — server delays first-time-from-this-sender mail | Working as intended; Posthorn's retry policy handles this |
+| Mail accepted but never delivered | The SMTP relay accepted but failed downstream — Posthorn has no visibility | Check the relay's own logs and bounce notifications |
+
+<Aside type="caution">
+**Port 25 is broken on most cloud providers.** DigitalOcean, AWS Lightsail, Linode, Vultr, GCP, and Azure all block outbound port 25 by default. SMTP transport on port 25 to anywhere outside your cloud account's network will fail at TCP-connect. Use 587 (STARTTLS) or 2525 (some relays advertise this as an alternative) or pick an HTTP-API transport.
+
+This is the original problem Posthorn was built to work around — except now we're using it as an egress option for operators who happen to have a working SMTP relay reachable.
+</Aside>

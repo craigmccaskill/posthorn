@@ -296,3 +296,78 @@ func TestParsePrefixes_Empty(t *testing.T) {
 		t.Errorf("got %v, want nil for empty input", got)
 	}
 }
+
+// --- v1.0 block C: trusted_proxies named presets (Story 10.4) ---
+
+func TestParsePrefixes_CloudflarePreset(t *testing.T) {
+	prefixes, err := ratelimit.ParsePrefixes([]string{"cloudflare"})
+	if err != nil {
+		t.Fatalf("ParsePrefixes: %v", err)
+	}
+	if len(prefixes) == 0 {
+		t.Error("cloudflare preset expanded to zero prefixes")
+	}
+	// At least one well-known Cloudflare CIDR should be in the result.
+	found := false
+	for _, p := range prefixes {
+		if p.String() == "173.245.48.0/20" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("cloudflare preset missing 173.245.48.0/20: %v", prefixes)
+	}
+}
+
+func TestParsePrefixes_MixesPresetWithExplicitCIDR(t *testing.T) {
+	prefixes, err := ratelimit.ParsePrefixes([]string{"cloudflare", "10.0.0.0/8", "192.168.0.0/16"})
+	if err != nil {
+		t.Fatalf("ParsePrefixes: %v", err)
+	}
+	if len(prefixes) < 4 {
+		t.Errorf("mixed list expanded to %d prefixes; want at least 4", len(prefixes))
+	}
+	found := false
+	for _, p := range prefixes {
+		if p.String() == "10.0.0.0/8" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("explicit CIDR 10.0.0.0/8 not found in mixed list")
+	}
+}
+
+func TestParsePrefixes_UnknownPreset(t *testing.T) {
+	_, err := ratelimit.ParsePrefixes([]string{"my-vpc"})
+	if err == nil {
+		t.Error("unknown preset accepted")
+	}
+}
+
+// TestParsePrefixes_ReservedEmptyPreset confirms aws-elb / gcp-lb /
+// azure-front-door are accepted (no error) even though their CIDR lists
+// are empty in v1.0 — they're reserved slot names that ship empty
+// awaiting maintained ranges.
+func TestParsePrefixes_ReservedEmptyPreset(t *testing.T) {
+	prefixes, err := ratelimit.ParsePrefixes([]string{"aws-elb", "10.0.0.0/8"})
+	if err != nil {
+		t.Fatalf("ParsePrefixes (reserved-empty preset): %v", err)
+	}
+	if len(prefixes) != 1 {
+		t.Errorf("got %d prefixes, want 1 (only the explicit CIDR)", len(prefixes))
+	}
+}
+
+func TestIsPreset(t *testing.T) {
+	for _, name := range []string{"cloudflare", "aws-elb", "gcp-lb", "azure-front-door"} {
+		if !ratelimit.IsPreset(name) {
+			t.Errorf("IsPreset(%q) = false, want true", name)
+		}
+	}
+	if ratelimit.IsPreset("not-a-preset") {
+		t.Error("IsPreset(unknown) = true, want false")
+	}
+}

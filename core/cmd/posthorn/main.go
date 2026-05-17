@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -29,6 +28,10 @@ import (
 
 	"github.com/craigmccaskill/posthorn/config"
 	"github.com/craigmccaskill/posthorn/gateway"
+	"github.com/craigmccaskill/posthorn/ingress"
+	"github.com/craigmccaskill/posthorn/metrics"
+	"github.com/craigmccaskill/posthorn/smtp"
+	"github.com/craigmccaskill/posthorn/spam"
 	"github.com/craigmccaskill/posthorn/transport"
 )
 
@@ -117,51 +120,126 @@ func runServe(args []string) error {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	return runServerUntilSignal(server, logger)
+	// HTTP ingress is the v1.0 form/api-mode listener. v1.0 block D
+	// (SMTP ingress) appends a second ingress to this slice when the
+	// operator configures [smtp_listener].
+	ingresses := []ingress.Ingress{
+		ingress.NewHTTPIngress(server, logger),
+	}
+
+	// v1.0 block D: optional SMTP listener (FR62). Built only when the
+	// operator's TOML includes [smtp_listener].
+	if cfg.SMTPListener != nil {
+		smtpIng, err := buildSMTPIngress(cfg.SMTPListener, logger)
+		if err != nil {
+			return fmt.Errorf("build smtp_listener: %w", err)
+		}
+		ingresses = append(ingresses, smtpIng)
+		logger.Info("smtp_listener registered",
+			slog.String("listen", cfg.SMTPListener.Listen),
+			slog.String("transport", cfg.SMTPListener.Transport.Type),
+			slog.Int("smtp_users", len(cfg.SMTPListener.SMTPUsers)),
+		)
+	}
+
+	return runIngressesUntilSignal(ingresses, logger)
 }
 
-// runServerUntilSignal starts the HTTP server, waits for SIGTERM/SIGINT,
-// then drains in-flight requests with a 15s shutdown deadline (longer
-// than the per-request 10s hard timeout from FR22 so in-flight retries
-// can complete gracefully). A second signal forces immediate exit.
-func runServerUntilSignal(server *http.Server, logger *slog.Logger) error {
-	serverErr := make(chan error, 1)
-	go func() {
-		err := server.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
-		}
-		close(serverErr)
-	}()
+// buildSMTPIngress converts the config-package SMTPListenerConfig into
+// the smtp-package ListenerConfig, constructs the outbound transport
+// via the same registry the HTTP endpoints use, and returns the
+// resulting smtp.Listener (which satisfies ingress.Ingress).
+func buildSMTPIngress(c *config.SMTPListenerConfig, logger *slog.Logger) (ingress.Ingress, error) {
+	tp, err := buildTransport(c.Transport)
+	if err != nil {
+		return nil, fmt.Errorf("transport: %w", err)
+	}
+	// Parse max_message_size (default 1MB if unset).
+	rawSize := c.MaxMessageSize
+	if rawSize == "" {
+		rawSize = "1MB"
+	}
+	maxBody, err := spam.ParseSize(rawSize)
+	if err != nil {
+		return nil, fmt.Errorf("max_message_size: %w", err)
+	}
+	listenerCfg := smtp.ListenerConfig{
+		Listen:                  c.Listen,
+		RequireTLS:              c.RequireTLS,
+		TLSCert:                 c.TLSCert,
+		TLSKey:                  c.TLSKey,
+		ClientCertCA:            c.ClientCertCA,
+		AuthRequired:            smtp.AuthMode(c.AuthRequired),
+		AllowedSenders:          c.AllowedSenders,
+		AllowedRecipients:       c.AllowedRecipients,
+		MaxRecipientsPerSession: c.MaxRecipientsPerSession,
+		MaxMessageSize:          rawSize,
+		IdleTimeout:             c.IdleTimeout,
+		Transport:               c.Transport,
+	}
+	listenerCfg.SMTPUsers = make([]smtp.User, len(c.SMTPUsers))
+	for i, u := range c.SMTPUsers {
+		listenerCfg.SMTPUsers[i] = smtp.User{Username: u.Username, Password: u.Password}
+	}
+	if err := listenerCfg.Validate(); err != nil {
+		return nil, err
+	}
+	return smtp.New(listenerCfg, tp, maxBody, logger, nil /* recorder wired by buildMux for HTTP only in v1.0 */)
+}
+
+// runIngressesUntilSignal starts each ingress in its own goroutine,
+// waits for SIGTERM/SIGINT, then drains in-flight work via Stop on
+// each ingress with a 15s deadline (longer than the per-request 10s
+// hard timeout from FR22 so in-flight retries can complete
+// gracefully). A second signal forces immediate exit.
+func runIngressesUntilSignal(ingresses []ingress.Ingress, logger *slog.Logger) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, len(ingresses))
+	for _, ing := range ingresses {
+		ing := ing
+		go func() {
+			err := ing.Start(ctx)
+			if err != nil {
+				errCh <- fmt.Errorf("%s ingress: %w", ing.Name(), err)
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
 	select {
-	case err := <-serverErr:
+	case err := <-errCh:
 		if err != nil {
-			return fmt.Errorf("listener: %w", err)
+			return err
 		}
-		return nil
+		// First ingress returned without error — unusual, but treat
+		// as graceful end (other ingresses will follow).
 	case sig := <-sigCh:
 		logger.Info("shutdown signal received", slog.String("signal", sig.String()))
 	}
 
-	// Forced-exit watcher: a second signal during shutdown bypasses the
-	// graceful drain.
+	// Forced-exit watcher.
 	go func() {
 		sig := <-sigCh
 		logger.Warn("second signal received, forcing exit", slog.String("signal", sig.String()))
 		os.Exit(1)
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		return fmt.Errorf("graceful shutdown: %w", err)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer shutdownCancel()
+	var firstErr error
+	for _, ing := range ingresses {
+		if err := ing.Stop(shutdownCtx); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("%s ingress graceful shutdown: %w", ing.Name(), err)
+		}
 	}
 	logger.Info("posthorn stopped")
-	return nil
+	return firstErr
 }
 
 // --- validate ---
@@ -199,15 +277,27 @@ func runValidate(args []string) error {
 
 // buildMux constructs an http.ServeMux mapping each configured endpoint
 // path to its gateway.Handler. Endpoints share no state. Each handler
-// gets the logger so per-request submission_id propagation works.
+// gets the logger and the shared metrics Recorder so per-request
+// submission_id propagation and operator observability work.
+//
+// The mux additionally registers `/healthz` (FR54) and `/metrics`
+// (FR55) at fixed paths. Operators can firewall those paths at the
+// reverse proxy if internal-only access is desired.
 func buildMux(cfg *config.Config, logger *slog.Logger) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
+
+	metricsReg := metrics.New()
+	recorder := metrics.NewRecorder(metricsReg)
+
 	for i, ep := range cfg.Endpoints {
 		t, err := buildTransport(ep.Transport)
 		if err != nil {
 			return nil, fmt.Errorf("endpoints[%d] (%s): transport: %w", i, ep.Path, err)
 		}
-		h, err := gateway.New(ep, t, gateway.WithLogger(logger))
+		h, err := gateway.New(ep, t,
+			gateway.WithLogger(logger),
+			gateway.WithRecorder(recorder),
+		)
 		if err != nil {
 			return nil, fmt.Errorf("endpoints[%d] (%s): %w", i, ep.Path, err)
 		}
@@ -218,23 +308,26 @@ func buildMux(cfg *config.Config, logger *slog.Logger) (*http.ServeMux, error) {
 			slog.Int("recipients", len(ep.To)),
 		)
 	}
+
+	// FR54: /healthz — always-on liveness probe.
+	mux.Handle("/healthz", metrics.HealthzHandler())
+	// FR55: /metrics — Prometheus exposition. Same registry as the
+	// Recorder above so all observations land in the scrape.
+	mux.Handle("/metrics", metricsReg.Handler())
+
 	return mux, nil
 }
 
-// buildTransport constructs a transport from its config block. v1.0
-// supports only "postmark"; future transports add cases.
+// buildTransport constructs a transport from its config block. Dispatch
+// is via the transport package's registry — each transport (postmark,
+// resend, mailgun, ses, smtp-out) registers its builder at init.
+// Adding a new transport requires no edits here.
 func buildTransport(cfg config.TransportConfig) (transport.Transport, error) {
-	switch cfg.Type {
-	case "postmark":
-		apiKey, _ := cfg.Settings["api_key"].(string)
-		if apiKey == "" {
-			return nil, errors.New("postmark: api_key is empty")
-		}
-		baseURL, _ := cfg.Settings["base_url"].(string) // test-only escape hatch
-		return transport.NewPostmarkTransport(apiKey, baseURL), nil
-	default:
-		return nil, fmt.Errorf("unknown transport type %q", cfg.Type)
+	reg, ok := transport.Lookup(cfg.Type)
+	if !ok {
+		return nil, transport.UnknownTypeError(cfg.Type)
 	}
+	return reg.Build(cfg.Settings)
 }
 
 // buildLogger returns a slog.Logger configured per the config's Logging

@@ -279,7 +279,7 @@ func TestValidate_TransportTypeRequired(t *testing.T) {
 }
 
 func TestValidate_UnknownTransportType(t *testing.T) {
-	wrong := strings.Replace(minimalTOML, `type = "postmark"`, `type = "smtp"`, 1)
+	wrong := strings.Replace(minimalTOML, `type = "postmark"`, `type = "nonsense-transport"`, 1)
 	_, err := loadString(t, wrong)
 	if err == nil || !strings.Contains(err.Error(), "unknown transport type") {
 		t.Errorf("error: %v", err)
@@ -494,6 +494,207 @@ func TestLoad_EnvVar_NoPlaceholders_Passthrough(t *testing.T) {
 	// touching the environment.
 	if _, err := loadString(t, minimalTOML); err != nil {
 		t.Errorf("Load: %v", err)
+	}
+}
+
+// --- v1.1: API mode (auth, api_keys) ---
+
+// minimalAPITOML is the baseline valid api-mode config used across v1.1 tests.
+const minimalAPITOML = `
+[[endpoints]]
+path = "/api/transactional"
+to = ["craig@example.com"]
+from = "noreply@example.com"
+subject = "Transactional"
+body = "Body"
+auth = "api-key"
+api_keys = ["worker-key-1"]
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "test-key"
+`
+
+// TestValidate_DefaultAuth_FormMode pins FR45: v1.0 configs without an auth
+// field continue to parse and load as form-mode.
+func TestValidate_DefaultAuth_FormMode(t *testing.T) {
+	cfg, err := loadString(t, minimalTOML)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Endpoints[0].Auth; got != "" {
+		t.Errorf("Auth = %q, want \"\" (unset; defaults to form)", got)
+	}
+}
+
+func TestValidate_ExplicitFormAuth(t *testing.T) {
+	c := strings.Replace(minimalTOML, "body = \"Body\"", "body = \"Body\"\nauth = \"form\"", 1)
+	cfg, err := loadString(t, c)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Endpoints[0].Auth; got != "form" {
+		t.Errorf("Auth = %q, want \"form\"", got)
+	}
+}
+
+func TestValidate_APIKeyMode_Success(t *testing.T) {
+	cfg, err := loadString(t, minimalAPITOML)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ep := cfg.Endpoints[0]
+	if ep.Auth != "api-key" {
+		t.Errorf("Auth = %q", ep.Auth)
+	}
+	if len(ep.APIKeys) != 1 || ep.APIKeys[0] != "worker-key-1" {
+		t.Errorf("APIKeys = %v", ep.APIKeys)
+	}
+}
+
+func TestValidate_InvalidAuthValue(t *testing.T) {
+	bad := strings.Replace(minimalTOML, "body = \"Body\"", "body = \"Body\"\nauth = \"oauth\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "auth: must be") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_RequiresAPIKeys(t *testing.T) {
+	bad := `
+[[endpoints]]
+path = "/api/transactional"
+to = ["craig@example.com"]
+from = "noreply@example.com"
+subject = "S"
+body = "B"
+auth = "api-key"
+
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "test-key"
+`
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "api_keys: at least one key required") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_EmptyAPIKeysList(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `api_keys = ["worker-key-1"]`, `api_keys = []`, 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "api_keys: at least one key required") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_EmptyKeyString(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `api_keys = ["worker-key-1"]`, `api_keys = ["worker-key-1", ""]`, 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "api_keys[1]: empty key") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_RejectsHoneypot(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `body = "Body"`, `body = "Body"`+"\nhoneypot = \"_gotcha\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "honeypot: not valid on auth=\"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_RejectsAllowedOrigins(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `body = "Body"`, `body = "Body"`+"\nallowed_origins = [\"https://x.com\"]", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "allowed_origins: not valid on auth=\"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_RejectsRedirectSuccess(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `body = "Body"`, `body = "Body"`+"\nredirect_success = \"/ok\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "redirect_success: not valid on auth=\"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_APIKeyMode_RejectsRedirectError(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `body = "Body"`, `body = "Body"`+"\nredirect_error = \"/err\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "redirect_error: not valid on auth=\"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+// TestValidate_FormMode_RejectsAPIKeys catches the operator-misconfiguration
+// where api_keys are present but auth was forgotten — without this check
+// the config would silently fall back to form mode with the keys dead-code.
+func TestValidate_FormMode_RejectsAPIKeys(t *testing.T) {
+	bad := strings.Replace(minimalTOML, `body = "Body"`, `body = "Body"`+"\napi_keys = [\"x\"]", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "api_keys: must be unset unless auth = \"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+// --- v1.0 block C: CSRF (Story 10.3) ---
+
+func TestValidate_APIKeyMode_RejectsCSRFSecret(t *testing.T) {
+	bad := strings.Replace(minimalAPITOML, `body = "Body"`, `body = "Body"`+"\ncsrf_secret = \"0123456789abcdef0123456789abcdef\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "csrf_secret: not valid on auth=\"api-key\"") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_FormMode_CSRFShortSecret(t *testing.T) {
+	bad := strings.Replace(minimalTOML, `body = "Body"`, `body = "Body"`+"\ncsrf_secret = \"too-short\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "csrf_secret must be at least") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestValidate_FormMode_CSRFSecretValid(t *testing.T) {
+	c := strings.Replace(minimalTOML, `body = "Body"`,
+		`body = "Body"`+"\ncsrf_secret = \"0123456789abcdef0123456789abcdef\"\ncsrf_token_ttl = \"30m\"", 1)
+	cfg, err := loadString(t, c)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	ep := cfg.Endpoints[0]
+	if len(ep.CSRFSecret) != 32 {
+		t.Errorf("CSRFSecret length = %d, want 32", len(ep.CSRFSecret))
+	}
+	if ep.CSRFTokenTTL.Std() != 30*time.Minute {
+		t.Errorf("CSRFTokenTTL = %v, want 30m", ep.CSRFTokenTTL.Std())
+	}
+}
+
+func TestValidate_FormMode_CSRFNegativeTTL(t *testing.T) {
+	bad := strings.Replace(minimalTOML, `body = "Body"`,
+		`body = "Body"`+"\ncsrf_secret = \"0123456789abcdef0123456789abcdef\"\ncsrf_token_ttl = \"-1m\"", 1)
+	_, err := loadString(t, bad)
+	if err == nil || !strings.Contains(err.Error(), "csrf_token_ttl") {
+		t.Errorf("error: %v", err)
+	}
+}
+
+func TestLoad_APIKeyMode_EnvVarSubstitution(t *testing.T) {
+	t.Setenv("WORKER_KEY", "resolved-key-abc")
+	c := strings.Replace(minimalAPITOML, `api_keys = ["worker-key-1"]`, `api_keys = ["${env.WORKER_KEY}"]`, 1)
+	cfg, err := loadString(t, c)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Endpoints[0].APIKeys[0]; got != "resolved-key-abc" {
+		t.Errorf("APIKeys[0] = %q, want resolved env var value", got)
 	}
 }
 

@@ -27,7 +27,7 @@ func TestBuildTransport_Postmark(t *testing.T) {
 }
 
 func TestBuildTransport_UnknownType(t *testing.T) {
-	_, err := buildTransport(config.TransportConfig{Type: "smtp"})
+	_, err := buildTransport(config.TransportConfig{Type: "nonsense-transport"})
 	if err == nil {
 		t.Fatal("expected error for unknown transport type")
 	}
@@ -213,5 +213,124 @@ func TestBuildMux_BadTransport_PropagatesError(t *testing.T) {
 	_, err := buildMux(cfg, buildLogger(config.LoggingConfig{}))
 	if err == nil {
 		t.Fatal("expected error for bad transport")
+	}
+}
+
+// TestBuildMux_HealthzRegistered pins FR54: /healthz returns 200 OK with
+// body "ok" regardless of endpoint configuration.
+func TestBuildMux_HealthzRegistered(t *testing.T) {
+	cfg := &config.Config{
+		Endpoints: []config.EndpointConfig{
+			{
+				Path:    "/api/contact",
+				To:      []string{"to@example.com"},
+				From:    "from@example.com",
+				Subject: "S", Body: "B",
+				Transport: config.TransportConfig{
+					Type:     "postmark",
+					Settings: map[string]any{"api_key": "k"},
+				},
+			},
+		},
+	}
+	mux, err := buildMux(cfg, buildLogger(config.LoggingConfig{}))
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("/healthz status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Errorf("/healthz body = %q, want %q", rec.Body.String(), "ok")
+	}
+}
+
+// TestBuildMux_MetricsRegistered pins FR55: /metrics returns the
+// Prometheus exposition format. The body should at least contain the
+// metric family names registered by NewRecorder.
+func TestBuildMux_MetricsRegistered(t *testing.T) {
+	cfg := &config.Config{
+		Endpoints: []config.EndpointConfig{
+			{
+				Path:    "/api/contact",
+				To:      []string{"to@example.com"},
+				From:    "from@example.com",
+				Subject: "S", Body: "B",
+				Transport: config.TransportConfig{
+					Type:     "postmark",
+					Settings: map[string]any{"api_key": "k"},
+				},
+			},
+		},
+	}
+	mux, err := buildMux(cfg, buildLogger(config.LoggingConfig{}))
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("/metrics status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	// Each registered metric appears in HELP/TYPE lines even before
+	// any observations are recorded.
+	for _, want := range []string{
+		"# TYPE posthorn_submissions_received_total counter",
+		"# TYPE posthorn_submissions_sent_total counter",
+		"# TYPE posthorn_submissions_failed_total counter",
+		"# TYPE posthorn_send_latency_seconds histogram",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in /metrics body:\n%s", want, body)
+		}
+	}
+	// Content-Type should be Prometheus exposition.
+	if !strings.Contains(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("/metrics Content-Type = %q, want text/plain prefix", rec.Header().Get("Content-Type"))
+	}
+}
+
+// TestBuildMux_MetricsObservedAfterRequest confirms the mux-wired
+// Recorder records observations when traffic actually flows through a
+// gateway handler. Sends a request to /api/contact (will fail at
+// transport since the Postmark key is fake, hitting submission_failed),
+// then asserts the failure shows up in /metrics.
+func TestBuildMux_MetricsObservedAfterRequest(t *testing.T) {
+	cfg := &config.Config{
+		Endpoints: []config.EndpointConfig{
+			{
+				Path:    "/api/contact",
+				To:      []string{"to@example.com"},
+				From:    "from@example.com",
+				Subject: "S", Body: "B",
+				Required: []string{"name"},
+				Transport: config.TransportConfig{
+					Type:     "postmark",
+					Settings: map[string]any{"api_key": "k"},
+				},
+			},
+		},
+	}
+	mux, err := buildMux(cfg, buildLogger(config.LoggingConfig{}))
+	if err != nil {
+		t.Fatalf("buildMux: %v", err)
+	}
+
+	// Send a request that will fail validation (no required `name`).
+	// validation_failed is recorded; submission_received isn't (we
+	// haven't passed validation).
+	req := httptest.NewRequest(http.MethodPost, "/api/contact", strings.NewReader(""))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	// Now scrape /metrics.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, `posthorn_validation_failed_total{endpoint="/api/contact"} 1`) {
+		t.Errorf("validation_failed counter not incremented: %s", body)
 	}
 }

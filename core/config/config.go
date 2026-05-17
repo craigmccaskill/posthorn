@@ -16,17 +16,60 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/craigmccaskill/posthorn/csrf"
+	"github.com/craigmccaskill/posthorn/transport"
 )
 
 // Config is the top-level configuration object.
 type Config struct {
-	Endpoints []EndpointConfig `toml:"endpoints"`
-	Logging   LoggingConfig    `toml:"logging"`
+	Endpoints    []EndpointConfig    `toml:"endpoints"`
+	Logging      LoggingConfig       `toml:"logging"`
+	SMTPListener *SMTPListenerConfig `toml:"smtp_listener"`
 }
 
-// EndpointConfig configures one HTTP form-ingress endpoint. Multiple
-// endpoints in one Config are independent — no shared rate-limit budget,
-// no cross-endpoint state (FR2).
+// SMTPListenerConfig is the top-level [smtp_listener] block (FR62).
+// When non-nil after parse, cmd/posthorn starts an SMTP ingress
+// alongside the HTTP one. Lives in this package to avoid a config →
+// smtp circular dependency; the smtp package converts it to its
+// internal ListenerConfig shape.
+type SMTPListenerConfig struct {
+	Listen                  string              `toml:"listen"`
+	RequireTLS              bool                `toml:"require_tls"`
+	TLSCert                 string              `toml:"tls_cert"`
+	TLSKey                  string              `toml:"tls_key"`
+	ClientCertCA            string              `toml:"client_cert_ca"`
+	AuthRequired            string              `toml:"auth_required"`
+	SMTPUsers               []SMTPUser          `toml:"smtp_users"`
+	AllowedSenders          []string            `toml:"allowed_senders"`
+	AllowedRecipients       []string            `toml:"allowed_recipients"`
+	MaxRecipientsPerSession int                 `toml:"max_recipients_per_session"`
+	MaxMessageSize          string              `toml:"max_message_size"`
+	IdleTimeout             Duration            `toml:"idle_timeout"`
+	Transport               TransportConfig     `toml:"transport"`
+}
+
+// SMTPUser is a single AUTH PLAIN credential pair.
+type SMTPUser struct {
+	Username string `toml:"username"`
+	Password string `toml:"password"`
+}
+
+// Auth mode values for EndpointConfig.Auth. Empty / unset is equivalent to
+// AuthForm (FR45 — v1.0 configs unchanged).
+const (
+	AuthForm   = "form"
+	AuthAPIKey = "api-key"
+)
+
+// EndpointConfig configures one ingress endpoint. Multiple endpoints in one
+// Config are independent — no shared rate-limit budget, no cross-endpoint
+// state (FR2).
+//
+// Two modes:
+//   - Form mode (default; v1.0 behavior): browser POSTs form-encoded bodies,
+//     defended by honeypot / Origin / rate limit / max-body-size.
+//   - API-key mode (v1.1): server-to-server callers POST JSON bodies with
+//     Authorization: Bearer <key>; browser defenses do not apply (FR31, FR32).
 type EndpointConfig struct {
 	Path                 string           `toml:"path"`
 	To                   []string         `toml:"to"`
@@ -45,6 +88,37 @@ type EndpointConfig struct {
 	LogFailedSubmissions *bool            `toml:"log_failed_submissions"`
 	RedirectSuccess      string           `toml:"redirect_success"`
 	RedirectError        string           `toml:"redirect_error"`
+
+	// v1.1: API mode. Auth selects the endpoint shape; empty defaults to
+	// AuthForm preserving v1.0 behavior (FR31, FR45). APIKeys is the list
+	// of valid Bearer tokens when Auth is AuthAPIKey (FR33). Multiple keys
+	// support rotation. IdempotencyCacheSize sets the per-endpoint cache
+	// capacity (FR42); zero or unset means use the package default.
+	Auth                 string   `toml:"auth"`
+	APIKeys              []string `toml:"api_keys"`
+	IdempotencyCacheSize int      `toml:"idempotency_cache_size"`
+
+	// v1.0 block C: dry-run mode (FR56). When true, the handler runs the
+	// full pipeline up to but not including transport.Send and returns
+	// 200 with a JSON body containing the prepared transport.Message.
+	// Operators use this to debug template rendering and recipient
+	// resolution without sending mail.
+	DryRun bool `toml:"dry_run"`
+
+	// v1.0 block C: GDPR-shaped IP-stripping option (FR59). When true,
+	// the resolved client IP is omitted from all log lines for this
+	// endpoint. Rate-limit keying is unaffected — IP is still computed
+	// internally; it just doesn't reach the log surface.
+	StripClientIP bool `toml:"strip_client_ip"`
+
+	// v1.0 block C: CSRF (FR57, ADR-16). When CSRFSecret is non-empty,
+	// the handler requires a `_csrf_token` form field on every form-mode
+	// submission and verifies its HMAC-SHA256 signature against
+	// CSRFSecret. Tokens older than CSRFTokenTTL (default 1h) are
+	// rejected with 403. Form-mode only — api-mode endpoints reject
+	// csrf_secret at parse time.
+	CSRFSecret   string   `toml:"csrf_secret"`
+	CSRFTokenTTL Duration `toml:"csrf_token_ttl"`
 }
 
 // TransportConfig is the polymorphic transport block. Type names a concrete
@@ -169,6 +243,35 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("logging.level: must be one of debug|info|warn|error, got %q", c.Logging.Level)
 	}
 
+	if c.SMTPListener != nil {
+		if err := c.SMTPListener.Validate(); err != nil {
+			return fmt.Errorf("smtp_listener: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Validate runs structural checks on the SMTP listener block. The
+// detailed semantic checks (auth/cert combinations) live in the smtp
+// package's own Validate; here we just confirm required fields are
+// present and the transport block is well-formed.
+func (s *SMTPListenerConfig) Validate() error {
+	if s.Listen == "" {
+		return errors.New("listen is required (e.g., \":2525\")")
+	}
+	if len(s.AllowedSenders) == 0 {
+		return errors.New("allowed_senders: at least one entry required")
+	}
+	if err := s.Transport.Validate(); err != nil {
+		return fmt.Errorf("transport: %w", err)
+	}
+	if s.MaxRecipientsPerSession < 0 {
+		return fmt.Errorf("max_recipients_per_session: must be non-negative, got %d", s.MaxRecipientsPerSession)
+	}
+	if s.IdleTimeout.Std() < 0 {
+		return fmt.Errorf("idle_timeout: must be non-negative, got %v", s.IdleTimeout.Std())
+	}
 	return nil
 }
 
@@ -208,9 +311,78 @@ func (e *EndpointConfig) Validate() error {
 		return fmt.Errorf("transport: %w", err)
 	}
 
+	// FR31: resolve effective auth mode. Empty / unset defaults to form.
+	auth := e.Auth
+	if auth == "" {
+		auth = AuthForm
+	}
+	switch auth {
+	case AuthForm, AuthAPIKey:
+		// valid
+	default:
+		return fmt.Errorf("auth: must be %q or %q, got %q", AuthForm, AuthAPIKey, e.Auth)
+	}
+
+	if auth == AuthAPIKey {
+		// FR33: api-mode requires non-empty api_keys.
+		if len(e.APIKeys) == 0 {
+			return errors.New("api_keys: at least one key required when auth = \"api-key\"")
+		}
+		for i, k := range e.APIKeys {
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("api_keys[%d]: empty key", i)
+			}
+		}
+		// FR32: api-mode rejects form-mode browser defenses at parse time
+		// (ADR-10). Silent ignore would let an operator think they were
+		// protected when they weren't.
+		if e.Honeypot != "" {
+			return errors.New("honeypot: not valid on auth=\"api-key\" endpoints (api-mode is authenticated; browser bot defenses do not apply)")
+		}
+		if e.AllowedOrigins != nil {
+			return errors.New("allowed_origins: not valid on auth=\"api-key\" endpoints (api-mode is authenticated; browser CORS defenses do not apply)")
+		}
+		if e.RedirectSuccess != "" {
+			return errors.New("redirect_success: not valid on auth=\"api-key\" endpoints (servers do not follow redirects in this flow)")
+		}
+		if e.RedirectError != "" {
+			return errors.New("redirect_error: not valid on auth=\"api-key\" endpoints (servers do not follow redirects in this flow)")
+		}
+		if e.CSRFSecret != "" {
+			return errors.New("csrf_secret: not valid on auth=\"api-key\" endpoints (api-mode callers are server-to-server; CSRF defense is form-mode only)")
+		}
+		// FR42: idempotency_cache_size must be positive when set; zero
+		// means "use the default" (handler-side resolution).
+		if e.IdempotencyCacheSize < 0 {
+			return fmt.Errorf("idempotency_cache_size: must be non-negative, got %d", e.IdempotencyCacheSize)
+		}
+	} else {
+		// Form mode: api-mode-only fields must be unset. Catches the
+		// "operator forgot to set auth = api-key" misconfiguration.
+		if e.IdempotencyCacheSize != 0 {
+			return errors.New("idempotency_cache_size: only valid on auth=\"api-key\" endpoints")
+		}
+		if len(e.APIKeys) > 0 {
+			return errors.New("api_keys: must be unset unless auth = \"api-key\"")
+		}
+		// FR57: form-mode CSRF. When csrf_secret is set, validate it
+		// passes the minimum-length check. csrf_token_ttl must be
+		// positive when set; zero means "use the default" at handler-
+		// construction time.
+		if e.CSRFSecret != "" {
+			if err := csrf.ValidateSecret([]byte(e.CSRFSecret)); err != nil {
+				return err
+			}
+		}
+		if e.CSRFTokenTTL.Std() < 0 {
+			return fmt.Errorf("csrf_token_ttl: must be non-negative, got %v", e.CSRFTokenTTL.Std())
+		}
+	}
+
 	// NFR4: explicitly-empty allowed_origins is a misconfiguration.
 	// BurntSushi/toml leaves the slice nil when the key is absent and
 	// returns a non-nil empty slice when the operator wrote `allowed_origins = []`.
+	// (Already rejected above for api-mode; this catches form-mode.)
 	if e.AllowedOrigins != nil && len(e.AllowedOrigins) == 0 {
 		return errors.New("allowed_origins is explicitly empty; either remove the key (to allow all origins) or list at least one origin")
 	}
@@ -227,21 +399,17 @@ func (e *EndpointConfig) Validate() error {
 	return nil
 }
 
-// Validate checks transport configuration for the declared type.
+// Validate checks transport configuration for the declared type. Dispatch
+// is via the transport package's registry — each transport (postmark,
+// resend, mailgun, ses, smtp-out) registers its validator at init.
+// Adding a new transport requires no edits here.
 func (t *TransportConfig) Validate() error {
 	if t.Type == "" {
 		return errors.New("type is required (e.g., \"postmark\")")
 	}
-
-	switch t.Type {
-	case "postmark":
-		apiKey, ok := t.Settings["api_key"].(string)
-		if !ok || apiKey == "" {
-			return errors.New("postmark transport requires settings.api_key")
-		}
-	default:
-		return fmt.Errorf("unknown transport type %q (v1.0 supports: postmark)", t.Type)
+	reg, ok := transport.Lookup(t.Type)
+	if !ok {
+		return transport.UnknownTypeError(t.Type)
 	}
-
-	return nil
+	return reg.Validate(t.Settings)
 }

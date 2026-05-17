@@ -1,0 +1,290 @@
+---
+title: Transactional email from a Cloudflare Worker
+description: A Worker triggers password resets, receipts, or notifications via Posthorn's API mode — with idempotent retries and one place to rotate Postmark keys.
+---
+
+import { Steps, Aside, FileTree, Tabs, TabItem } from '@astrojs/starlight/components';
+
+You have a Cloudflare Worker that needs to send transactional email — password resets, payment receipts, "new sign-in from a new device" notifications, the usual. The Worker's host can't speak SMTP. The naïve fix is calling your provider's API directly from the Worker. The Posthorn fix is calling Posthorn, which calls your provider.
+
+Why the extra hop?
+
+- **One place to configure templates, sender identity, and DNS.** Move from Postmark to Resend later? The Worker doesn't need to know.
+- **One place to rotate provider credentials.** The Worker holds a Posthorn key (scoped to this endpoint). Posthorn holds the Postmark token (scoped to your account). Compromising the Worker doesn't compromise Postmark.
+- **Logs on your infrastructure.** Posthorn emits structured submission logs you can keep, ship to a log aggregator, or grep when something goes wrong. Provider dashboards are nice but they're not yours.
+- **Multiple Workers, one Posthorn.** Each Worker gets its own API key on the same Posthorn instance; rate limits are per-key.
+
+**At the end:** a Worker that POSTs JSON to `/api/transactional` with `Authorization: Bearer <key>` and `Idempotency-Key: <uuid>`, retries safely on transient failure, and never duplicate-sends.
+
+## Prerequisites
+
+- Posthorn running at a reachable URL (see [Deployment → Docker](/deployment/docker/) or [Standalone](/deployment/binary/))
+- A Postmark account with a verified sender signature ([DNS](/security/dns/))
+- A Cloudflare Worker (or any host that speaks HTTPS)
+
+## Walkthrough
+
+<Steps>
+
+1. **Add an API-mode endpoint to `posthorn.toml`.**
+
+   ```toml
+   [[endpoints]]
+   path = "/api/transactional"
+   to = ["fallback@yourdomain.com"]   # used when the request omits to_override
+   from = "YourApp <noreply@yourdomain.com>"
+   auth = "api-key"
+   api_keys = [
+     "${env.WORKER_KEY_PRIMARY}",
+     "${env.WORKER_KEY_BACKUP}",
+   ]
+   required = ["subject_line", "message"]
+   subject = "{{.subject_line}}"
+   body = """
+   {{.message}}
+   """
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+
+   [endpoints.rate_limit]
+   count = 100
+   interval = "1m"
+   ```
+
+   <Aside type="note" title="`from` is endpoint-configured, `to` is per-request">
+   The `from` identity stays in TOML — operators control sender identity for all messages from this endpoint, and a leaked API key can't be used to spoof other senders ([ADR-11](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md)). Per-request recipients come in via the `to_override` field in the JSON body — see step 4. Need different sender identities? Configure separate endpoints, one per identity.
+   </Aside>
+
+   Note what's _not_ in this config:
+
+   - No `honeypot` — there are no humans on this endpoint (would fail config validation anyway)
+   - No `allowed_origins` — Workers don't send `Origin` headers
+   - No `redirect_*` — Workers don't follow redirects
+   - Rate limit is per-key, not per-IP — Cloudflare Workers share egress IPs, so per-IP limiting would conflate every Worker
+
+2. **Generate keys and stage env vars.**
+
+   ```bash
+   export WORKER_KEY_PRIMARY="$(openssl rand -hex 32)"
+   export WORKER_KEY_BACKUP="$(openssl rand -hex 32)"
+   echo "Primary: $WORKER_KEY_PRIMARY"
+   echo "Backup:  $WORKER_KEY_BACKUP"
+   ```
+
+   Add them to Posthorn's `.env`:
+
+   ```bash
+   POSTMARK_API_KEY=your-postmark-server-token
+   WORKER_KEY_PRIMARY=<the primary key from above>
+   WORKER_KEY_BACKUP=<the backup key from above>
+   ```
+
+   Restart Posthorn:
+
+   ```bash
+   docker compose restart posthorn
+   docker compose logs --tail 10 posthorn
+   ```
+
+   Expect:
+
+   ```json
+   {"level":"INFO","msg":"endpoint registered","path":"/api/transactional","transport":"postmark","recipients":1}
+   ```
+
+3. **Set the primary key as a Worker secret.**
+
+   ```bash
+   echo "$WORKER_KEY_PRIMARY" | wrangler secret put POSTHORN_KEY
+   ```
+
+   Set the Posthorn URL as a non-secret variable in `wrangler.toml`:
+
+   ```toml
+   [vars]
+   POSTHORN_URL = "https://posthorn.yourdomain.com"
+   ```
+
+4. **Write the Worker.**
+
+   The pattern: build the JSON body, send with `Idempotency-Key` derived from a stable identifier (order ID, user ID + event timestamp), retry once on 5xx, treat 409 as "already in flight, back off."
+
+   <Tabs>
+     <TabItem label="TypeScript (Module Worker)">
+
+   ```ts
+   // src/index.ts
+   export interface Env {
+     POSTHORN_URL: string;
+     POSTHORN_KEY: string;
+   }
+
+   interface SendArgs {
+     idempotencyKey: string; // stable per logical event (e.g. `order:${orderId}:receipt`)
+     to: string | string[];
+     subject: string;
+     body: string;
+   }
+
+   async function sendTransactional(env: Env, args: SendArgs): Promise<Response> {
+     const body = JSON.stringify({
+       to_override: args.to,
+       subject_line: args.subject,
+       message: args.body,
+     });
+
+     const post = () =>
+       fetch(`${env.POSTHORN_URL}/api/transactional`, {
+         method: "POST",
+         headers: {
+           "Authorization": `Bearer ${env.POSTHORN_KEY}`,
+           "Content-Type": "application/json",
+           "Idempotency-Key": args.idempotencyKey,
+         },
+         body,
+       });
+
+     // One retry on 5xx with a short backoff. 4xx (incl. 409) and 2xx
+     // are final answers — don't retry those.
+     let resp = await post();
+     if (resp.status >= 500) {
+       await new Promise((r) => setTimeout(r, 1000));
+       resp = await post();
+     }
+     return resp;
+   }
+
+   export default {
+     async fetch(req: Request, env: Env): Promise<Response> {
+       // Example trigger: POST /reset-password with {email, resetUrl}
+       const { email, resetUrl } = await req.json();
+
+       const resp = await sendTransactional(env, {
+         // The key is per-logical-event: if the user clicks "send reset
+         // link" three times in 10 seconds, all three Workers fire with
+         // the SAME idempotency key, and only one email leaves Posthorn.
+         idempotencyKey: `reset:${email}:${Math.floor(Date.now() / 60000)}`,
+         to: email,
+         subject: "Reset your password",
+         body: `Click here to reset: ${resetUrl}\n\nLink expires in 1 hour.`,
+       });
+
+       if (resp.ok) {
+         return new Response("sent", { status: 202 });
+       }
+       // 409: somebody else is sending the same email right now. Drop.
+       if (resp.status === 409) {
+         return new Response("already in flight", { status: 202 });
+       }
+       return new Response(`upstream error: ${resp.status}`, { status: 502 });
+     },
+   };
+   ```
+
+     </TabItem>
+     <TabItem label="JavaScript (Service Worker)">
+
+   ```js
+   // worker.js
+   addEventListener("fetch", (event) => {
+     event.respondWith(handle(event.request));
+   });
+
+   async function handle(req) {
+     const { email, resetUrl } = await req.json();
+
+     const body = JSON.stringify({
+       to_override: email,
+       subject_line: "Reset your password",
+       message: `Click here to reset: ${resetUrl}\n\nLink expires in 1 hour.`,
+     });
+
+     const post = () =>
+       fetch(`${POSTHORN_URL}/api/transactional`, {
+         method: "POST",
+         headers: {
+           "Authorization": `Bearer ${POSTHORN_KEY}`,
+           "Content-Type": "application/json",
+           "Idempotency-Key": `reset:${email}:${Math.floor(Date.now() / 60000)}`,
+         },
+         body,
+       });
+
+     let resp = await post();
+     if (resp.status >= 500) {
+       await new Promise((r) => setTimeout(r, 1000));
+       resp = await post();
+     }
+     return resp.ok ? new Response("sent", { status: 202 })
+          : resp.status === 409 ? new Response("already in flight", { status: 202 })
+          : new Response(`upstream error: ${resp.status}`, { status: 502 });
+   }
+   ```
+
+     </TabItem>
+   </Tabs>
+
+   The `to_override` field accepts either a string (single recipient) or an array (multiple recipients). Each address is validated as a syntactic email; bad addresses return 422 and the send is rejected before reaching Postmark.
+
+5. **Deploy and test.**
+
+   ```bash
+   wrangler deploy
+   curl -sS -X POST https://your-worker.workers.dev/ \
+     -H "Content-Type: application/json" \
+     --data '{"email":"you@yourdomain.com","resetUrl":"https://app.example.com/reset/abc123"}'
+   ```
+
+   Expect: HTTP 202 from the Worker, email in your inbox within seconds, structured `submission_sent` log line on Posthorn with `transport_message_id`.
+
+</Steps>
+
+## Choosing an Idempotency-Key
+
+The whole point of the `Idempotency-Key` header is **safe retry**. Pick a key that's stable for "the same logical event" and unique across different events.
+
+Good patterns:
+
+- **Event-scoped:** `order:${orderId}:receipt` — a receipt for an order is sent once, regardless of how many times the order-completion webhook fires
+- **Time-bucketed:** `reset:${userEmail}:${Math.floor(Date.now() / 60000)}` — at most one password reset per user per minute (the bucket length is the rate-limit you want)
+- **Workflow step:** `signup:${userId}:welcome` — a welcome email per user, fired once even if the signup pipeline retries
+
+Bad patterns:
+
+- **Random per request** (`crypto.randomUUID()` generated fresh on each Worker invocation) — every retry gets a new key, idempotency does nothing, duplicates ship
+- **Caller IP** — Cloudflare Workers share egress IPs, you'd collapse independent users
+
+## Key rotation
+
+`api_keys = [...]` accepts multiple values so you can rotate without downtime:
+
+<Steps>
+
+1. **Add the new key alongside the old.** Set both `WORKER_KEY_PRIMARY` (new) and `WORKER_KEY_BACKUP` (old) in Posthorn's `.env`, restart Posthorn. Both keys now work.
+
+2. **Switch the Worker.** `wrangler secret put POSTHORN_KEY` with the new key. The Worker now sends with the new key; Posthorn accepts it.
+
+3. **Remove the old key.** Drop `WORKER_KEY_BACKUP` from `.env`, restart Posthorn. The old key stops working. Done — no requests dropped.
+
+</Steps>
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 401` from every Worker request | `Authorization` header missing or scheme wrong | Must be exactly `Authorization: Bearer <key>` (case-insensitive on `Bearer`, exact match on the key) |
+| `HTTP 415` on Worker request | Worker sent `Content-Type: text/plain` or omitted the header | Set `Content-Type: application/json` explicitly |
+| `HTTP 400 nested objects not supported` | JSON body has `{"user": {"name": "x"}}` | Flatten at the Worker (`{"user_name": "x"}`); nested object support is a post-v1.0 shape |
+| Duplicate emails when Worker retries | Idempotency-Key is random per attempt instead of stable per event | Derive the key from the logical event identifier, not from request attempt |
+| `HTTP 409` on concurrent retries | Two retries of the same logical event raced (e.g. a webhook fired twice with no backoff) | Add jittered backoff on the retry path; 409 means "the first one is still processing" |
+| Worker key shows up in your logs | Logging the failed-request body before sending | Posthorn never logs the matched key, but a Worker that logs its request body will. Audit your Worker logging. |
+
+## Where to go next
+
+- [API mode reference](/features/api-mode/) — the full feature page (auth, JSON shape, idempotency semantics)
+- [TOML reference](/configuration/reference/) — every config field
+- [Roadmap](/roadmap/) — v2 brings durable idempotency across restarts and per-event lifecycle webhooks

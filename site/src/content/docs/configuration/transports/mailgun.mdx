@@ -1,0 +1,78 @@
+---
+title: Mailgun
+description: Mailgun HTTP API transport — HTTP Basic auth, multipart body, US and EU regions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "mailgun"
+
+[endpoints.transport.settings]
+api_key = "${env.MAILGUN_API_KEY}"
+domain = "mg.yourdomain.com"
+```
+
+## Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `api_key` | yes | Mailgun account API key. Used as HTTP Basic password (username is the literal string `api`). |
+| `domain` | yes | Mailgun sending domain (e.g., `mg.yourdomain.com`). Appears in the API path as `/v3/<domain>/messages`. |
+| `base_url` | no | API host override. Default is `https://api.mailgun.net`. Set to `https://api.eu.mailgun.net` for the EU region. |
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `POST https://api.mailgun.net/v3/<domain>/messages` (or EU equivalent) |
+| Authentication | HTTP Basic — username `api`, password = `api_key` |
+| Body format | `multipart/form-data` (constructed via `mime/multipart.Writer`) |
+| Recipients | Repeated `to` fields, one per recipient |
+| Reply-To | Mailgun's `h:Reply-To` custom-header convention |
+| Per-request timeout | 5s (transport-level) |
+| `transport_message_id` | Parsed from response `id` field (Mailgun returns `<msg-id@yourdomain.com>` shape) |
+
+## Region selection
+
+Mailgun has separate US and EU infrastructures. Operator picks via `base_url`:
+
+```toml
+[endpoints.transport.settings]
+api_key = "${env.MAILGUN_API_KEY}"
+domain = "mg.yourdomain.com"
+base_url = "https://api.eu.mailgun.net"   # EU region
+```
+
+The API keys are region-scoped — a US-region key won't work against the EU endpoint and vice versa.
+
+## Error classification
+
+| Mailgun response | Error class | Retry? |
+|---|---|---|
+| `200 OK` | (success) | no |
+| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`400`, `401`, `403`) | `ErrTerminal` | no |
+
+Mailgun's error body is `{"message": "..."}` — Posthorn surfaces this in terminal-failure logs.
+
+## DNS prerequisites
+
+- **SPF** authorizing Mailgun (`include:mailgun.org`)
+- **DKIM** record published from Mailgun's dashboard
+- **MX** records for inbound (only if you also use Mailgun's inbound routing — not relevant for outbound-only Posthorn deployments)
+
+<Aside type="caution">
+Mailgun's free / sandbox tier only sends to **authorized recipients** added manually in the dashboard. If you're getting 4xx responses for legitimate recipients during early setup, that's the sandbox restriction — add a payment method or move to the paid tier.
+</Aside>
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 401 Unauthorized` | Wrong region (US key against EU endpoint or vice versa) | Verify the API key matches `base_url`'s region |
+| `HTTP 400 'from' parameter is not a valid address` | Mailgun's parser is strict about display-name + address formats | Use `Name <addr@domain>` form; avoid extra quoting |
+| 5xx during high-volume sending bursts | Mailgun rate-limits per-domain — Posthorn's 429 retry handles short bursts | If sustained, tune the operator-side rate limit or upgrade Mailgun plan |
+| Recipients in sandbox restriction | Free tier, recipient not in authorized list | Add recipient in Mailgun dashboard or upgrade |

@@ -87,8 +87,10 @@ type postmarkRequest struct {
 }
 
 // postmarkResponse captures the fields we read from Postmark's JSON reply.
-// Other fields (MessageID, SubmittedAt, etc.) are intentionally ignored.
+// MessageID is present on 200 success bodies; ErrorCode and Message are
+// present on error bodies. SubmittedAt is intentionally ignored.
 type postmarkResponse struct {
+	MessageID string `json:"MessageID"`
 	ErrorCode int    `json:"ErrorCode"`
 	Message   string `json:"Message"`
 }
@@ -102,7 +104,7 @@ type postmarkResponse struct {
 //	5xx        → ErrTransient
 //	4xx (other)→ ErrTerminal
 //	network/timeout/ctx → ErrTransient (caller will retry once)
-func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
+func (p *PostmarkTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
 	body := postmarkRequest{
 		From:     msg.From,
 		To:       strings.Join(msg.To, ", "),
@@ -114,7 +116,7 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		// json.Marshal of a struct with only string/[]string fields cannot
 		// fail in practice; if it ever does, treat as terminal.
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTerminal,
 			Cause:   err,
 			Message: "encode postmark request",
@@ -123,7 +125,7 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+postmarkSendPath, bytes.NewReader(buf))
 	if err != nil {
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTerminal,
 			Cause:   err,
 			Message: "build postmark request",
@@ -137,7 +139,7 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
 	if err != nil {
 		// DNS failure, connection refused, context cancel/deadline,
 		// or client timeout. All map to transient.
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTransient,
 			Cause:   err,
 			Message: "postmark request failed",
@@ -149,24 +151,24 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
 
 	switch {
 	case resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusAccepted:
-		return nil
+		return SendResult{MessageID: postmarkMessageID(respBody)}, nil
 
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrRateLimited,
 			Status:  resp.StatusCode,
 			Message: postmarkErrorMessage(respBody, "postmark rate limit"),
 		}
 
 	case resp.StatusCode >= 500:
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTransient,
 			Status:  resp.StatusCode,
 			Message: postmarkErrorMessage(respBody, "postmark server error"),
 		}
 
 	case resp.StatusCode >= 400:
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTerminal,
 			Status:  resp.StatusCode,
 			Message: postmarkErrorMessage(respBody, "postmark rejected request"),
@@ -174,12 +176,23 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) error {
 
 	default:
 		// 1xx, 3xx, anything else unexpected.
-		return &TransportError{
+		return SendResult{}, &TransportError{
 			Class:   ErrTerminal,
 			Status:  resp.StatusCode,
 			Message: fmt.Sprintf("unexpected postmark status %d", resp.StatusCode),
 		}
 	}
+}
+
+// postmarkMessageID extracts MessageID from a 200/202 response body. Returns
+// "" on any parse failure — a missing message ID degrades logging but must
+// never fail the send (Postmark already accepted the message).
+func postmarkMessageID(body []byte) string {
+	var resp postmarkResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return ""
+	}
+	return resp.MessageID
 }
 
 // postmarkErrorMessage extracts the Message field from a Postmark error
@@ -197,3 +210,31 @@ func postmarkErrorMessage(body []byte, fallback string) string {
 }
 
 var _ Transport = (*PostmarkTransport)(nil)
+
+// Registry registration. Lets the config layer dispatch validation and
+// construction without hardcoding "postmark" — see registry.go.
+func init() {
+	Register(Registration{
+		Type:     "postmark",
+		Validate: validatePostmarkSettings,
+		Build:    buildPostmarkFromSettings,
+	})
+}
+
+func validatePostmarkSettings(settings map[string]any) error {
+	apiKey, ok := settings["api_key"].(string)
+	if !ok || apiKey == "" {
+		return fmt.Errorf("postmark transport requires settings.api_key")
+	}
+	return nil
+}
+
+func buildPostmarkFromSettings(settings map[string]any) (Transport, error) {
+	apiKey, _ := settings["api_key"].(string)
+	if apiKey == "" {
+		return nil, fmt.Errorf("postmark: api_key is empty")
+	}
+	// base_url is a test-only escape hatch — production never sets it.
+	baseURL, _ := settings["base_url"].(string)
+	return NewPostmarkTransport(apiKey, baseURL), nil
+}

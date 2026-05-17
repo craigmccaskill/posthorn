@@ -51,7 +51,18 @@ export default defineConfig({
             { label: 'TOML reference', slug: 'configuration/reference' },
             { label: 'Endpoints', slug: 'configuration/endpoints' },
             { label: 'Environment variables', slug: 'configuration/environment-variables' },
-            { label: 'Transports', slug: 'configuration/transports' },
+            {
+              label: 'Transports',
+              collapsed: true,
+              items: [
+                { label: 'Overview', slug: 'configuration/transports' },
+                { label: 'Postmark', slug: 'configuration/transports/postmark' },
+                { label: 'Resend', slug: 'configuration/transports/resend' },
+                { label: 'Mailgun', slug: 'configuration/transports/mailgun' },
+                { label: 'AWS SES', slug: 'configuration/transports/ses' },
+                { label: 'Outbound SMTP', slug: 'configuration/transports/smtp' },
+              ],
+            },
           ],
         },
         {
@@ -71,6 +82,8 @@ export default defineConfig({
             { label: 'Templating', slug: 'features/templating' },
             { label: 'Retry policy', slug: 'features/retry-policy' },
             { label: 'Structured logging', slug: 'features/logging' },
+            { label: 'API mode', slug: 'features/api-mode' },
+            { label: 'SMTP ingress', slug: 'features/smtp-ingress' },
           ],
         },
         {
@@ -80,6 +93,7 @@ export default defineConfig({
             { label: 'Newsletter signup notification', slug: 'recipes/newsletter-signup' },
             { label: 'Multi-form site', slug: 'recipes/multi-form-site' },
             { label: 'Monitoring alerts via webhook', slug: 'recipes/monitoring-alerts' },
+            { label: 'Transactional email from a Cloudflare Worker', slug: 'recipes/cloudflare-worker' },
           ],
         },
         {

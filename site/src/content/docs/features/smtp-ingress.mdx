@@ -1,0 +1,119 @@
+---
+title: SMTP ingress
+description: A TCP listener that accepts SMTP from internal apps (Ghost, Gitea, legacy on-prem systems) and forwards messages via Posthorn's configured outbound transport.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The SMTP ingress lets internal apps that speak SMTP — Ghost's admin login, Gitea's notifications, anything that natively talks to a mail server — point at Posthorn instead of a real SMTP server. Posthorn authenticates the client, parses the message, and forwards it via the same outbound transport you already configured (Postmark, Resend, Mailgun, SES, outbound-SMTP). Posthorn is **not** a mail server — it doesn't host mailboxes, doesn't act as an MX, doesn't do inbound spam filtering. It's an authenticated relay for known internal clients only.
+
+The canonical use case: a self-hosted app on a homelab can't reach the public SMTP ports (25/465/587 blocked by the cloud provider), but it can reach a Posthorn instance you also run. Posthorn relays the message out via Postmark's HTTP API. The app keeps speaking SMTP — it never knows the difference.
+
+## Configuration
+
+```toml
+[smtp_listener]
+listen          = ":2525"
+require_tls     = true
+tls_cert        = "/etc/posthorn/cert.pem"
+tls_key         = "/etc/posthorn/key.pem"
+auth_required   = "smtp-auth"          # smtp-auth | client-cert | either
+allowed_senders = ["*@yourdomain.com"]
+max_recipients_per_session = 10
+max_message_size = "1MB"
+idle_timeout    = "60s"
+
+[[smtp_listener.smtp_users]]
+username = "ghost"
+password = "${env.GHOST_SMTP_PASSWORD}"
+
+[[smtp_listener.smtp_users]]
+username = "gitea"
+password = "${env.GITEA_SMTP_PASSWORD}"
+
+[smtp_listener.transport]
+type = "postmark"
+
+[smtp_listener.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+The SMTP listener has its own `[smtp_listener.transport]` block, separate from `[[endpoints]]`. One SMTP listener = one outbound transport (multi-tenant routing by RCPT is v2 territory; see [ADR-13](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log)).
+
+## Open-relay prevention
+
+Posthorn refuses to relay arbitrary mail. Every accepted message must clear all of:
+
+1. **Authentication** — either SMTP AUTH PLAIN against `smtp_users`, or a TLS client certificate signed by `client_cert_ca`. `auth_required = "either"` accepts both.
+2. **STARTTLS** — when `require_tls = true` (default), clients can't send AUTH or MAIL until they've upgraded to TLS.
+3. **Sender allowlist** — `allowed_senders` is required. Entries can be exact addresses or `*@domain` wildcards. `*` allows any sender (only do this with strong auth).
+4. **Recipient bound** — either `allowed_recipients` (allowlist) or `max_recipients_per_session` (cap, default 10). Both protect against RCPT bombing.
+5. **Size cap** — `max_message_size` (default 1MB). DATA blobs exceeding this return `552 5.3.4`.
+
+| Defense | Failure response |
+|---|---|
+| AUTH not yet completed | `530 5.7.0 Authentication required` |
+| AUTH failed | `535 5.7.8 Authentication failed` |
+| STARTTLS required but not done | `530 5.7.0 Must issue STARTTLS first` |
+| Sender not in allowlist | `550 5.7.1 Sender not authorized` |
+| Recipient not in allowlist | `550 5.7.1 Recipient not authorized` |
+| Recipient cap exceeded | `452 4.5.3 Too many recipients` |
+| Message too big | `552 5.3.4 Message too big` |
+
+## Recipients come from the envelope, never the MIME
+
+A subtle but important invariant ([NFR22](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)): the outbound message's recipients come from the SMTP `RCPT TO` commands, **never** from the MIME `To:`/`Cc:`/`Bcc:` headers. A malicious client that sent:
+
+```
+RCPT TO:<alice@example.com>
+DATA
+From: legitimate@yourdomain.com
+To: alice@example.com
+Bcc: attacker@target.com
+Subject: hi
+...
+```
+
+would have `attacker@target.com` ignored entirely. Posthorn relays only to `alice@example.com` because that's the only RCPT TO. The smuggled `Bcc` header lands in the parsed headers map and is discarded.
+
+## Wiring up Ghost
+
+Ghost (and most modern web apps) configure SMTP via four environment variables or config keys:
+
+```bash
+mail__from='"Ghost" <noreply@yourdomain.com>'
+mail__transport=SMTP
+mail__options__host=posthorn.yourdomain.com
+mail__options__port=2525
+mail__options__secure=false          # using STARTTLS, not implicit TLS
+mail__options__auth__user=ghost
+mail__options__auth__pass="$GHOST_SMTP_PASSWORD"
+```
+
+Match `mail__options__auth__user` to a `[[smtp_listener.smtp_users]]` username, `mail__options__auth__pass` to its password, and Ghost's `mail__from` address must match the Posthorn `allowed_senders` allowlist.
+
+## What doesn't work yet
+
+- **HTML-only message bodies.** Posthorn requires a `text/plain` part (either standalone or inside a multipart/alternative). HTML-only messages are rejected with `550 5.6.0`. HTML body support is v2 scope.
+- **File attachments.** Multipart messages with attachments parse successfully, but only the text/plain part reaches the outbound transport — attachments are dropped. Attachment support is v2 scope.
+- **Per-RCPT routing.** One SMTP listener has one outbound transport. Routing different recipients to different upstream providers is v2 territory.
+
+## Observability
+
+The SMTP listener emits structured log lines for the full session lifecycle:
+
+```
+smtp_session_open       — connection accepted
+smtp_tls_established    — STARTTLS upgrade completed
+smtp_auth_ok            — AUTH PLAIN succeeded (includes `user` field)
+smtp_auth_failed        — AUTH PLAIN rejected (includes `user`; password never logged)
+smtp_sender_rejected    — MAIL FROM not in allowlist
+smtp_recipient_rejected — RCPT TO not in allowlist
+smtp_submission_sent    — DATA delivered to upstream transport (with submission_id, transport_message_id, size_bytes)
+smtp_submission_failed  — upstream transport failed
+smtp_session_close      — connection closed
+```
+
+Each line carries a per-session `session_id` UUID so operators can trace a single connection through the protocol exchange.
+
+The `/metrics` endpoint exposes the same `posthorn_submissions_sent_total` / `posthorn_submissions_failed_total` counters with `endpoint = "smtp_listener"` so operators can split inbound-via-HTTP from inbound-via-SMTP traffic in Prometheus.

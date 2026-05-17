@@ -53,23 +53,57 @@ func goodMessage() Message {
 }
 
 func TestPostmark_Success_200(t *testing.T) {
-	cs := newCaptureServer(t, http.StatusOK, `{"ErrorCode":0,"Message":"OK","MessageID":"x"}`)
+	cs := newCaptureServer(t, http.StatusOK, `{"ErrorCode":0,"Message":"OK","MessageID":"abc-123"}`)
 	tp := NewPostmarkTransport("test-key", cs.URL)
 
-	if err := tp.Send(context.Background(), goodMessage()); err != nil {
+	result, err := tp.Send(context.Background(), goodMessage())
+	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if cs.hits != 1 {
 		t.Errorf("hits = %d, want 1", cs.hits)
 	}
+	if result.MessageID != "abc-123" {
+		t.Errorf("MessageID = %q, want %q", result.MessageID, "abc-123")
+	}
 }
 
 func TestPostmark_Success_202(t *testing.T) {
-	cs := newCaptureServer(t, http.StatusAccepted, `{"ErrorCode":0,"Message":"Accepted"}`)
+	cs := newCaptureServer(t, http.StatusAccepted, `{"ErrorCode":0,"Message":"Accepted","MessageID":"queued-42"}`)
 	tp := NewPostmarkTransport("test-key", cs.URL)
 
-	if err := tp.Send(context.Background(), goodMessage()); err != nil {
+	result, err := tp.Send(context.Background(), goodMessage())
+	if err != nil {
 		t.Fatalf("Send: %v", err)
+	}
+	if result.MessageID != "queued-42" {
+		t.Errorf("MessageID = %q, want %q", result.MessageID, "queued-42")
+	}
+}
+
+// TestPostmark_Success_NoMessageID covers the defensive degradation: when the
+// response body lacks a MessageID (or fails to parse), Send still succeeds —
+// Postmark accepted the message, so a missing ID only degrades logging.
+func TestPostmark_Success_NoMessageID(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		respBody string
+	}{
+		{"empty_object", `{}`},
+		{"missing_field", `{"ErrorCode":0,"Message":"OK"}`},
+		{"unparseable", `not-json`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := newCaptureServer(t, http.StatusOK, tt.respBody)
+			tp := NewPostmarkTransport("k", cs.URL)
+			result, err := tp.Send(context.Background(), goodMessage())
+			if err != nil {
+				t.Fatalf("Send: %v", err)
+			}
+			if result.MessageID != "" {
+				t.Errorf("MessageID = %q, want empty", result.MessageID)
+			}
+		})
 	}
 }
 
@@ -84,7 +118,7 @@ func TestPostmark_RequestShape(t *testing.T) {
 		Subject:  "Subj",
 		BodyText: "Hello",
 	}
-	if err := tp.Send(context.Background(), msg); err != nil {
+	if _, err := tp.Send(context.Background(), msg); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -131,7 +165,7 @@ func TestPostmark_OmitsEmptyReplyTo(t *testing.T) {
 
 	msg := goodMessage()
 	msg.ReplyTo = ""
-	if err := tp.Send(context.Background(), msg); err != nil {
+	if _, err := tp.Send(context.Background(), msg); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -148,7 +182,7 @@ func TestPostmark_5xx_Transient(t *testing.T) {
 			cs := newCaptureServer(t, status, `{"ErrorCode":500,"Message":"Server is having a bad day"}`)
 			tp := NewPostmarkTransport("k", cs.URL)
 
-			err := tp.Send(context.Background(), goodMessage())
+			_, err := tp.Send(context.Background(), goodMessage())
 			var te *TransportError
 			if !errors.As(err, &te) {
 				t.Fatalf("not a *TransportError: %v", err)
@@ -170,7 +204,7 @@ func TestPostmark_429_RateLimited(t *testing.T) {
 	cs := newCaptureServer(t, http.StatusTooManyRequests, `{"ErrorCode":429,"Message":"Rate limit hit"}`)
 	tp := NewPostmarkTransport("k", cs.URL)
 
-	err := tp.Send(context.Background(), goodMessage())
+	_, err := tp.Send(context.Background(), goodMessage())
 	var te *TransportError
 	if !errors.As(err, &te) {
 		t.Fatalf("not a *TransportError: %v", err)
@@ -190,7 +224,7 @@ func TestPostmark_4xx_Terminal(t *testing.T) {
 			cs := newCaptureServer(t, status, `{"ErrorCode":10,"Message":"Bad request"}`)
 			tp := NewPostmarkTransport("k", cs.URL)
 
-			err := tp.Send(context.Background(), goodMessage())
+			_, err := tp.Send(context.Background(), goodMessage())
 			var te *TransportError
 			if !errors.As(err, &te) {
 				t.Fatalf("not a *TransportError: %v", err)
@@ -214,7 +248,7 @@ func TestPostmark_NetworkError_Transient(t *testing.T) {
 	cs.Close() // immediately close so dialing the URL fails
 
 	tp := NewPostmarkTransport("k", url)
-	err := tp.Send(context.Background(), goodMessage())
+	_, err := tp.Send(context.Background(), goodMessage())
 
 	var te *TransportError
 	if !errors.As(err, &te) {
@@ -244,7 +278,7 @@ func TestPostmark_ContextDeadline_Transient(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	err := tp.Send(ctx, goodMessage())
+	_, err := tp.Send(ctx, goodMessage())
 	elapsed := time.Since(start)
 
 	var te *TransportError
@@ -358,7 +392,7 @@ func TestPostmark_NoHeaderInjection(t *testing.T) {
 			cs := newCaptureServer(t, http.StatusOK, `{}`)
 			tp := NewPostmarkTransport("k", cs.URL)
 
-			if err := tp.Send(context.Background(), tt.message); err != nil {
+			if _, err := tp.Send(context.Background(), tt.message); err != nil {
 				t.Fatalf("Send: %v", err)
 			}
 
@@ -418,7 +452,7 @@ func TestPostmark_APIKeyNotInURLOrBody(t *testing.T) {
 	const apiKey = "very-secret-token-do-not-leak"
 	tp := NewPostmarkTransport(apiKey, cs.URL)
 
-	if err := tp.Send(context.Background(), goodMessage()); err != nil {
+	if _, err := tp.Send(context.Background(), goodMessage()); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 
@@ -475,7 +509,7 @@ func TestPostmark_UnexpectedStatus_Terminal(t *testing.T) {
 	cs := newCaptureServer(t, http.StatusMultipleChoices, `{}`)
 	tp := NewPostmarkTransport("k", cs.URL)
 
-	err := tp.Send(context.Background(), goodMessage())
+	_, err := tp.Send(context.Background(), goodMessage())
 	var te *TransportError
 	if !errors.As(err, &te) {
 		t.Fatalf("not a *TransportError: %v", err)

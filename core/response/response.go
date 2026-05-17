@@ -38,6 +38,27 @@ type Success struct {
 	SubmissionID string `json:"submission_id"`
 }
 
+// DryRun is the JSON envelope returned on 200 when the endpoint has
+// dry_run = true (FR56). The PreparedMessage shows what would have been
+// passed to transport.Send so operators can debug template rendering
+// and recipient resolution without sending mail.
+type DryRun struct {
+	Status          string         `json:"status"`
+	SubmissionID    string         `json:"submission_id"`
+	PreparedMessage PreparedMessage `json:"prepared_message"`
+}
+
+// PreparedMessage mirrors transport.Message but lives in this package
+// to avoid a circular import (transport doesn't depend on response).
+// Fields match transport.Message byte-for-byte.
+type PreparedMessage struct {
+	From     string   `json:"from"`
+	To       []string `json:"to"`
+	ReplyTo  string   `json:"reply_to,omitempty"`
+	Subject  string   `json:"subject"`
+	BodyText string   `json:"body_text"`
+}
+
 // WriteJSON writes body as JSON with the given status code.
 //
 // Errors from json.Encode are logged-and-ignored intentionally: at this

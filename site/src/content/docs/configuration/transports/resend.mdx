@@ -1,0 +1,64 @@
+---
+title: Resend
+description: Resend HTTP API transport — Bearer auth, JSON body, modern developer experience.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "resend"
+
+[endpoints.transport.settings]
+api_key = "${env.RESEND_API_KEY}"
+```
+
+## Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `api_key` | yes | Resend API key. Found at [resend.com/api-keys](https://resend.com/api-keys). |
+| `base_url` | no | Override the API endpoint. Test-only escape hatch. |
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `POST https://api.resend.com/emails` |
+| Authentication | `Authorization: Bearer <api_key>` |
+| Body format | JSON (Resend's structured fields: `from`, `to`, `subject`, `text`, `reply_to`) |
+| Per-request timeout | 5s (transport-level) |
+| Connection reuse | Shared `*http.Client` per process |
+| `transport_message_id` | Parsed from response `id` field |
+
+## Error classification
+
+| Resend response | Error class | Retry? |
+|---|---|---|
+| `200 OK` | (success) | no |
+| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| Network timeout / connection refused | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`400`, `401`, `403`, `422`) | `ErrTerminal` | no |
+
+Resend's error body shape is `{"statusCode": N, "message": "...", "name": "ErrorType"}`. Posthorn surfaces the `message` field in the terminal-failure log line and in 502 response detail (operator-visible) when the operator's logging level surfaces it.
+
+## DNS prerequisites
+
+Same shape as any HTTP-API transport:
+
+- **SPF** authorizing Resend (`include:_spf.resend.com` per Resend's wizard)
+- **DKIM** record from Resend's domain-verification flow
+- Optional **DMARC** alignment
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 422 The from address does not match a verified domain` | Sender domain not verified in Resend | resend.com/domains → verify the domain |
+| `HTTP 403` early in adoption | Resend's anti-abuse holds new accounts; sandbox-style restrictions | Contact Resend support to release production sending |
+| Messages route to recipient's spam | DKIM not deployed yet | DNS propagation can take an hour; Resend's verifier confirms when it's live |
+
+<Aside type="note">
+Resend is younger than Postmark and Mailgun, so reputation building may take longer. For high-stakes transactional sends in the first few weeks, consider warming up gradually.
+</Aside>

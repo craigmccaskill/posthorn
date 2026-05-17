@@ -1,0 +1,67 @@
+---
+title: Postmark
+description: Postmark HTTP API transport — Posthorn's recommended default. X-Postmark-Server-Token auth, JSON body, strong deliverability.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "postmark"
+
+[endpoints.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+## Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `api_key` | yes | Postmark **server token** (per-server, not per-account). Found in Postmark dashboard → Server → API Tokens. |
+| `base_url` | no | Override the API endpoint. Test-only escape hatch; production never sets this. |
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `POST https://api.postmarkapp.com/email` |
+| Authentication | `X-Postmark-Server-Token: <api_key>` header |
+| Body format | JSON (structured fields: `From`, `To`, `Subject`, `TextBody`, `ReplyTo`) |
+| Per-request timeout | 5s (transport-level) |
+| Connection reuse | One `*http.Client` per process, HTTP/2 with connection pool |
+| `transport_message_id` | Parsed from response `MessageID` field |
+
+## Error classification
+
+| Postmark response | Error class | Retry? |
+|---|---|---|
+| `200 OK` or `202 Accepted` | (success) | no |
+| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| Network timeout / connection refused | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`401`, `422`, etc.) | `ErrTerminal` | no |
+
+Sender-not-verified errors (typical 422) are common during operator onboarding — verify the sender signature in Postmark before sending, or expect terminal failures with the upstream Message field surfaced in the `submission_failed` log line.
+
+## DNS prerequisites
+
+For mail to actually deliver:
+
+- **SPF** record on your sending domain authorizing Postmark
+- **DKIM** record published from Postmark's dashboard
+- **Return-Path** custom domain (recommended)
+
+Posthorn doesn't manage any of this — Postmark's setup wizard walks through it. See [DNS](/security/dns/) for the cross-provider details.
+
+<Aside type="tip">
+Postmark's server token (per-server, starts with a UUID-shape) is distinct from the account API token. Posthorn needs the server token. Posting with the account token returns 401.
+</Aside>
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 401` every send | Using account-level token instead of server token | Postmark dashboard → server → API Tokens |
+| `HTTP 422 Sender signature not confirmed` | Sender domain DKIM/SPF not set up | Complete Postmark's DNS wizard before going live |
+| `HTTP 422 Email address not allowed` | Sandbox mode (Postmark gates outbound until you verify) | Request production access in dashboard |
+| Mail goes to recipient spam | Authentication-Results headers show DKIM/SPF fail | Check DNS records; Postmark's dashboard has a verifier |

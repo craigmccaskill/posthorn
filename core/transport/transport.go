@@ -24,14 +24,31 @@ type Message struct {
 	BodyText string
 }
 
+// SendResult is the per-call metadata returned from a successful Send.
+//
+// MessageID is the upstream provider's identifier for the message — e.g.,
+// Postmark's response.MessageID, SES's MessageId, Mailgun's id. Posthorn
+// surfaces it in the submission_sent log so an operator triaging a missing
+// email can grep posthorn logs for the submission UUID and jump straight
+// to the provider's UI to inspect delivery state.
+//
+// Empty when the transport doesn't expose a message ID, when parsing it
+// failed (a non-fatal degradation), or on transports that haven't grown
+// the support yet.
+type SendResult struct {
+	MessageID string
+}
+
 // Transport sends a Message. v1.0 ships one implementation (Postmark);
 // the interface exists so Resend, Mailgun, SES, and outbound SMTP can
 // be added in v1.1+ without touching handler logic or config schema (FR4).
 //
 // Implementations MUST return a *TransportError on failure so the handler
 // can classify retries (FR18-20). Returning a bare error is a contract bug.
+// On success, implementations SHOULD populate SendResult.MessageID when the
+// upstream provider exposes one; an empty MessageID is acceptable.
 type Transport interface {
-	Send(ctx context.Context, msg Message) error
+	Send(ctx context.Context, msg Message) (SendResult, error)
 }
 
 // ErrorClass classifies transport errors for the retry policy.

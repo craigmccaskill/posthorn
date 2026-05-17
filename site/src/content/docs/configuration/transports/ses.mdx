@@ -1,0 +1,99 @@
+---
+title: AWS SES
+description: Amazon SES transport — SigV4 authentication, JSON body, region-scoped endpoints. Bespoke SigV4 implementation (no AWS SDK).
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "ses"
+
+[endpoints.transport.settings]
+access_key_id     = "${env.AWS_ACCESS_KEY_ID}"
+secret_access_key = "${env.AWS_SECRET_ACCESS_KEY}"
+region            = "us-east-1"
+```
+
+## Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `access_key_id` | yes | AWS access key ID (operator-facing identifier; e.g., `AKIA...`). Appears in the SigV4 Authorization header. |
+| `secret_access_key` | yes | AWS secret access key. Used as the signing secret. **Never sent on the wire; never logged.** |
+| `region` | yes | AWS region (e.g., `us-east-1`, `eu-west-1`). SES is region-scoped; the endpoint is per-region. |
+| `base_url` | no | Endpoint override. Default is `https://email.<region>.amazonaws.com`. Test-only escape hatch. |
+
+## IAM permissions
+
+The IAM user or role whose credentials you configure needs:
+
+```
+ses:SendEmail (or ses:SendRawEmail; SendEmail covers our v1.0 surface)
+```
+
+scoped to the verified sender identities in the account. A minimal policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["ses:SendEmail"],
+    "Resource": ["arn:aws:ses:us-east-1:<account-id>:identity/yourdomain.com"]
+  }]
+}
+```
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `POST https://email.<region>.amazonaws.com/v2/email/outbound-emails` |
+| Authentication | AWS SigV4 (bespoke implementation; no AWS SDK) — see [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) and [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) |
+| Body format | JSON (SESv2 `SendEmail` shape: `FromEmailAddress`, `Destination.ToAddresses`, `Content.Simple.Subject.Data`, `Content.Simple.Body.Text.Data`) |
+| Per-request timeout | 5s (transport-level) |
+| `transport_message_id` | Parsed from response `MessageId` field |
+
+## Error classification
+
+| SES response | Error class | Retry? |
+|---|---|---|
+| `200 OK` | (success) | no |
+| `429 Too Many Requests` (Throttling) | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`MessageRejected`, `MailFromDomainNotVerified`, etc.) | `ErrTerminal` | no |
+
+SES error responses come in two shapes (`{"__type": "...", "message": "..."}` and `{"Message": "..."}`); Posthorn checks both.
+
+## Sandbox restriction
+
+New SES accounts start in **sandbox mode**, which restricts sending to verified recipients. Production access requires a service-limit increase request:
+
+- AWS console → SES → Account dashboard → "Request production access"
+- Fill the form (use case, opt-in process, bounce handling)
+- Approval typically 24–48 hours
+
+In sandbox, sending to an unverified recipient returns `MessageRejected: Email address is not verified` → `ErrTerminal`.
+
+## DNS prerequisites
+
+SES requires you to **verify the sender identity** in your AWS account — either:
+
+- **Domain identity** — DKIM CNAMEs published from AWS console; SPF via `include:amazonses.com`. Recommended.
+- **Email-address identity** — per-address verification email. Easier for one-off senders but doesn't scale.
+
+The IAM policy above must scope to the verified identity ARN.
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `4xx MessageRejected: Email address not verified` | Sandbox mode + unverified recipient | Request production access, or verify the test recipient first |
+| `403 SignatureDoesNotMatch` | Clock skew — SigV4 timestamps must be within 15 minutes of AWS's clock | Sync the Posthorn host's clock (NTP) |
+| `403 InvalidClientTokenId` | Access key ID wrong, or IAM user disabled | Check key in AWS console; rotate if compromised |
+| Mail goes to recipient's spam | DKIM CNAMEs not published, or DMARC alignment wrong | Verify DKIM via AWS console's verifier; publish DMARC `p=none` initially |
+
+<Aside type="tip">
+SES SigV4 is the most complex auth scheme of any Posthorn transport. The implementation lives in `core/transport/awssigv4.go` and is shared with any future AWS-signed transport (S3 storage in v2, SNS in v2). See [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) for the bespoke-vs-SDK reasoning.
+</Aside>
