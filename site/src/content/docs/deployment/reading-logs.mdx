@@ -1,0 +1,226 @@
+---
+title: Reading the logs
+description: Where Posthorn's structured JSON logs go, and how to read them across Docker, systemd, the standalone binary, and Kubernetes.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Posthorn writes structured JSON logs to **stdout**. Nothing is written to disk by Posthorn itself — every deployment shape catches stdout differently, and your platform handles rotation, retention, and shipping.
+
+This page is the operator-facing companion to the [log format reference](/reference/log-format/). If you want to know *what* Posthorn emits, read that. If you want to know *where to find it* and *how to query it*, you're in the right place.
+
+<Aside type="note">
+**Submission IDs thread through every log line.** Every per-request event carries the same UUIDv4 `submission_id`. SMTP-ingress events carry `session_id`. Grep one ID and you get the full lifecycle of one request or session.
+</Aside>
+
+## Per deployment shape
+
+<Tabs syncKey="deployment">
+
+<TabItem label="Docker Compose">
+
+```bash
+# Live tail
+docker compose logs -f posthorn
+
+# Last 100 lines
+docker compose logs --tail 100 posthorn
+
+# Since a wall-clock time
+docker compose logs --since 1h posthorn
+docker compose logs --since 2026-05-16T18:00:00 posthorn
+
+# Time-stamped output (Docker prefixes each line)
+docker compose logs --timestamps posthorn
+```
+
+Posthorn's lines already carry their own ISO 8601 `time` field, so `--timestamps` is only useful when you want Docker's *received* time alongside Posthorn's *emitted* time.
+
+</TabItem>
+
+<TabItem label="Plain Docker">
+
+```bash
+# Live tail
+docker logs -f <container-name>
+
+# Last 100 lines
+docker logs --tail 100 <container-name>
+
+# Since
+docker logs --since 1h <container-name>
+```
+
+If you're running with the recommended pattern (`ghcr.io/craigmccaskill/posthorn:latest` bound to `127.0.0.1:8080` behind a reverse proxy), `<container-name>` is whatever Docker assigned — `docker ps` to find it.
+
+</TabItem>
+
+<TabItem label="systemd">
+
+If you're running the standalone binary as a systemd unit, logs go to the journal.
+
+```bash
+# Live tail
+journalctl -u posthorn -f
+
+# Last 100 lines, JSON output (preserves structure)
+journalctl -u posthorn -n 100 -o json
+
+# Since
+journalctl -u posthorn --since "1 hour ago"
+journalctl -u posthorn --since "2026-05-16 18:00"
+
+# Only errors
+journalctl -u posthorn -p err
+```
+
+Pair with `jq` for structured queries — see [Filtering with jq](#filtering-with-jq) below.
+
+</TabItem>
+
+<TabItem label="Standalone binary">
+
+If you're running `posthorn serve` directly (no service manager), redirect stdout yourself:
+
+```bash
+# Append to a file
+posthorn serve --config posthorn.toml >> /var/log/posthorn.log 2>&1 &
+
+# Tail
+tail -f /var/log/posthorn.log
+
+# Live JSON-pretty-print
+posthorn serve --config posthorn.toml | jq .
+```
+
+Posthorn doesn't rotate the file itself. For production, prefer running under systemd (journald handles rotation) or Docker (the daemon's logging driver does). If you must run loose, point logrotate at the file:
+
+```text
+# /etc/logrotate.d/posthorn
+/var/log/posthorn.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+</TabItem>
+
+<TabItem label="Kubernetes">
+
+```bash
+# Live tail
+kubectl logs -f deployment/posthorn
+
+# Last 100 lines
+kubectl logs --tail=100 deployment/posthorn
+
+# Since
+kubectl logs --since=1h deployment/posthorn
+
+# All pods in a deployment (multi-replica)
+kubectl logs -f --selector app=posthorn --max-log-requests=10 --prefix
+```
+
+For real querying across replicas, you almost certainly want a log shipper feeding Loki / Elasticsearch / Datadog. Vector, Fluent Bit, and Promtail all parse JSON natively — Posthorn's output is already shaped for them.
+
+</TabItem>
+
+</Tabs>
+
+## Filtering with jq
+
+`jq` is the simplest universal tool — works against any log source (file tail, `docker logs`, `journalctl -o json`, etc.).
+
+```bash
+# Pretty-print every line as it streams
+docker compose logs -f posthorn | jq .
+
+# Only errors
+docker compose logs posthorn | jq 'select(.level == "ERROR")'
+
+# Only submission_sent events
+docker compose logs posthorn | jq 'select(.msg == "submission_sent")'
+
+# Trace one request across every event
+docker compose logs posthorn \
+  | jq 'select(.submission_id == "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f")'
+
+# Latency P99 over the last 10K events
+docker compose logs --tail 10000 posthorn \
+  | jq -s 'map(select(.msg=="submission_sent")) | sort_by(.latency_ms) | .[-10:] | .[].latency_ms'
+
+# Top 10 client IPs by spam_blocked
+docker compose logs posthorn \
+  | jq -r 'select(.msg=="spam_blocked") | .client_ip' \
+  | sort | uniq -c | sort -rn | head
+```
+
+Posthorn lines are valid JSON one-per-line (NDJSON), so any tool that speaks NDJSON — `jq`, `gron`, `fx`, `ripgrep --null-data`, even a small Go/Python script — works without ceremony.
+
+## Operationally useful events
+
+A short catalog of the events you'll actually grep for. Full schema for each is in the [log format reference](/reference/log-format/).
+
+| If you want to know… | Look for `msg=` |
+|---|---|
+| Did this specific submission go out? | `submission_sent` (with `transport_message_id` to pivot to the provider) |
+| Why did this submission fail? | `submission_failed` (`error`, `form` or `form_fields`) |
+| Did the retry help? | `send_retry_scheduled` → `send_retry_succeeded` (or `send_retry_failed` + `submission_failed`) |
+| Is the rate limiter firing? | `rate_limited` (with `client_ip` in form mode) |
+| Is the honeypot catching bots? | `spam_blocked` (with `kind: "honeypot"` or `kind: "origin"`) |
+| Are any callers misusing their API key? | `auth_failed` (the rejected key is *not* logged — only that auth failed) |
+| Is the idempotency cache doing its job? | `idempotent_replay` (cached hit) vs `idempotent_conflict` (collision in flight) |
+| Did the SMTP listener accept this session? | `smtp_session_open` → `smtp_tls_established` → `smtp_auth_ok` → `smtp_submission_sent` |
+
+## Failure recovery from logs
+
+In v1.0, terminal failures (502 to the client) **store the submission payload in the log line itself** — there's no persistent queue. The `submission_failed` event with `log_failed_submissions = true` (default) carries the full `form` map. To recover:
+
+```bash
+# Find the failed submission by ID (the API caller has this from the response body... unless the response was eaten)
+docker compose logs posthorn \
+  | jq 'select(.msg=="submission_failed" and .submission_id=="<id>") | .form'
+
+# Or find all failures in the last hour
+docker compose logs --since 1h posthorn \
+  | jq 'select(.msg=="submission_failed") | {submission_id, endpoint, error, form}'
+```
+
+The form data is what would have been templated into the email. You can re-render the message manually or use the provider's dashboard to send it directly.
+
+<Aside type="caution">
+For GDPR-sensitive endpoints, set `log_failed_submissions = false` on the endpoint. The metadata still logs (event, error, latency, IDs), and `form_fields` records the field *names* — but values are dropped, and recovery from logs becomes impossible. See the [endpoint reference](/configuration/reference/#logging-override).
+</Aside>
+
+## Shipping to a real log pipeline
+
+`docker compose logs` and `journalctl` are fine for ad-hoc investigation; for production observability you want a real backend. Posthorn's JSON output drops straight into all the common pipelines:
+
+- **Loki** + Promtail / Alloy — most natural fit; the `json` parser stage maps every Posthorn field to a Loki label-able value. Cardinality risk: only label on `endpoint`, `transport`, `level`, `msg` — *not* `submission_id` or `client_ip`.
+- **Elasticsearch** + Filebeat / Fluent Bit — same shape; use `json` codec in the input.
+- **Datadog** — set the agent's `source: posthorn` and `service: posthorn`; the agent auto-parses JSON.
+- **CloudWatch Logs** — the Docker JSON-file driver's lines arrive double-encoded (CW wraps each line in its own JSON envelope). Filter with `{ $.msg = "submission_sent" }` against the inner payload.
+
+A Loki query example for the `endpoint` label and rate of sends:
+
+```text
+sum by (endpoint) (
+  rate({service="posthorn"} | json | msg="submission_sent" [5m])
+)
+```
+
+For Prometheus scraping, **don't parse logs** — Posthorn exposes a native `/metrics` endpoint on the same listener with the same counters. See [Docker deployment](/deployment/docker/#health-checks-and-metrics) and the `posthorn_*` counters in the [log format reference](/reference/log-format/).
+
+## What does *not* appear in logs
+
+By contract (NFR3, NFR21):
+
+- **Credentials.** Transport API keys, api-mode `api_keys`, `csrf_secret`, SMTP `smtp_users` passwords — never logged in any code path. Tests verify with sentinel-key strings on every CI build.
+- **Honeypot field values.** Redacted to `"<redacted>"` in `submission_failed.form`.
+- **Submitter content in `/metrics` labels** (NFR24). The Prometheus surface is structurally bounded — labels carry only operator-configured names.
+
+See [API keys & secrets](/security/api-keys/) for the full guarantee and rotation runbook.

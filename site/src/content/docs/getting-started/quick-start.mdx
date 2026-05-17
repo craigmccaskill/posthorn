@@ -61,16 +61,10 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
    POSTMARK_API_KEY=your-postmark-server-token-here
    ```
 
-   <Aside type="caution" title="Credentials hygiene">
-   This token has full permission to send mail through your account. Treat it like a database password:
+   <Aside type="caution" title="Treat this like a database password">
+   For Postmark specifically: the *server token* is per-server, not per-account — find it under your server's API Tokens tab. Other providers have analogous scoped credentials.
 
-   - **Use scoped credentials where possible.** Postmark's *server token* is per-server, not per-account — find it under your server's API Tokens tab. Resend, Mailgun, SES, and most other providers offer analogous per-deployment or per-domain credentials. Scoped creds limit blast radius if one leaks.
-   - **Don't commit `.env` to git.** Add it to `.gitignore` before your first commit; check `git status` confirms it's untracked.
-   - **Lock down file permissions.** `chmod 0640 .env` and own it as the service user.
-   - **Pass via env vars, not literal config.** Posthorn's `${env.VAR}` syntax keeps the secret out of TOML diffs in version control.
-   - **Rotate on suspicion.** If the file was screenshotted, shared in chat, or printed via `printenv` in a session that wasn't private, revoke the key in the provider dashboard and issue a new one.
-
-   See [API keys & secrets](/security/api-keys/) for the in-process guarantee (credentials never appear in logs) and the rotation runbook.
+   Standard hygiene applies: `.env` in `.gitignore`, file perms locked down, secret stays in env vars (never inlined in TOML), rotated on any suspicion of leak. See [API keys & secrets](/security/api-keys/) for the in-process guarantee and the rotation runbook.
    </Aside>
 
 4. **Write `docker-compose.yml`.**
@@ -118,7 +112,7 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
    {"status":"ok","submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"}
    ```
 
-   And a structured log line on the server:
+   Back in the terminal where you ran `docker compose logs -f posthorn` (step 5), a structured log line appears:
 
    ```json
    {
@@ -133,7 +127,7 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
    }
    ```
 
-   `transport_message_id` lets you pivot from Posthorn's log straight to the message in the Postmark dashboard.
+   `transport_message_id` lets you pivot from Posthorn's log straight to the message in the Postmark dashboard. See [Reading the logs](/deployment/reading-logs/) for how to filter, ship, and recover failed submissions from the log stream.
 
 7. **Check your inbox.** The email should arrive within seconds. Subject line will be `Contact from Test User`. Body will be the rendered template.
 

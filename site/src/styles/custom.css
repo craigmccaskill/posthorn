@@ -1,7 +1,10 @@
-/* Posthorn brand palette
-   Postal yellow / black, postal red accent.
-   Tuned for both light and dark Starlight themes. */
+/* Posthorn brand palette.
+   Brass accent (#d4a300) + ink black (#17181c) lifted from the logo.
+   Light mode: warm paper-toned surfaces (the postal-stationery feel).
+   Dark mode: cool neutrals so the brass reads clearly against them. */
+
 :root {
+  /* Dark mode (default Starlight scheme) */
   --sl-color-accent-low: #4a3500;
   --sl-color-accent: #d4a300;
   --sl-color-accent-high: #ffe082;
@@ -17,19 +20,23 @@
 }
 
 :root[data-theme='light'] {
-  --sl-color-accent-low: #fff7d4;
+  /* Brass accent re-tuned for legibility on warm light surfaces */
+  --sl-color-accent-low: #fff4cc;
   --sl-color-accent: #a37e00;
   --sl-color-accent-high: #4a3700;
 
-  --sl-color-white: #17181c;
+  /* Inverted gray scale + paper-tone backgrounds.
+     gray-6 / gray-7 carry the warmth; ink color stays neutral so body
+     text doesn't tint. */
+  --sl-color-white: #17181c;     /* body text (Starlight uses --sl-color-white as text in light mode) */
   --sl-color-gray-1: #24272f;
   --sl-color-gray-2: #353841;
   --sl-color-gray-3: #545861;
   --sl-color-gray-4: #888b96;
-  --sl-color-gray-5: #c0c2c7;
-  --sl-color-gray-6: #eceef2;
-  --sl-color-gray-7: #f6f7f9;
-  --sl-color-black: #ffffff;
+  --sl-color-gray-5: #c8c4b8;    /* hairlines — slightly warm */
+  --sl-color-gray-6: #ece6d4;    /* sidebar / muted surfaces — paper warm */
+  --sl-color-gray-7: #fdfaf3;    /* page background — cream paper */
+  --sl-color-black: #ffffff;     /* "deepest contrast" surface — kept pure for code blocks */
 }
 
 /* Hero polish on the splash homepage */
@@ -45,4 +52,25 @@
 .hero .tagline {
   font-size: clamp(1.1rem, 1.5vw, 1.35rem);
   max-width: 38ch;
+}
+
+/* Article headings — slightly tighter than Starlight default for visual
+   rhythm consistency with the hero. Affects all docs pages. */
+.sl-markdown-content h1,
+.sl-markdown-content h2 {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+/* Inline code: subtle warm tint in light mode so it doesn't disappear
+   against the cream background. Dark mode keeps Starlight's default. */
+:root[data-theme='light'] .sl-markdown-content :not(pre) > code {
+  background-color: #f4ecd5;
+  border: 1px solid #e6dcc0;
+}
+
+/* Right-rail "On this page" headers get the brass treatment so the
+   secondary nav has visible hierarchy. */
+.right-sidebar h2 {
+  color: var(--sl-color-accent);
 }

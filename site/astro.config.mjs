@@ -8,7 +8,7 @@ export default defineConfig({
     starlight({
       title: 'Posthorn',
       description:
-        'The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark today; Resend, Mailgun, SES coming. Self-hosted, no mail server required.',
+        'The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark, Resend, Mailgun, AWS SES, or outbound-SMTP. Three ingress shapes (HTTP form, HTTP API, SMTP). Self-hosted, no mail server required.',
       logo: {
         src: './src/assets/logo.svg',
         replacesTitle: false,
@@ -71,6 +71,7 @@ export default defineConfig({
             { label: 'Docker (recommended)', slug: 'deployment/docker' },
             { label: 'Standalone binary', slug: 'deployment/binary' },
             { label: 'Reverse proxy', slug: 'deployment/reverse-proxy' },
+            { label: 'Reading the logs', slug: 'deployment/reading-logs' },
           ],
         },
         {
