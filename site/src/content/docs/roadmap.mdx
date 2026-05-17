@@ -7,74 +7,39 @@ import { LinkCard, Aside } from '@astrojs/starlight/components';
 
 This page is the **canonical public roadmap**. The narrative lives here; the execution surface (open issues, in-flight work) lives in [GitHub Milestones](https://github.com/craigmccaskill/posthorn/milestones).
 
-Posthorn ships in deliberately small, scoped releases. Every version has a locked spec before code is written. The "Worked" criterion for the project is two binary signals: at least one external user in production within 90 days of v1.0, and the Ghost admin-login round-trip via v1.3 SMTP ingress within 6 months.
+Posthorn ships in deliberately small, scoped releases. v1.0 absorbs what was originally sequenced as v1.1, v1.2, and v1.3 into a single release because the surface area is small enough that splitting them produced more carve-outs than coherent product moments. v2 is the next planned milestone — the stateful-platform shift.
 
 ## v1.0 — first public release
 
 **Status:** released or imminent (see the [GitHub Releases page](https://github.com/craigmccaskill/posthorn/releases) for the live date).
 
-**Scope:** HTTP form ingress, Postmark transport, full spam-protection stack, rate limiting, templating, JSON + redirect responses, standalone Docker container.
+**Scope:** three ingress shapes, five outbound transports, full spam-protection stack, idempotency, dry-run, Prometheus metrics, hand-rolled SMTP listener for internal apps.
+
+| Ingress | Detail |
+|---|---|
+| HTTP form (default) | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot, Origin/Referer fail-closed, optional CSRF tokens, rate limit |
+| HTTP API mode | Bearer auth, JSON body, idempotency keys, per-request `to_override`, per-key rate limit |
+| SMTP listener | AUTH PLAIN / client-cert, STARTTLS-required, sender allowlist + recipient allowlist or cap, size cap |
+
+| Transport | Detail |
+|---|---|
+| Postmark | HTTP API, server-token auth |
+| Resend | HTTP API, bearer auth |
+| Mailgun | HTTP API, basic auth, multipart body, US/EU regions |
+| AWS SES | HTTP API, SigV4 auth, region-scoped |
+| Outbound SMTP | Any STARTTLS-capable relay; stdlib `net/smtp` |
+
+Operational essentials: `/healthz`, `/metrics` (Prometheus exposition), dry-run mode, IP-stripping, named `trusted_proxies` presets (Cloudflare).
 
 What you can do today:
 
 - Drop in a self-hosted contact form on any host that blocks outbound SMTP
 - Run Posthorn as a Docker sidecar next to your blog / static site / app stack
+- Hit it from a Cloudflare Worker for transactional sends with safe retries
+- Point Ghost / Gitea / Mastodon / Authentik at Posthorn's SMTP listener and let them keep speaking SMTP
 - Reverse-proxy from whatever front door you already use (Caddy, nginx, Traefik, Cloudflare)
 
 [Get started →](/getting-started/quick-start/)
-
-## v1.1 — API mode
-
-[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/1)
-
-The version where Posthorn becomes usable as **an internal mail API**, not just a contact-form gateway. Server-to-server callers (a worker, a backend job, a paid-event handler) can now hit Posthorn without needing browser-shaped defenses (Origin/Referer/honeypot).
-
-- **API-key auth per endpoint** — `auth = "api-key"` mode, mutually exclusive with the form-mode defenses. Callers send `Authorization: Bearer <key>`. Rate limit still applies.
-- **JSON content type on API-mode endpoints** — natural shape for server-to-server callers. Form-mode endpoints stay form-encoded only.
-- **Idempotency keys** — standard `Idempotency-Key` header, 24-hour TTL, in-memory cache. Safe retries for payment / license-delivery / one-shot transactional flows. *Durable across restarts in v2.*
-- **Batch send** — per-recipient template substitution against Postmark's `/email/batch` endpoint, hard cap aligned to Postmark's 500/batch limit, per-recipient response status.
-
-No breaking config changes — every v1.0 form-mode config keeps working untouched. API-mode is opt-in per endpoint.
-
-## v1.2 — multi-transport + operational maturity
-
-[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/4)
-
-The version that breaks Postmark-lock and makes Posthorn production-ready. Adding 4 transports is the moment operators care about metrics, health checks, dry-run validation, and tighter spam protection.
-
-**Transports** (any of these can be configured per endpoint, alongside Postmark):
-
-- **Resend** — alternative HTTP API provider
-- **Mailgun** — alternative HTTP API provider
-- **AWS SES** — AWS-native deployments
-- **Outbound SMTP relay** — the historical baseline, for operators on hosts that don't block port 587 (Hetzner, OVH, etc.)
-
-**Spam protection** (form-mode hardening on top of v1.0):
-
-- CSRF tokens + time-based form tokens — catches automated abuse the v1.0 honeypot + Origin/Referer doesn't
-
-**Observability + ergonomics:**
-
-- `/healthz` endpoint for Docker / Kubernetes liveness probes
-- `/metrics` endpoint (Prometheus exposition format) — submission count, latency histograms, error class breakdown
-- Dry run mode — parse + validate without sending, useful in CI for customer-facing form template changes
-- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of the v1.0 CIDR-list syntax
-- IP-stripping option for GDPR contexts
-
-## v1.3 — SMTP ingress
-
-[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/2)
-
-The strategic feature that completes the gateway thesis. **A TCP listener accepting SMTP from clients on the local network**, forwarding via whatever HTTP API transport is configured.
-
-The use case: self-hosted apps that emit SMTP for transactional mail — Ghost, Gitea, Mastodon, Discourse, Matrix, NextCloud, Authentik — currently broken on cloud hosts that block outbound SMTP. v1.3 makes them work.
-
-The architectural commitments are already locked in v1.0:
-
-- The `Message` struct doesn't change — it's the boundary between ingress (form parser, SMTP MIME parser) and egress (transports)
-- New `Ingress` interface — HTTP form ingress is the first instance (in v1.0); SMTP listener is the second
-- New top-level config section `smtp_listener` alongside `endpoints`
-- New threat model (open relay prevention, RCPT validation, sender allowlist, recipient caps, optional client-cert auth) gets its own spec rewrite in v1.3
 
 ## v2 — platform maturity
 
@@ -90,14 +55,15 @@ The architectural shift that unlocks operating Posthorn as a real mail platform:
 **Mail-platform features built on storage:**
 
 - **Suppression list** — auto on hard bounces and spam complaints; admin API for inspection and manual entries. Refuses to send to suppressed addresses (returns 200 with `{"suppressed": true}` so callers treat it as final, not transient).
-- **Durable idempotency** — the v1.1 in-memory cache becomes restart-survivable
-- **Postmark lifecycle event callbacks** — delivery / bounce / open / click events forwarded to the originating caller with HMAC-signed webhook
+- **Durable idempotency** — the v1.0 in-memory cache becomes restart-survivable
+- **Lifecycle event callbacks** — delivery / bounce / open / click events forwarded to the originating caller with HMAC-signed webhook
 - **Automatic unsubscribe link injection** — per-recipient signed tokens, hosted unsubscribe endpoint, RFC 8058 one-click headers (which Gmail and Yahoo now require for senders &gt;5000/day)
-- **HTML body support** (alongside the originally-planned markdown body)
+- **HTML body support**
 - **File attachments** — multipart form uploads forwarded to the transport
 - **Multiple outputs per endpoint** — email + webhook + log fan-out for the same submission
+- **Multi-tenant SMTP routing** — RCPT-driven transport selection (one SMTP listener serves multiple tenants with separate sender identities)
 
-The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.x deployments keep working unchanged.
+The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.0 deployments keep working unchanged.
 
 ## v3 — speculative
 
@@ -110,7 +76,7 @@ No date. Depends entirely on community traction:
 ## How to influence the order
 
 <Aside type="tip">
-The roadmap order isn't set in stone after v1.0 ships. Adoption signals reshuffle priorities — if every early user asks for the same thing, that thing moves up.
+The v2 ordering isn't set in stone. Adoption signals reshuffle priorities — if every early user asks for the same thing, that thing moves up.
 </Aside>
 
 If you want to push something forward:
@@ -125,11 +91,11 @@ These come up in conversation and are worth naming explicitly:
 
 | Feature | Why not |
 |---|---|
-| Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The v1.3 SMTP ingress accepts mail from known internal clients only. |
+| Acting as a "real" MTA (MX records, inbound mail) | Posthorn is an authenticated relay, not a mail server. The SMTP listener accepts mail from known internal clients only — see [SMTP ingress](/features/smtp-ingress/). |
 | Markdown body rendering | Templates are plain text. v2 may add markdown with explicit escaping. |
-| Multi-tenancy / per-tenant config isolation | Post-v1 if at all — the project's audience is single-tenant self-hosters. |
 | GUI installer / first-run wizard | The TOML config is the source of truth; no UI in front of it. |
-| Replacing Postmark / providers entirely (e.g., running our own SMTP outbound) | That's "build a postfix replacement" territory; out of scope forever. |
+| Replacing transactional providers entirely (running our own outbound SMTP fleet) | That's "build a postfix replacement" territory; out of scope forever. The point of Posthorn is to *use* your provider, not become one. |
+| Batch send API | Deferred without a target version. The named v1.1 audience didn't have a real workload for it; we'll reconsider when an operator surfaces with concrete batch volume that round-trip overhead actually constrains. |
 
 <LinkCard
   title="Track current work on GitHub"
@@ -138,7 +104,7 @@ These come up in conversation and are worth naming explicitly:
 />
 
 <LinkCard
-  title="Read the locked v1.0 spec"
+  title="Read the v1.0 spec"
   description="The full project brief, PRD, and architecture document — what's settled and why."
   href="https://github.com/craigmccaskill/posthorn/tree/main/spec"
 />

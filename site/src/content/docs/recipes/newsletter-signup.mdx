@@ -113,9 +113,9 @@ The notification email is the trigger; what happens next depends on your platfor
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Same email subscribes 10 times in an hour | No deduplication in v1.0 — Posthorn doesn't know if it's seen an address before | Dedupe at your list-manager step, or use the v1.1 idempotency-key feature when it ships |
+| Same email subscribes 10 times in an hour | Posthorn doesn't dedupe by email content | Dedupe at your list-manager step, or move the signup to an api-mode endpoint and pass a stable [`Idempotency-Key`](/features/api-mode/) |
 | Subscriber expects a confirmation email | This recipe doesn't send one | Update your "Thanks" page copy to set expectations; or pair with Listmonk for real double opt-in |
-| Bots are signing up garbage addresses despite the honeypot | Bots that bypass the honeypot are usually fillable-form scanners that succeed with any non-empty value | Add a server-side step that checks if the domain has MX records before forwarding (v1.0 only does syntactic email validation; deeper checks land in v1.2) |
+| Bots are signing up garbage addresses despite the honeypot | Bots that bypass the honeypot are usually fillable-form scanners that succeed with any non-empty value | Add a server-side step that checks if the domain has MX records before forwarding (Posthorn does syntactic email validation only; deeper checks aren't on the roadmap) |
 
 ## Where to go next
 

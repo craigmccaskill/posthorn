@@ -75,21 +75,23 @@ For production, pin to a specific version (`:1.0.0`) and update intentionally. `
 
 ## Health checks
 
-v1.0 does not ship a dedicated `/healthz` endpoint (v1.2 will). For now, use a Docker healthcheck that opens a TCP connection to the listener:
+Posthorn exposes a `/healthz` endpoint on the same listener as the configured endpoints. It returns `200 OK` with body `ok` when the listener is alive. For Docker:
 
 ```yaml
 services:
   posthorn:
     # ...
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET / HTTP/1.0\\n\\n' >&3"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz || exit 1"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
 ```
 
-Note: distroless has no shell, so this healthcheck won't work in the distroless variant. For health checking the distroless image, run a sidecar like [`google/cadvisor`](https://github.com/google/cadvisor) or check from the reverse proxy.
+The distroless image has no shell or `wget`. For the distroless variant, run the health check from the reverse proxy or a sidecar, or use the [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe)-style technique of building a tiny static binary into the image.
+
+For Prometheus-style scrapes, the same listener exposes `/metrics` in the Prometheus text exposition format.
 
 ## Logs
 

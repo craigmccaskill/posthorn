@@ -87,6 +87,18 @@ interval = "1m"
 
 When `rate_limit` is omitted entirely, no rate limit is applied to the endpoint.
 
+### API mode
+
+API mode swaps form-mode browser defenses for `Authorization: Bearer` auth and JSON body parsing. See [API mode](/features/api-mode/) for the full reference.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `auth` | string | no | `"form"` | `"form"` (default, v1.0 behavior) or `"api-key"`. The two modes are mutually exclusive per endpoint. |
+| `api_keys` | `[]string` | yes when `auth = "api-key"` | unset | Bearer tokens accepted on this endpoint. `${env.VAR}` substitution honored. Empty list is rejected at config time. |
+| `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity. Cache is in-memory, LRU-evicted, 24h TTL. v2 makes it durable. |
+
+Configuring `honeypot`, `allowed_origins`, `redirect_success`, or `redirect_error` on an API-mode endpoint is a config-parse error.
+
 ### Templates
 
 | Field | Type | Required | Default | Description |

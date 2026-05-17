@@ -55,36 +55,38 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 
 <CardGrid>
   <Card title="HTTP form ingress" icon="rocket">
-    **v1.0 — today.** Contact forms, signup forms, alert webhooks.
+    Contact forms, signup forms, alert webhooks.
     `application/x-www-form-urlencoded` and `multipart/form-data` POSTs on
     configured paths. Drop the form on your static site or behind your
     reverse proxy, point its `action` at Posthorn.
   </Card>
   <Card title="JSON API ingress" icon="seti:json">
-    **v1.1 — in flight.** Server-to-server callers: workers, cron jobs,
-    payment handlers, internal services. Standard `Authorization: Bearer`
-    auth. Idempotency keys for safe retries. Batch send for bulk
-    notifications.
+    Server-to-server callers: workers, cron jobs, payment handlers,
+    internal services. Standard `Authorization: Bearer` auth.
+    Idempotency keys for safe retries. Per-request `to_override` for
+    transactional sends.
   </Card>
   <Card title="SMTP ingress" icon="email">
-    **v1.3 — on the roadmap.** For apps that only speak SMTP: Ghost, Gitea,
-    Mastodon, Matrix, NextCloud, Authentik. Posthorn accepts SMTP on your
-    local network and forwards via your configured HTTP API transport.
+    For apps that only speak SMTP: Ghost, Gitea, Mastodon, Matrix,
+    NextCloud, Authentik. Posthorn accepts SMTP on your local network
+    (AUTH PLAIN or client-cert, STARTTLS-required) and forwards via your
+    configured HTTP API transport.
   </Card>
 </CardGrid>
 
-**Pluggable transports,** growing across v1.x. Swap providers without rewriting your apps' integrations — they all talk to Posthorn the same way.
+**Five transports,** all shipping today. Swap providers without rewriting your apps' integrations — they all talk to Posthorn the same way.
 
 <CardGrid>
   <Card title="Postmark" icon="email">
-    **v1.0 — today.** Bespoke ~80-line HTTP client. No third-party SDK
-    overhead. Headers pass through Postmark's structured JSON API — no
-    string concatenation, no injection vector. API keys never appear in
-    logs.
+    Bespoke ~80-line HTTP client. No third-party SDK overhead. Headers
+    pass through Postmark's structured JSON API — no string
+    concatenation, no injection vector. API keys never appear in logs.
   </Card>
-  <Card title="Resend, Mailgun, AWS SES, SMTP relay" icon="puzzle">
-    **v1.2 — next.** Same endpoint config shape across all four. Swap your
-    transactional provider without changing app code or operator runbooks.
+  <Card title="Resend, Mailgun, AWS SES, outbound SMTP" icon="puzzle">
+    Same endpoint config shape across all four. Mailgun supports US +
+    EU regions; SES uses bespoke SigV4 (no AWS SDK); outbound SMTP
+    relays through any STARTTLS-capable upstream. Swap providers
+    without changing app code or operator runbooks.
   </Card>
   <Card title="Webhook delivery" icon="random">
     **v2 — later.** Point Posthorn at any URL for non-email delivery
@@ -97,10 +99,11 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 
 <CardGrid>
   <Card title="Defense in depth" icon="shield">
-    Honeypot, Origin/Referer fail-closed, token-bucket rate limit with LRU
-    eviction at 10K IPs, max body size, required-field validation, email
-    syntax check. CSRF + time-based tokens in v1.2. API-key auth for
-    server-to-server callers in v1.1.
+    Honeypot, Origin/Referer fail-closed, token-bucket rate limit with
+    LRU eviction at 10K IPs, max body size, required-field validation,
+    email syntax check, HMAC-signed CSRF tokens. API-key auth for
+    server-to-server callers. SMTP listener gates open-relay abuse via
+    sender allowlist, recipient allowlist or cap, AUTH and STARTTLS.
   </Card>
   <Card title="One deployment shape, every front door" icon="puzzle">
     Standalone Docker container (or Go binary) that runs as a sidecar
@@ -109,9 +112,9 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
   </Card>
   <Card title="Structured for ops" icon="document">
     JSON logs with UUIDv4 submission IDs. Hard 10-second request timeout.
-    `/healthz` + Prometheus `/metrics` in v1.2. SQLite-backed retry queue
-    across restarts in v2. Designed to drop into your existing logging
-    pipeline, not replace it.
+    `/healthz` liveness probe and Prometheus `/metrics` exposition on the
+    same listener. SQLite-backed retry queue across restarts in v2.
+    Designed to drop into your existing logging pipeline, not replace it.
   </Card>
   <Card title="No mail-server skills required" icon="approve-check">
     You don't run Postfix. You don't manage DKIM rotation. You bring an
@@ -192,7 +195,7 @@ Full walkthrough: [posthorn.dev/getting-started/quick-start](/getting-started/qu
 
 <LinkCard
   title="Roadmap"
-  description="The trajectory through v1.1 (API mode), v1.2 (multi-transport), v1.3 (SMTP ingress), v2 (platform maturity). Linked to open GitHub milestones."
+  description="What's in v1.0 and the v2 trajectory (durable storage, suppression, lifecycle webhooks, attachments). Linked to open GitHub milestones."
   href="/roadmap/"
 />
 
@@ -220,10 +223,10 @@ Posthorn unifies how your apps *send* mail — many ingress shapes converge on o
 A TOML file is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
 
 **Bespoke transports, audit in an afternoon.**
-Every transport integration is ~80-200 lines of Go in this repo. Postmark is ~80 lines. SES will be ~200 (SigV4 + send). No vendor SDKs in transport code, no transitive dep trees to track for CVEs, no opaque wrappers between you and the upstream API. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
+Every transport integration is ~150-300 lines of Go in this repo. Postmark is ~80 lines; Resend ~150; Mailgun ~180; SES ~230 (the bespoke SigV4 implementation). No vendor SDKs in transport code, no transitive dep trees to track for CVEs, no opaque wrappers between you and the upstream API. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
 
 **Public roadmap, locked v1.0.**
-The v1.0 scope is fixed; what ships is what was specified. v1.x themes (API mode in v1.1, multi-transport in v1.2, SMTP ingress in v1.3, platform maturity in v2) ship as separate releases on a [public roadmap](/roadmap/) tied to GitHub milestones. No surprise scope expansions, no quiet feature drops, no version drift between docs and behavior.
+The v1.0 scope is fixed; what ships is what was specified. Originally sequenced as v1.0 / v1.1 / v1.2 / v1.3, the four feature blocks (form ingress, API mode, multi-transport + ops, SMTP ingress) consolidated into a single v1.0 release before tag. v2 (durable storage + suppression + lifecycle webhooks + attachments) is the next milestone on a [public roadmap](/roadmap/) tied to GitHub milestones. No surprise scope expansions, no quiet feature drops, no version drift between docs and behavior.
 
 ## Not related to PostHog
 

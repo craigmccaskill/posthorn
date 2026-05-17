@@ -5,15 +5,9 @@ description: Receive uptime / monitoring alerts as email via a form-encoded webh
 
 import { Steps, Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 
-You run a monitoring tool — Uptime Kuma, healthchecks.io, a custom cron-with-webhook, anything that fires a webhook when something goes wrong. You want those alerts as email, ideally in the inbox you actually check. Posthorn v1.0 handles this if the monitoring tool can be configured to POST `application/x-www-form-urlencoded` (most can, some can't).
+You run a monitoring tool — Uptime Kuma, healthchecks.io, a custom cron-with-webhook, anything that fires a webhook when something goes wrong. You want those alerts as email, ideally in the inbox you actually check. Posthorn handles this whether the monitoring tool POSTs `application/x-www-form-urlencoded` (most can) or JSON via [API mode](/features/api-mode/) (Grafana, Alertmanager, etc.).
 
 **At the end:** an `/api/alert` endpoint that takes form-encoded POSTs from your monitoring tool and emails you. Honeypot off (no humans). Origin check off (monitoring tools don't send `Origin` headers). Rate limit calibrated to your alert volume.
-
-<Aside type="note" title="JSON webhooks need v1.1 or a small shim">
-Some monitoring tools (Grafana, Prometheus Alertmanager) only emit JSON webhooks. v1.0 only accepts form-encoded; v1.1's JSON API ingress will accept those natively.
-
-For now, two options: (a) point the monitor at a small shim that translates JSON to form-encoded (a 20-line Cloudflare Worker or Go program), or (b) wait for v1.1 — it's the next milestone after v1.0 ships.
-</Aside>
 
 ## Prerequisites
 
@@ -139,7 +133,7 @@ A sane starting point: `count = 30, interval = "1m"`. Bump higher if you have ma
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `HTTP 400 form-encoded body required` | The monitoring tool is sending JSON, not form-encoded | Switch the tool to form-encoded if it supports a custom body format, or wait for v1.1 JSON ingress, or write a 20-line JSON-to-form shim |
+| `HTTP 400 form-encoded body required` | The monitoring tool is sending JSON, not form-encoded | Switch the tool to form-encoded, or reconfigure the endpoint as [API mode](/features/api-mode/) to accept JSON natively |
 | Alerts arrive without details | `details` isn't in the `required` list, so when it's missing or empty, Posthorn renders `Details: ` with nothing after it | Either add `details` to `required` (forces the monitor to include it) or accept the empty case |
 | First alert during an outage shows up, the rest get 429'd | Rate limit is set too tight for your alert volume | Bump `count` up; storms during outages are normal |
 | Alert email lands in spam | DKIM/SPF on the sending domain — same as every other Posthorn recipe | See [DNS](/security/dns/) |
@@ -148,4 +142,4 @@ A sane starting point: `count = 30, interval = "1m"`. Bump higher if you have ma
 
 - [Configuration reference](/configuration/reference/) — every field
 - [Rate limiting](/features/rate-limiting/) — math behind the token bucket
-- [Roadmap](/roadmap/) — v1.1 JSON ingress is the natural fit for Grafana, Alertmanager, and other JSON-only monitors
+- [API mode](/features/api-mode/) — natural fit for Grafana, Alertmanager, and other JSON-only monitors

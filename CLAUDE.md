@@ -4,11 +4,13 @@ Auto-loaded by Claude Code at session start. Captures the durable project contex
 
 ## Project context
 
-Posthorn is the **unified outbound mail layer for self-hosted projects** — the gateway between an operator's apps and a transactional mail provider they already chose (Postmark, Resend, Mailgun, AWS SES, outbound SMTP). v1.0 ships HTTP form ingress + Postmark transport; v1.x grows to JSON API ingress (v1.1), multi-transport (v1.2), SMTP ingress for self-hosted-apps-that-emit-SMTP (v1.3), and platform features in v2 (suppression, lifecycle, attachments, durable retry).
+Posthorn is the **unified outbound mail layer for self-hosted projects** — the gateway between an operator's apps and a transactional mail provider they already chose. v1.0 ships three ingress shapes (HTTP form, HTTP API mode with Bearer auth and idempotency, SMTP listener with AUTH PLAIN + STARTTLS), five transports (Postmark, Resend, Mailgun, AWS SES with bespoke SigV4, outbound-SMTP relay), and an operational surface (`/healthz`, `/metrics` Prometheus exposition, dry-run, CSRF tokens, IP-stripping, named `trusted_proxies` presets). v2 adds platform features (durable storage, suppression, lifecycle webhooks, attachments).
+
+Originally sequenced as v1.0 → v1.1 (API mode) → v1.2 (multi-transport + ops) → v1.3 (SMTP ingress) themed releases. Folded into a single v1.0 release on 2026-05-16 after evaluation concluded the surface area was small enough that splitting them into four releases produced more carve-outs than coherent product moments. v2 remains the next planned milestone.
 
 The original wedge — cloud-blocks-SMTP — is preserved as the canonical discovery entry point. The broader value is the unified-layer pattern (the same outbound concern duplicated across N self-hosted apps now centralizes through one Posthorn gateway), which applies even where SMTP is unblocked.
 
-The full project history (initial scope as a Caddy form handler called `caddy-formward`, the 2026-04-27 scope expansion, the 2026-05-15 positioning sharpening) is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Status log". Don't re-derive — read the spec.
+The full project history (initial scope as a Caddy form handler called `caddy-formward`, the 2026-04-27 scope expansion, the 2026-05-15 positioning sharpening, the 2026-05-16 v1.x-fold-into-v1.0) is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"Status log". Don't re-derive — read the spec.
 
 ## Design principles (short)
 
@@ -22,95 +24,127 @@ These pin the shape of Posthorn across versions and override new feature request
 
 When a feature request or implementation proposal conflicts with one of these, the principle wins. Take it back to spec discussion before changing code.
 
-## Status (as of 2026-05-15)
+## Status (as of 2026-05-16, end of day)
 
-**Phase:** v1.0 release prep. All implementation work landed; tag pending operator validation.
+**Phase:** v1.0 release prep complete. All implementation landed. Tag pending two outstanding items: operator validation (External) and tag-day decision (Decision).
 
-**Repo state:** Single Go module at `core/` with 9 packages plus `cmd/posthorn/`. Public docs site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight, deployed via GH Pages from `site/`).
+**Repo state:** Single Go module at `core/` with 14 packages plus `cmd/posthorn/`:
+- v1.0 originals: `config`, `gateway`, `transport`, `spam`, `ratelimit`, `validate`, `template`, `response`, `log`
+- Added 2026-05-16 (block B+C+D): `idempotency`, `csrf`, `metrics`, `ingress`, `smtp`
 
-The full request pipeline is wired end-to-end: body cap → method → content-type → origin → rate limit → parse → honeypot → required fields → email format → template render → transport send (with FR19-22 retry under 10s hard timeout) → JSON 200 or 502. Every decision point logs structured JSON with a per-request UUID submission_id. CI runs `go vet` + `go test -race` on every push.
+Public docs site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight, deployed via GH Pages from `site/`); 41 pages.
 
-**Completed stories (20 of 21):**
-- ✅ Epic 1 (Stories 1.1-1.3) — rename, code reorganization into `core/`
-- ✅ Epic 2 (Stories 2.1-2.5) — TOML config, HTTP handler, validation, templating, cmd/posthorn
-- ✅ Epic 3 (Stories 3.1-3.2) — spam protection, rate limiting
-- ✅ Epic 4 (Stories 4.1-4.2) — retry policy, structured JSON logging
-- ✅ Epic 5 (Stories 5.1-5.3) — multi-stage Dockerfile, CI workflow, multi-arch release workflow (validated end-to-end via `v0.0.1-test` tag → `ghcr.io/craigmccaskill/posthorn:0.0.1-test` multi-arch publish)
-- ❌ Epic 6 (Caddy adapter) — **retired 2026-05-15.** Originally implemented as Stories 6.1–6.3 (adapter module, Caddyfile unmarshaler with parity test, manual parity test), the entire adapter was cut from v1.0 pre-tag for the product reasons in the brief's status log.
-- ✅ Epic 7 Stories 7.1-7.2 — README rewrite, OSS hygiene files (CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, CHANGELOG, PR + issue templates)
+**Major scope expansion (2026-05-16): v1.1 + v1.2 + v1.3 all folded into v1.0.** Originally locked v1.0 scope was form ingress + Postmark transport (Epics 1-7). Through the day's session the scope rescoped twice:
+1. v1.1 amendment (API mode) added Epic 8: API-key auth, JSON ingress, idempotency, `to_override`. FR31-FR46, NFR19-NFR21, ADRs 8-11.
+2. Audit + decision to fold v1.2 and v1.3 into the same v1.0 release: multi-transport (Resend/Mailgun/SES/SMTP-out), ops features (healthz/metrics/dry-run/CSRF/presets/IP-strip), SMTP ingress with Ingress interface. Epics 9-11 added. FR47-FR68, NFR22-NFR24, ADRs 12-17.
 
-**Remaining story (1 of 21):**
-- ⏳ Epic 7 Story 7.3 — tag v1.0.0, verify GHCR publish. **Gated on operator validation:** Docker smoke test, end-to-end manual test ([docs/manual-test.md](./docs/manual-test.md)).
+The "originally v1.x" labels are preserved as block A/B/C/D inside v1.0 for historical traceability. v2 remains future scope (stateful platform: durable storage, suppression, lifecycle webhooks, attachments).
 
-**Current task:** Operator validation pass scheduled 2026-05-16/17. See [docs/release-checklist.md](./docs/release-checklist.md) for the tag-day procedure. The checklist was tightened during 2026-05-15 pre-flight (broken release-notes awk fixed; Caddy-adapter-specific tag-day steps removed).
+**Completed Epics:**
+- ✅ Epic 1 (1.1-1.3) — rename, code reorganization into `core/`
+- ✅ Epic 2 (2.1-2.5) — TOML config, HTTP handler, validation, templating, cmd/posthorn
+- ✅ Epic 3 (3.1-3.2) — spam protection, rate limiting
+- ✅ Epic 4 (4.1-4.2) — retry policy, structured JSON logging
+- ✅ Epic 5 (5.1-5.3) — multi-stage Dockerfile, CI workflow, multi-arch release workflow (validated end-to-end via `v0.0.1-test` tag)
+- ❌ Epic 6 (Caddy adapter) — **retired 2026-05-15**
+- ✅ Epic 7 (7.1-7.2) — README, OSS hygiene files. (7.3 tag itself is part of Epic 12 now.)
+- ✅ Epic 8 (8.1-8.5) — API mode block: config schema, auth + per-key rate-limit, JSON ingress, idempotency cache, `to_override` (added later same day as FR46/ADR-11)
+- ✅ Epic 9 (9.1-9.6) — Transport registry + Resend + Mailgun + SES (bespoke SigV4, ADR-14 tripwire fired and deviation accepted) + outbound-SMTP + per-transport docs pages
+- ✅ Epic 10 (10.1-10.5) — `/healthz` + `/metrics` (hand-rolled Prometheus exposition + Recorder), dry-run, CSRF, `trusted_proxies` presets (`cloudflare` shipped in full; aws-elb/gcp-lb/azure-front-door reserved empty slots), IP-stripping
+- ✅ Epic 11 (11.2-11.8) — `Ingress` interface + HTTPIngress wrapper, SMTP listener (TCP accept loop, full state machine, AUTH PLAIN + client-cert, STARTTLS, sender + recipient allowlists, MIME → `transport.Message` with NFR22 envelope-only invariant, binary integration, docs + manual-test extension)
+- ✅ Epic 12 (12.1-12.2) — doc rescope sweep across PRD/architecture/site/CHANGELOG, README rewrite
 
-**Budget:** ~14.5h burned of 25h v1.0 budget. Site work (~6h, off-budget) was launch infrastructure. Comfortable margin remaining for any validation rework.
+**Outstanding (Epic 12 tail):**
+- ⏳ **Story 12.3 — Operator validation** [External]. Manual-test procedures exist for all paths (form mode + API mode + each non-Postmark transport + SMTP ingress) in [docs/manual-test.md](docs/manual-test.md). Needs real provider accounts:
+  - Postmark — already validated 2026-05-16 morning
+  - Resend, Mailgun (US or EU domain), AWS SES (out-of-sandbox), and an SMTP relay (Mailgun SMTP, Mailtrap, or a Postfix smarthost) — not yet validated
+  - SMTP listener validation needs a self-signed cert + `swaks` against a reachable address
+- ⏳ **Story 12.4 — Tag v1.0.0** [Decision]. Operator-owned timing.
 
-After each story ships, update this "Current story" pointer.
+**Architecture deviations from original spec (cumulative):**
+- `core/http/` → `core/gateway/` to avoid shadowing stdlib `net/http`.
+- Retry timing constants declared as package vars (not consts) so tests can override via `gateway.SetRetryDelaysForTest`.
+- [`site/`](./site/) Astro + Starlight directory; deploys via [`.github/workflows/site-deploy.yml`](./.github/workflows/site-deploy.yml). Build: `cd site && npm ci && npm run build`.
+- **2026-05-15:** Caddy v2 adapter module cut. FR27–FR30, NFR10 deleted; ADR-6, ADR-7 retired in-place.
+- **2026-05-15:** Honeypot 200 response shape parity (commit `0f27f4c`).
+- **2026-05-15:** v1.0 recipes shipped (commit `250f460`).
+- **2026-05-16 (morning):** `transport.Transport.Send` signature changed from `error` to `(SendResult, error)`. `SendResult.MessageID` captures the upstream's message ID; logged as `transport_message_id` in `submission_sent`. Forward-compatible for all transports added later that day.
+- **2026-05-16 (during day):** Batch send dropped from v1.1 scope entirely. Documented in brief's "Deliberately not on the roadmap" section. The user pushed the "ships when an operator surfaces with concrete batch volume" framing.
+- **2026-05-16 (later day):** Per-request `to_override` added to api-mode (FR46, ADR-11). Originally deferred (D5 in design discussion) but the Cloudflare Worker recipe surfaced that the named v1.1 audience can't pre-declare recipients. `from` stays endpoint-configured to prevent spoofing.
+- **2026-05-16 (end of day):** v1.x scope collapsed into a single v1.0 release (see "Major scope expansion" above). PRD amendment headings reorganized as block B/C/D. CHANGELOG consolidated.
+- **2026-05-16:** ADR-14 tripwire fired during SES SigV4 implementation. Total LOC (including tests) reached 1,158; implementation-only 493. Deviation accepted (option a in the ADR) — tests are 400-500 LOC per transport uniformly across the codebase, so the "include tests in tripwire" wording was overly conservative.
 
-**Architecture deviations from original spec:**
-- `core/http/` → `core/gateway/` (package `gateway`) to avoid shadowing stdlib `net/http`. Architecture and PRD updated.
-- Retry timing constants (`requestTimeout`, `transientRetryDelay`, `rateLimitedRetryDelay`) declared as package vars, not consts, so tests can override via the test-only helper `gateway.SetRetryDelaysForTest` (in `core/gateway/export_test.go`). Production never mutates them.
-- [`site/`](./site/) Astro + Starlight directory added at repo root for the posthorn.dev marketing/docs site (2026-05-14). Not in original v1.0 spec scope — treated as launch infrastructure outside the 25h budget. Deploys to GitHub Pages via [`.github/workflows/site-deploy.yml`](./.github/workflows/site-deploy.yml). Custom domain in [`site/public/CNAME`](./site/public/CNAME). Build: `cd site && npm ci && npm run build`. Sidebar config and theming live in [`site/astro.config.mjs`](./site/astro.config.mjs).
-- **2026-05-15: Caddy v2 adapter module cut.** Originally Epic 6 (Stories 6.1–6.3) shipped a `caddy/` sibling Go module providing `http.handlers.posthorn`. On tag eve, the adapter was cut after a product-level conversation about single-shape simplicity (see brief's status log). The `caddy/` directory, `go.work` file, parity test, and manual parity procedure were removed. FR27–FR30 and NFR10 were deleted from the PRD; ADR-6 and ADR-7 were retired in-place in the architecture doc.
-- **2026-05-15: Honeypot 200 response shape parity** (commit `0f27f4c`). The honeypot silent-200 was returning an empty `{}` JSON body, while the real-success path also returned `{}` — meaning the bodies were trivially identical but contained no information that would let a bot mistakenly think it had succeeded. Updated both paths to return `{"status":"ok","submission_id":"<uuid>"}` with a fresh submission_id on every request, so a bot inspecting the body cannot distinguish honeypot from real success. Added `TestHandler_HoneypotBodyMatchesSuccessShape` regression test.
-- **2026-05-15: Recipes shipped to docs site** (commit `250f460`, closes #26). Four v1.0 use-case recipes under [`site/src/content/docs/recipes/`](./site/src/content/docs/recipes/): contact-form, newsletter-signup (signup-notification flavor, not double-opt-in), multi-form-site, monitoring-alerts. Sidebar updated. The v1.1 / v1.3 recipes (license delivery, batch announcements, Ghost-on-blocked-host) are deferred to those milestones; #26 closed as the v1.0 scope was the meaningful deliverable.
-
-**Deps added during implementation:** `github.com/BurntSushi/toml` (config), `github.com/hashicorp/golang-lru/v2` (rate limiter), `github.com/google/uuid` (submission IDs). All three were named in the architecture doc's allowed-deps list.
+**Deps in module:** `github.com/BurntSushi/toml`, `github.com/google/uuid`, `github.com/hashicorp/golang-lru/v2`. Three external deps for the whole codebase. Every transport bespoke.
 
 **Launch artifacts in the vault (not in this repo):**
-- [`~/vaults/cmcc/Areas/Blog/Posthorn Launch.md`](~/vaults/cmcc/Areas/Blog/Posthorn Launch.md) — full launch blog post, ~985 words, drafted through 12 revisions on 2026-05-15. Written as if v1.3 has shipped (per author preference); will publish at the v1.3 milestone, not v1.0. Title: "The missing layer in self-hosted email."
-- [`~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md`](~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md) — seven-channel launch distribution plan (HN Show post draft, awesome-self-hosted PR draft, Docker Hub README, blog cross-posting, Reddit, SEO, awesome-postmark check) plus a pre-staged hand-written GitHub Release notes blob for tag day.
+- [`~/vaults/cmcc/Areas/Blog/Posthorn Launch.md`](~/vaults/cmcc/Areas/Blog/Posthorn Launch.md) — launch blog post, written 2026-05-15 in post-v1.3 tense. After the v1.0=everything-through-v1.3 rescope, this is now publishable as the v1.0 announcement (no rewrite needed; the prose was always describing the full surface).
+- [`~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md`](~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md) — HN Show post draft, awesome-self-hosted PR draft, Docker Hub README, blog cross-posting plan, Reddit, SEO, awesome-postmark check, pre-staged GitHub Release notes. Some pre-staged text was written assuming the v1.x ordering — the HN body in particular may need a pass before posting since it referenced v1.0 = form-only.
+
+**Test count check (as of 2026-05-16):** all packages pass `go vet ./... && go test -race -count=1 ./...` from `core/`. Site builds 41 pages. SMTP package added 21 tests; idempotency package 16 tests; metrics package 14 tests; csrf package 9 tests. Total project test count roughly doubled from morning.
 
 ## Read the spec before touching code
 
-The v1.0 specification is locked across three documents in [`spec/`](./spec/):
+The v1.0 specification is across three documents in [`spec/`](./spec/):
 
-1. **[`spec/01-project-brief.md`](./spec/01-project-brief.md)** — problem, users, scope, success metrics, threat model, risks, constraints
-2. **[`spec/02-prd.md`](./spec/02-prd.md)** — functional and non-functional requirements (FR27–FR30 / NFR10 are deleted slots from the 2026-05-15 Caddy adapter cut), 7-epic breakdown with stories and acceptance criteria
-3. **[`spec/03-architecture.md`](./spec/03-architecture.md)** — file layout, lifecycle, request flow, component design, threat-to-defense mapping, dependencies, ADRs (ADR-6 and ADR-7 retired in-place from the adapter cut), forward-compatibility commitments for v1.x
+1. **[`spec/01-project-brief.md`](./spec/01-project-brief.md)** — problem, users, scope, success metrics, threat model, risks, constraints. Status log captures the major scope decisions (2026-04-27 initial, 2026-04-27 SMTP-broader scope, 2026-05-15 Caddy cut, 2026-05-16 v1.1 amendment + batch drop + `to_override` add + v1.x-fold-into-v1.0).
+2. **[`spec/02-prd.md`](./spec/02-prd.md)** — FR1–FR68 and NFR1–NFR24 organized as four blocks (A: form ingress, B: API mode, C: multi-transport + ops, D: SMTP ingress). FR27–FR30 / NFR10 / NFR14 are deleted slots from the 2026-05-15 Caddy adapter cut. Epics 1–12. Traceability table maps every FR to a brief section.
+3. **[`spec/03-architecture.md`](./spec/03-architecture.md)** — file layout, lifecycle, request flow, component design, threat→defense mapping (now covers HTTP form + API mode + SMTP threats), dependencies, ADRs 1–17, forward-compatibility commitments for v2.
 
 The PRD has the canonical FR/NFR list with "must"-level requirements; the architecture doc has the implementation blueprint, including the target file layout under §"File layout".
 
 ## Hard guardrails
 
-These derive from the locked spec. Do not violate without an explicit conversation that updates the spec first.
+These derive from the spec. Do not violate without an explicit conversation that updates the spec first.
 
-1. **Scope is v1.0 only.** Do not implement SMTP ingress, additional transports beyond Postmark, CSRF tokens, file attachments, webhook transport, SQLite storage, admin UI, or any feature listed in the brief's §"Out of scope". Even if implementation goes faster than the 25-hour budget, additional time goes to v1.0 polish (better errors, more validator coverage), never to v1.1+ features.
+1. **Scope is v1.0** (where v1.0 = blocks A + B + C + D, the full scope of the consolidated 2026-05-16 release). Do not implement v2 features: SQLite storage, durable retry queue, suppression list, lifecycle webhooks, HTML body, file attachments, automatic unsubscribe injection, multi-tenant SMTP routing, multiple outputs per endpoint. v3 features (admin UI, proof-of-work, PGP) are even further out.
 
-2. **Budget tripwires.**
-   - 25-hour total implementation budget for v1.0
-   - 90-day calendar tripwire from project rename (2026-04-27 → 2026-07-26) to v1.0.0 tag
-   - If 25h hits with no end in sight: cut polish features first (better errors, deeper validator coverage). The standalone gateway core is non-cuttable — it's the whole product.
+2. **Header injection prevention is mandatory (NFR1, NFR2, NFR22).** Submitter-controlled fields **must never** be interpolated as raw strings into email headers, at any layer. Every transport must pass the header-injection test suite (CRLF in name/email/subject/recipients, `\r\nBcc:`, header smuggling). The SMTP listener's specific NFR22 invariant: outbound recipients come from the SMTP envelope (`RCPT TO`), never from inbound MIME `To`/`Cc`/`Bcc` headers. Non-negotiable.
 
-3. **Header injection prevention is mandatory (NFR1, NFR2).** Submitter-controlled fields **must never** be interpolated as raw strings into email headers. The Postmark transport must use Postmark's structured JSON API fields. The test suite must include explicit injection-payload coverage (CRLF in name/email/subject, `\r\nBcc:`, header smuggling). This is non-negotiable — see Risk R4.
+3. **API keys must never be logged (NFR3, NFR21).** Set them as HTTP headers / Basic auth / SMTP AUTH at construction time; never pass to the logger. Tests must verify by triggering failure paths and asserting the sentinel-key string does not appear in captured log output. This applies to every transport (Postmark, Resend, Mailgun, SES, outbound-SMTP) and to API-mode endpoint `api_keys`, CSRF `csrf_secret`, and SMTP `smtp_users` passwords.
 
-4. **API keys must never be logged (NFR3).** Set them as HTTP headers during request construction, never log them in error or debug output. Tests must verify by triggering transport failures and asserting the key string does not appear in captured log output.
+4. **Origin/Referer fail-closed (FR6, NFR4).** When `allowed_origins` is configured and both `Origin` and `Referer` headers are missing, reject the request. Explicitly-empty `allowed_origins = []` is a config parse error.
 
-5. **Origin/Referer fail-closed (FR6, NFR4).** When `allowed_origins` is configured and both `Origin` and `Referer` headers are missing, reject the request. When `allowed_origins` is configured as an explicitly empty list, the parser must reject the configuration — no fail-open default for an explicitly empty allowlist.
+5. **Mode-mutex parse-time rejection (ADR-10).** API-mode endpoints reject `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, `csrf_secret` at parse time. The footgun this prevents is operators configuring a defense they think is active but isn't.
 
-6. **Every active FR/NFR traces back to the brief.** If you find yourself writing something not traceable to a spec requirement, stop and check the spec rather than improvising. (FR27–FR30, NFR10, NFR14 are intentionally deleted slots from the 2026-05-15 Caddy adapter cut; don't resurrect them.)
+6. **NFR24: no submitter content in metric labels.** `/metrics` label values come only from operator-configured names (endpoint paths, transport types, error class enum). High-cardinality submitter content (recipient addresses, subjects, body fragments) must never enter the label space. This is structurally true because the `metrics.Recorder` API doesn't accept request-side values, but tests verify it.
 
-7. **Follow the architecture doc's file layout exactly.** Single Go module at `core/` with internal sub-packages (per the layout in [`spec/03-architecture.md`](./spec/03-architecture.md) §"File layout"). No second module; no Caddy adapter.
+7. **Every active FR/NFR traces back to the brief.** If you find yourself writing something not traceable to a spec requirement, stop and check the spec rather than improvising. (FR27–FR30, NFR10, NFR14 are deleted slots from the 2026-05-15 Caddy adapter cut; don't resurrect them.)
 
-8. **Don't reintroduce the Caddy adapter.** The adapter was cut on 2026-05-15 after a deliberate product-level conversation about single-shape simplicity. If a future request asks to bring it back, treat it as scope discussion, not implementation — re-open the conversation in the brief's status log before any code change.
+8. **Follow the architecture doc's file layout.** Single Go module at `core/` with internal sub-packages (per [`spec/03-architecture.md`](./spec/03-architecture.md) §"File layout"). No second module; no Caddy adapter.
+
+9. **Don't reintroduce the Caddy adapter.** Cut 2026-05-15 after a deliberate product-level conversation about single-shape simplicity. If a future request asks to bring it back, treat it as scope discussion, not implementation — re-open the brief's status log before any code change.
+
+10. **Don't add batch send unless a concrete operator workload demands it.** Deferred 2026-05-16; see brief's "Deliberately not on the roadmap" section. The reasoning is in the status log — read it before reconsidering.
+
+11. **`from` is endpoint-configured; per-request override forbidden (ADR-11).** Per-request `to_override` is fine and shipped. Per-request `from` enables spoofing via leaked API keys; don't add it.
 
 ## Architectural decisions worth knowing
 
-ADRs are recorded in [`spec/03-architecture.md`](./spec/03-architecture.md) §"Architectural decisions log". The most likely to come up during implementation:
+ADRs are recorded in [`spec/03-architecture.md`](./spec/03-architecture.md) §"Architectural decisions log". Active ADRs and what they mean:
 
-- **ADR-1:** No third-party Postmark SDK. ~80 lines of bespoke HTTP client.
-- **ADR-2 (revised twice):** Single Go module at `core/` with internal sub-packages. Started as a flat package (`caddy-formward`), briefly became a two-module workspace (when the Caddy adapter was in scope), collapsed back to single-module on 2026-05-15 when the adapter was cut.
-- **ADR-3:** Hand-rolled token-bucket rate limiter, not `golang.org/x/time/rate`. We need LRU eviction at 10K IPs (NFR6) which `x/time/rate` doesn't provide.
-- **ADR-6 (retired 2026-05-15):** Originally the zero-Caddy-dep invariant; trivially true after the adapter cut.
-- **ADR-7 (retired 2026-05-15):** Originally framed standalone as primary, adapter as optional; no longer meaningful (standalone is the only shape).
+- **ADR-1:** No third-party transport SDKs. Bespoke clients ~80-300 LOC each. Five transports ship this way (Postmark, Resend, Mailgun, SES, outbound-SMTP).
+- **ADR-2 (revised twice):** Single Go module at `core/` with internal sub-packages.
+- **ADR-3:** Hand-rolled token-bucket rate limiter, not `golang.org/x/time/rate` (need LRU eviction at 10K IPs / NFR6).
+- **ADR-4:** `*bool` for `LogFailedSubmissions` to distinguish unset from explicitly-false.
+- **ADR-5:** Synchronous send, not async-with-queue. v2's SQLite + queue is the swap point.
+- **ADR-6, ADR-7 (retired 2026-05-15):** Caddy-adapter-era decisions, no longer meaningful.
+- **ADR-8 (2026-05-16):** Per-endpoint in-memory LRU cache for idempotency, not Redis/SQLite/global-with-prefixes. v2 swaps backend behind same package interface.
+- **ADR-9 (2026-05-16):** HTTP 409 on in-flight idempotency-key collision, not blocking. Surfaces retry-without-backoff caller bugs rather than hiding them.
+- **ADR-10 (2026-05-16):** Mode/defense mutex enforced at config-parse time. API-mode rejects `honeypot`/`allowed_origins`/`redirect_*`/`csrf_secret`.
+- **ADR-11 (2026-05-16):** Per-request `to_override` allowed; per-request `from` forbidden. Asymmetry follows from leaked-key blast radius — `to` is recoverable, `from` enables irreversible spoofing.
+- **ADR-12 (2026-05-16):** `Ingress` interface produces a complete `transport.Message`. HTTP-specific concepts (templates, content negotiation, idempotency keys, CSRF) do not cross the boundary. Egress (transport.Send) is ingress-agnostic.
+- **ADR-13 (2026-05-16):** One SMTP listener has one outbound transport. No per-RCPT routing in v1.0 (v2 territory).
+- **ADR-14 (2026-05-16):** AWS SES SigV4 implemented bespoke. Tripwire fired at impl time (1158 total LOC with tests, 493 impl-only); deviation accepted because test bulk is uniform across transports, SigV4 is reusable for future AWS-signed transports (S3 storage in v2, SNS in v2), and pulling in aws-sdk-go-v2 would import a 30+ package transitive dep tree.
+- **ADR-15 (2026-05-16):** Prometheus `/metrics` exposition is hand-rolled (~50 LOC). No `prometheus/client_golang` dep.
+- **ADR-16 (2026-05-16):** CSRF tokens are HMAC-signed timestamps, issued by operator at form-render time (`csrf_secret` never crosses to client). No cookies, no token-fetch round-trip.
+- **ADR-17 (2026-05-16):** Outbound-SMTP and inbound-SMTP both use stdlib `net/smtp` + `crypto/tls` directly. Stdlib-first when the surface is small.
 
 If you find yourself wanting to deviate from an active ADR, update the architecture doc with the new decision and rationale before changing code.
 
 ## When in doubt
 
 1. Re-read the relevant spec section
-2. If the spec is silent or ambiguous, the architecture doc's open questions section ([`spec/03-architecture.md`](./spec/03-architecture.md) §"Open architectural questions") may already have a recommended answer
+2. If the spec is silent or ambiguous, the architecture doc's "Open architectural questions" section may already have a recommended answer
 3. If neither helps, ask the author before improvising
 
-The cost of asking is small. The cost of building the wrong thing is the entire 25-hour budget.
+The cost of asking is small. The cost of building the wrong thing is real LOC + test surface to walk back.

@@ -21,7 +21,7 @@ Formspree (and similar SaaS form services) work fine for the form case. The reas
 
 - **Cost.** Posthorn is one container next to your other services — no per-submission pricing.
 - **Privacy.** Form submissions go from your visitor straight to your Postmark account and your inbox. No third party in the middle.
-- **The other half of the problem.** Formspree only handles forms. It doesn't unblock Ghost, Gitea, Mastodon, etc., which emit SMTP for their own transactional mail. Posthorn's v1.3 SMTP ingress fixes that too.
+- **The other half of the problem.** Formspree only handles forms. It doesn't unblock Ghost, Gitea, Mastodon, etc., which emit SMTP for their own transactional mail. Posthorn's SMTP ingress fixes that too.
 - **No vendor lock-in.** If Formspree disappears or changes pricing, your contact forms break. Self-hosted is stable.
 
 ## Why not run Postfix as an HTTP-to-SMTP relay?
@@ -30,13 +30,13 @@ You can — but Postfix doesn't speak HTTP natively. You'd need a custom milter 
 
 ## What if I want to use SendGrid / Mailgun / Resend / SES instead of Postmark?
 
-v1.0 ships only the Postmark transport. v1.2 adds Resend, Mailgun, SES, and outbound-SMTP. Each new transport implements the same `Transport` interface — config and behavior are identical from the operator's perspective.
+Posthorn ships Postmark, Resend, Mailgun, AWS SES, and an outbound-SMTP transport out of the box. Each transport implements the same `Transport` interface — config and behavior are identical from the operator's perspective; switching providers is a TOML edit. Pick whichever your operations story prefers; see [Transports](/configuration/transports/) for per-provider details.
 
-If you need a different transport before v1.2 ships, opening an issue is the right move.
+SendGrid isn't shipped because no one's asked. If you have a SendGrid account and want the integration, file an issue — the transport interface is small.
 
-## Why Postmark first?
+## Why Postmark as the canonical example?
 
-Single author, working part-time, finite budget. Postmark was the author's existing account (they sponsor open-source projects) and has clean API docs. Shipping one transport well in v1.0 beats shipping four poorly. v1.2's transport additions validate the abstraction.
+Single author, working part-time, finite budget. Postmark was the author's existing account (they sponsor open-source projects) and has clean API docs. The other four transports (Resend, Mailgun, SES, outbound-SMTP) ship alongside and validate the abstraction — picking Postmark in the docs is just the example, not a recommendation.
 
 ## Can I run multiple Posthorn instances behind a load balancer?
 
@@ -74,7 +74,7 @@ There is no persistent queue in v1.0. A failed submission only exists in the log
 
 ## Can I hot-reload the config?
 
-**Not in v1.0.** Config is read once at startup. To change config, edit the TOML and restart the container or process. v1.1+ may add SIGHUP-triggered reload.
+**Not in v1.0.** Config is read once at startup. To change config, edit the TOML and restart the container or process. A future release may add SIGHUP-triggered reload.
 
 ## Why TOML, not YAML / JSON?
 

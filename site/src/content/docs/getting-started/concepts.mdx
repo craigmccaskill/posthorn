@@ -25,7 +25,7 @@ path = "/api/newsletter"
 
 ## Transports
 
-A **transport** is the egress side — the thing that actually delivers the email. v1.0 ships one transport (Postmark). v1.2 adds Resend, Mailgun, SES, and outbound-SMTP. The `Transport` interface is identical across them, so adding a new one doesn't require changes to the request pipeline.
+A **transport** is the egress side — the thing that actually delivers the email. Posthorn ships five transports: Postmark, Resend, Mailgun, AWS SES, and an outbound-SMTP relay. The `Transport` interface is identical across them, so adding a new one doesn't require changes to the request pipeline.
 
 Each endpoint has its own transport configuration:
 

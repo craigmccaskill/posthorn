@@ -119,6 +119,6 @@ Posthorn does not need to coordinate with Postmark for revocation — it's a sta
 If you suspect a leak: revoke, rotate, audit Postmark's send logs for unfamiliar IPs in the leak window.
 </Aside>
 
-## Future transports
+## Other transports
 
-The same guarantee applies to v1.2+ transports (Resend, Mailgun, SES, outbound-SMTP). Each transport implementation has its own per-transport credential — API key for the HTTP transports, username/password for outbound SMTP — configured the same way, with the same NFR3 test coverage on every new transport before it merges.
+The same guarantee applies to every transport (Resend, Mailgun, SES, outbound-SMTP). Each has its own per-transport credential — API key for the HTTP transports, username/password for outbound SMTP — configured the same way, with the same NFR3 test coverage. Adding a new transport requires passing the sentinel-key-not-in-logs test before it merges.

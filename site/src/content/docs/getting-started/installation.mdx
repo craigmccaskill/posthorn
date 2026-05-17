@@ -62,8 +62,8 @@ Regardless of how you install Posthorn, you need:
 
 | Prerequisite | Why |
 |---|---|
-| A transactional mail provider account with a verified sender domain | Posthorn relays through your chosen provider. **v1.0 ships [Postmark](https://postmarkapp.com)**; v1.2 adds Resend, Mailgun, AWS SES, and outbound-SMTP relay — see [Transports](/configuration/transports/). |
-| The provider's API key (or SMTP credentials for the outbound-SMTP transport in v1.2) | Used in `[endpoints.transport.settings]`. For Postmark today: the **server token**, not the account token. |
+| A transactional mail provider account with a verified sender domain | Posthorn relays through your chosen provider. Five transports ship: [Postmark](https://postmarkapp.com), [Resend](https://resend.com), [Mailgun](https://mailgun.com), AWS SES, and a generic outbound-SMTP relay — see [Transports](/configuration/transports/). |
+| The provider's API key (or SMTP credentials for the outbound-SMTP transport) | Used in `[endpoints.transport.settings]`. For Postmark: the **server token**, not the account token. |
 | SPF, DKIM, and DMARC records on your sending domain | Required for deliverability regardless of transport — see [DNS](/security/dns/) |
 | A reverse proxy in front of Posthorn (Caddy, nginx, Traefik, Cloudflare) | TLS termination, HTTP/2, request logging |
 

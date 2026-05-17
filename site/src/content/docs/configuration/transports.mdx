@@ -1,95 +1,65 @@
 ---
 title: Transports
-description: Per-endpoint transport configuration. v1.0 ships Postmark; v1.2 adds Resend, Mailgun, SES, and outbound-SMTP.
+description: Per-endpoint transport configuration. Posthorn ships five — Postmark, Resend, Mailgun, AWS SES, and outbound SMTP.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-A **transport** is the egress side — the thing that turns a parsed form submission into a delivered email. v1.0 ships one (Postmark); the interface is designed so v1.2 can add Resend, Mailgun, SES, and outbound-SMTP without changes to the request pipeline.
-
-Each endpoint declares its own transport:
+A **transport** is the egress side — the thing that turns a parsed submission into a delivered email. Posthorn ships five transports out of the box; each endpoint picks exactly one.
 
 ```toml
 [endpoints.transport]
-type = "postmark"
+type = "postmark"  # or "resend", "mailgun", "ses", "smtp"
 
 [endpoints.transport.settings]
-api_key = "${env.POSTMARK_API_KEY}"
+# Per-transport settings, see the matching page below.
 ```
 
-Different endpoints can use different transports, or different settings (different API keys) on the same transport.
+Different endpoints in one Posthorn instance can use different transports, or different settings (different API keys) on the same transport.
 
-## Postmark
+## Choosing a transport
 
-```toml
-[endpoints.transport]
-type = "postmark"
+| Transport | Best fit | Auth shape | Body format |
+|---|---|---|---|
+| **Postmark** | Transactional email at low-to-medium volume. Strong deliverability defaults. | `X-Postmark-Server-Token` header | JSON |
+| **Resend** | Modern HTTP API; developer-friendly dashboard. Smaller deliverability track record than Postmark. | `Authorization: Bearer` | JSON |
+| **Mailgun** | Higher-volume transactional. EU region available. | HTTP Basic (`api:<key>`) | multipart/form-data |
+| **AWS SES** | AWS-native deployments. Cheapest per-message at volume. Operator owns deliverability. | AWS SigV4 | JSON |
+| **Outbound SMTP** | Operator-controlled relay (self-hosted Postfix, Mailgun's SMTP gateway, Mailtrap for testing). The "I want SMTP" fallback. | SMTP AUTH PLAIN | SMTP DATA |
 
-[endpoints.transport.settings]
-api_key = "${env.POSTMARK_API_KEY}"
-```
+<CardGrid>
+  <LinkCard title="Postmark" href="/configuration/transports/postmark/" description="X-Postmark-Server-Token, JSON, recommended default." />
+  <LinkCard title="Resend" href="/configuration/transports/resend/" description="Bearer auth, JSON, RFC 5322-style API." />
+  <LinkCard title="Mailgun" href="/configuration/transports/mailgun/" description="HTTP Basic, multipart, US + EU regions." />
+  <LinkCard title="AWS SES" href="/configuration/transports/ses/" description="SigV4, JSON, region-scoped endpoints." />
+  <LinkCard title="Outbound SMTP" href="/configuration/transports/smtp/" description="STARTTLS + AUTH PLAIN against any SMTP relay." />
+</CardGrid>
 
-### Settings
+## What every transport guarantees
 
-| Setting | Required | Description |
-|---|---|---|
-| `api_key` | yes | Postmark **server token** (per-server, not per-account). Found in the Postmark dashboard → Server → API Tokens. |
+These are NFR-level invariants every transport in the registry honors. They're tested per-transport — adding a new one requires passing the same suite.
 
-### Behavior
-
-| Aspect | Behavior |
+| Invariant | What it means |
 |---|---|
-| API endpoint | `https://api.postmarkapp.com/email` |
-| Authentication header | `X-Postmark-Server-Token: <api_key>` |
-| Body format | JSON (Postmark's structured API — `From`, `To`, `Subject`, `TextBody` as JSON fields) |
-| Per-request timeout | 5s (transport-level, separate from the gateway's 10s overall cap) |
-| Connection reuse | One `*http.Client` per process, pooled connections |
+| **No header injection** ([NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | Submitter-controlled fields (From, To, Subject, Reply-To, recipients) reach the provider through structural API constructs — JSON struct marshaling, mime/multipart writers, or pre-write CRLF validation. CRLF in any field cannot construct a sibling header. |
+| **API keys never logged** ([NFR3](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | The transport sets credentials at request-construction time and never passes them to the logger. Test suites include sentinel-token assertions that the configured key string does not appear in any captured log output, even on failure paths. |
+| **Consistent error classes** | Every transport classifies failures as `ErrTransient` (network, 5xx, transient SMTP 4xx → retry), `ErrRateLimited` (429 → retry with longer backoff), `ErrTerminal` (auth failures, 4xx other than 429, permanent SMTP 5xx → no retry). The retry policy (FR19–FR21) is ingress-agnostic. |
+| **Message-ID surfacing** | Where the provider returns one, `transport_message_id` lands in the `submission_sent` log line so operators can correlate Posthorn logs with the provider's dashboard. |
 
-### Error classification
+## Why bespoke clients, not SDKs
 
-Posthorn classifies transport responses into four buckets that drive the retry policy:
+Every transport in Posthorn is a hand-rolled HTTP (or SMTP) client. No `postmark-go`, no `aws-sdk-go-v2`, no `mailgun-go`. The reasoning is [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log):
 
-| Postmark response | Error class | Retry? |
-|---|---|---|
-| `200 OK` or `202 Accepted` | (success) | no |
-| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
-| `5xx` server error | `ErrTransient` | yes, after 1s |
-| Network timeout / connection refused | `ErrTransient` | yes, after 1s |
-| `4xx` other than 429 (`401`, `422`, etc.) | `ErrTerminal` | no |
+- Each provider's surface area is small (typically one or two endpoints we care about). Bespoke runs ~150–250 lines per transport.
+- SDKs come with transitive dependency trees we don't want to track for security updates. The smallest mainstream email SDK still pulls in 20+ packages.
+- Bespoke gives us complete control over header construction — the structural NFR1 defense lives in the transport code, not in some SDK we'd have to audit on every release.
 
-See [Retry policy](/features/retry-policy/) for the full state machine.
+The marginal case is AWS SES, which needs SigV4 signing. We implement that bespoke too (~230 lines), with an explicit LOC tripwire in [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) — if bespoke ever grows past 500 LOC for a single transport, we revisit the SDK question.
 
-### Why no Postmark SDK?
+## Registering a new transport
 
-Posthorn embeds a ~80-line HTTP client for Postmark rather than depending on a third-party SDK. The reasoning:
-
-- Postmark's API is small and stable — the entire surface we use is two endpoints (`/email`, `/email/batch` for v1.1 batch send) with structured JSON bodies.
-- Third-party SDKs would bring transitive dependencies and a maintenance burden disproportionate to the value.
-- A bespoke client lets us guarantee that submitter-controlled fields **never** become raw header strings — every header passes through structured JSON. See [Header injection](/security/header-injection/).
-
-This is [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) in the architecture doc.
-
-## Future transports (v1.2)
-
-These are designed-in but not implemented in v1.0:
-
-| Transport | Status | Use case |
-|---|---|---|
-| `resend` | v1.2 | Alternative HTTP API provider |
-| `mailgun` | v1.2 | Alternative HTTP API provider |
-| `ses` | v1.2 | AWS-native deployments (bespoke SigV4, no AWS SDK) |
-| `smtp` | v1.2 | Outbound-SMTP relay for operators on hosts that don't block port 587 (Hetzner, OVH, on-prem) |
-
-The `Transport` interface is intentionally narrow:
-
-```go
-type Transport interface {
-    Send(ctx context.Context, msg Message) error
-}
-```
-
-Adding a new transport means implementing that interface and registering it in the transport factory. No changes to the gateway handler, the config loader, the rate limiter, or the response writer.
+Adding a sixth (or sixteenth) transport is a single new file in `core/transport/`. The file calls `Register` in an `init()` that names the type and provides a validator + builder pair. No edits to the gateway handler, the config loader, the rate limiter, or the response writer.
 
 <Aside type="caution">
-**Don't add a custom transport in a fork** for v1.0. The interface may evolve before v1.2 ships, and the registration mechanism isn't a stable extension point yet. Open an issue if you have a transport you'd like to see — chances are it's already on the v1.2 list.
+The transport registry is an internal extension point. If you're forking Posthorn to add a custom transport, the API may evolve — open an issue first so we can keep your patch compatible.
 </Aside>

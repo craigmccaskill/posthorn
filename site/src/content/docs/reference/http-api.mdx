@@ -202,8 +202,8 @@ curl -X POST http://localhost:8080/api/contact \
 
 | Feature | When |
 |---|---|
-| Health check endpoint (`/healthz`) | v1.2 |
-| Prometheus metrics (`/metrics`) | v1.2 |
-| Dry-run mode (parse + validate without send) | v1.2 |
 | File attachments | v2 |
-| Webhook transport response | v2 |
+| Webhook transport (outbound + lifecycle event forwarding) | v2 |
+| Durable submission storage / retry queue across restarts | v2 |
+| Suppression list + automatic unsubscribe injection | v2 |
+| Multi-tenant routing / per-endpoint fan-out | v2 |

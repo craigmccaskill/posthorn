@@ -25,6 +25,9 @@ The cloud-blocks-SMTP problem is the canonical entry point — DigitalOcean, AWS
 - **2026-04-27** — Scope expanded to email gateway (two ingress modes: HTTP form, SMTP listener) after analyzing the broader audience experiencing the same DigitalOcean SMTP-block pain. Project renamed to *Posthorn*. Repo renamed in place from `caddy-formward` to `posthorn`. Caddy module status changed from primary deliverable to optional adapter. Spec rewritten from scratch (this document); previous brief, PRD, and architecture documents replaced.
 - **2026-05-15** — Positioning sharpened from "gateway for cloud platforms that block outbound SMTP" to "unified outbound mail layer for self-hosted projects" after triaging 10 incoming GitHub issues (most from the Pensum integration POV). The cloud-SMTP-block wedge is preserved as the canonical discovery entry point; the broader unified-layer framing is the durable value proposition. v1.x roadmap restructured (v1.1 API mode, v1.2 multi-transport + ops polish, v1.3 SMTP ingress) to support this positioning.
 - **2026-05-15** — Caddy v2 adapter module cut from v1.0 pre-tag. Originally kept as a secondary deployment shape (carryover from the project's `caddy-formward` origin), the adapter increasingly diverged from the standalone (v1.3 SMTP ingress and v2 SQLite storage were both already standalone-only) and the two-shapes-per-feature carve-outs muddled the single-shape thesis. Caddy users keep first-class support via the reverse-proxy path. FR27–FR30 / NFR10 deleted from the PRD, ADR-6 and ADR-7 retired from the architecture doc, R3 modules-page submission dropped. The `core/gateway.Handler` interface is preserved so a community-maintained module against it remains possible without the project carrying the maintenance.
+- **2026-05-16** — Batch send dropped from the v1.1 scope while drafting the v1.1 FR amendment. The 2026-05-15 roadmap restructure named batch as a v1.1 feature, but the named v1.1 audience (one operator, many projects — Pensum, Ghost, internal tools) has no concrete workload that needs N-message-per-call efficiency. The other three v1.1 features (API-key auth, JSON content type, idempotency keys) each map to a specific failure mode that today blocks the audience from using Posthorn at all; batch only solves a performance problem none of them has yet. Locking batch's design (rate-limit-per-message vs per-batch, partial-success semantics, idempotency scope, per-message logging shape) absent operator-driven evidence is exactly the kind of feature-count-first thinking the gateway-not-infrastructure principle exists to prevent. Reconsidered if a concrete operator surfaces with the need.
+- **2026-05-16 (later same day)** — Per-request recipient override (`to_override` JSON field) added to v1.1 scope as FR46. Drafting the Cloudflare Worker recipe surfaced that the named v1.1 audience (Workers sending password resets, receipts, notifications) cannot pre-declare every possible recipient in config — each transactional event goes to a different end user. The original D5 design decision deferred all per-request overrides on blast-radius grounds; that was correct for `from` (per-request sender enables spoofing via leaked keys, irreversible reputation damage) but wrong for `to` (the operator's domain reputation isn't at stake when a leaked key sends *to* arbitrary addresses, and "one endpoint per recipient" doesn't scale to user-shaped recipients). `from` stays endpoint-configured; `to_override` accepts a JSON string or array of strings, each validated as a syntactic email (FR11 reuse). Rate limits, idempotency, and Postmark's own abuse detection remain the defenses against a leaked-key spam attack. New ADR-11 captures the safety reasoning.
+- **2026-05-16 (end of day)** — v1.x scope collapsed into a single v1.0 release. After completing the v1.1 API mode amendment and shipping the Cloudflare Worker recipe, an evaluation of what each future milestone (v1.2 multi-transport + ops, v1.3 SMTP ingress, v2 platform) imports concluded that v1.2 and v1.3 belong in the initial public release while v2 stays deferred as the stateful-platform boundary. The v1.0/v1.1/v1.2/v1.3 split was a planning artifact — a sequencing line drawn during the 2026-04-27 brief and refined during the 2026-05-15 roadmap restructure. With v1.1's work complete, the brief's design principles (gateway-not-infrastructure, no-feature-count-competition, config-over-UI, bespoke-before-SDK) hold equally for everything through v1.3; v2's SQLite + async-queue architecture is the category change that justifies the deferral. The combined v1.0 scope is now a single XL effort (originally locked v1.0 plus blocks B/C/D); audience reception will inform whether v2 follows or whether the v1.x line is sufficient. The new FRs span FR47-FR68, new NFRs span NFR22-NFR24, new Epics 9-11. Audience reasoning: at first public release, "Posthorn 1.0 = unified outbound mail gateway with form ingress + API mode + idempotency + four transports + Prometheus + SMTP-listener" is a more credible and self-consistent positioning than "Posthorn 1.0 = contact-form gateway; API mode and multi-transport coming soon." Internal version sequencing was not load-bearing on the audience side.
 
 ## Design principles
 
@@ -233,26 +236,37 @@ GitHub stars, blog traffic, HN front page are noise relative to these. A real se
 
 ## Post-MVP Vision
 
-The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incoming GitHub issues (most driven by a concrete second-user integration — Pensum). Current structure ships value in coherent themed releases rather than one large v1.1 "lots of things" release. The canonical user-facing roadmap lives at [posthorn.dev/roadmap/](https://posthorn.dev/roadmap/); this section is the authoritative scope source it derives from.
+The v1.x roadmap was restructured 2026-05-15, then collapsed into a single v1.0 release 2026-05-16 (see status log). The combined v1.0 scope is recorded below as three feature blocks — they're sequenced as Epics within the single v1.0 release rather than as separate version milestones. The canonical user-facing roadmap lives at [posthorn.dev/roadmap/](https://posthorn.dev/roadmap/); this section is the authoritative scope source it derives from.
 
-**v1.1 — API mode.** Posthorn becomes usable as an internal mail API, not just a contact-form gateway. Server-to-server callers (workers, daemons, paid-event handlers) can hit Posthorn without needing browser-shaped defenses.
+**v1.0 feature block A — Form ingress** (originally locked v1.0 scope). HTTP form-encoded ingress with honeypot, Origin/Referer fail-closed, rate limiting, retry policy, structured logging. Postmark transport. Standalone binary + Docker image. Epics 1-7, FR1-FR26, NFR1-NFR18.
+
+**v1.0 feature block B — API mode** (originally v1.1; folded into v1.0 on 2026-05-16). Posthorn becomes usable as an internal mail API. Server-to-server callers (workers, daemons, paid-event handlers) hit Posthorn without browser-shaped defenses.
 - API-key auth per endpoint (`auth = "api-key"` mode, mutex with form-mode defenses)
 - JSON content type on API-mode endpoints
 - Idempotency keys via standard `Idempotency-Key` header (24h TTL, in-memory; durable across restarts in v2)
-- Batch send with per-recipient template substitution against Postmark `/email/batch`
+- Per-request `to_override` (string or array) — see ADR-11 for the safety asymmetry vs `from`
 
-**v1.2 — multi-transport + operational maturity.** Posthorn isn't Postmark-locked, and it's now production-ready.
+Epic 8, FR31-FR46, NFR19-NFR21.
+
+**v1.0 feature block C — Multi-transport + operational maturity** (originally v1.2; folded into v1.0 on 2026-05-16). Posthorn isn't Postmark-locked, and it's production-ready.
 - Resend, Mailgun, AWS SES, outbound-SMTP transports
-- CSRF + time-based form tokens (form-mode spam protection beyond v1.0 honeypot + Origin/Referer)
-- `/healthz` endpoint, `/metrics` (Prometheus exposition), dry run mode
-- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of v1.0 CIDR-list syntax
+- CSRF tokens for form-mode (HMAC-issued by operator at form-render time; see ADR-16)
+- `/healthz` endpoint, `/metrics` (hand-rolled Prometheus exposition — see ADR-15)
+- Dry-run mode (full pipeline minus `transport.Send`)
+- Named presets for `trusted_proxies` (`cloudflare`, etc.) on top of CIDR-list syntax
 - IP-stripping option for GDPR contexts
 
-**v1.3 — SMTP ingress.** The strategic feature that completes the gateway thesis. ~10-14 hours of focused work.
-- TCP listener accepting SMTP from clients on the local network, forwarding via the configured HTTP API transport
-- New threat model: open-relay prevention, RCPT validation, sender allowlist, recipient/size caps, optional client-cert auth
-- New `smtp_listener` config section, new `Ingress` interface
-- This is what unblocks the Ghost admin login use case.
+Epics 9-10, FR47-FR59.
+
+**v1.0 feature block D — SMTP ingress** (originally v1.3; folded into v1.0 on 2026-05-16). Completes the gateway thesis. TCP listener accepts SMTP from internal clients, forwards via the configured HTTP API transport. Unblocks the Ghost admin login use case.
+- TCP listener with SMTP AUTH (PLAIN/LOGIN) and optional client-cert auth (see ADR-12 for `Ingress` interface design)
+- Open-relay prevention via sender allowlist + recipient allowlist or count cap
+- Size and TLS enforcement
+- New `Ingress` interface; existing HTTP handlers retrofitted onto it
+- New `[smtp_listener]` top-level config section
+- One outbound transport per SMTP listener; multi-tenant routing is v2 territory (see ADR-13)
+
+Epic 11, FR60-FR68, NFR22-NFR24.
 
 **v2 — platform maturity.** The architectural shift that unlocks operating Posthorn as a real mail platform.
 - SQLite submission log + persistent retry queue across restarts
@@ -265,6 +279,12 @@ The v1.x roadmap was restructured 2026-05-15 in response to triage of 10 incomin
 - Admin UI (embedded web app, requires SQLite storage)
 - Proof-of-work spam challenge (defeats botnet spam that per-IP rate limiting can't catch)
 - PGP encryption
+
+### Deliberately not on the roadmap (revisit on concrete operator pain)
+
+Features that have been considered and explicitly removed pending a real workload that demands them. Distinct from the version-tagged scope above — these have *no* target version, and won't get one until an operator surfaces with the use case.
+
+- **Batch send API** (`{"messages": [...]}` body with per-message status response, mapping to provider batch endpoints like Postmark's `/email/batch`). Drafted as v1.1 scope during the 2026-05-15 roadmap restructure; removed 2026-05-16 while drafting the v1.1 FRs. Reasoning: the named v1.1 audience sends 1 message per task (password resets, welcome flows, notifications). Adding a batch shape requires locking design decisions — rate-limit charging (per-message vs per-batch), partial-success semantics, idempotency scope (whole batch vs each message), per-message log fan-out — without operator-driven evidence to ground them. The gateway-not-infrastructure principle (a Posthorn batch endpoint with its own scheduling/queuing/replay logic pulls toward infrastructure shape) and the no-feature-count-competition principle (Postmark has `/email/batch`, so we should too is exactly the framing the principle exists to reject) both argue for waiting. Trigger to reconsider: a real operator workload sending >50 messages per task where round-trip overhead is the binding constraint, with enough usage detail to drive the design.
 
 ## Technical Constraints (locked)
 

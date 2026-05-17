@@ -83,12 +83,15 @@ interval = "1m"
 
 A token-bucket limiter per client IP, per endpoint. 5 submissions per minute means a burst of 5 immediately, then refilling at 5 per minute thereafter. Exceeding triggers 429.
 
-## What v1.0 doesn't ship
+## What ships beyond the basics
 
-| Feature | When | Notes |
+Posthorn also ships HMAC-signed [CSRF tokens](/features/api-mode/) (`csrf_secret`, off by default). Operators issue tokens server-side at form-render time; Posthorn verifies the HMAC on submit.
+
+## What doesn't ship
+
+| Feature | Status | Notes |
 |---|---|---|
-| CSRF tokens | v1.2 | Stateful CSRF tokens for forms that include them |
-| Time-based form tokens | v1.2 | Reject submissions that complete impossibly fast (< 3s) |
+| Time-based form tokens | future | Reject submissions that complete impossibly fast (< 3s) |
 | reCAPTCHA / hCaptcha | (not planned) | Forces a third-party dependency; conflicts with the self-hosted ethos |
 | Proof-of-work challenge | v3 | Computational cost imposed on submitter |
 | Bayesian content classification | (not planned) | Too easy to evade with modern LLMs |

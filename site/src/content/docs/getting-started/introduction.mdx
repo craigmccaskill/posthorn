@@ -3,7 +3,7 @@ title: Introduction
 description: What Posthorn is, what it isn't, and which problems it solves.
 ---
 
-Posthorn is the **unified outbound mail layer for self-hosted projects.** One gateway between every app you self-host and the transactional mail provider you've already picked. It accepts mail through pluggable ingress modes (HTTP form in v1.0, JSON API in v1.1, SMTP in v1.3) and delivers it via pluggable HTTP-API and SMTP transports. v1.0 ships HTTP form ingress and a Postmark transport; v1.2 adds Resend, Mailgun, AWS SES, and outbound-SMTP relay.
+Posthorn is the **unified outbound mail layer for self-hosted projects.** One gateway between every app you self-host and the transactional mail provider you've already picked. It accepts mail through three ingress shapes — HTTP form, HTTP API (JSON, bearer-authenticated), and SMTP — and delivers via five transports: Postmark, Resend, Mailgun, AWS SES, and a generic outbound-SMTP relay.
 
 ## The problem
 
@@ -33,7 +33,7 @@ There is no actively maintained, self-hosted, HTTP-API-first email gateway in 20
 
 ## The shape
 
-Posthorn is a single Go binary distributed primarily as a Docker container. It speaks form-encoded HTTP on one side (with JSON API in v1.1 and SMTP in v1.3) and HTTP API calls to your chosen transactional provider on the other. A single TOML file configures one or more endpoints, each with its own recipients, templates, spam protection, and rate limit.
+Posthorn is a single Go binary distributed primarily as a Docker container. It speaks form-encoded HTTP, JSON HTTP, and SMTP on the ingress side, and HTTP API calls or outbound SMTP on the egress side. A single TOML file configures one or more endpoints, each with its own recipients, templates, spam protection, and rate limit, plus an optional SMTP listener block.
 
 Posthorn doesn't terminate TLS — run it behind whatever reverse proxy you already use (Caddy, nginx, Traefik, Cloudflare). The [reverse proxy](/deployment/reverse-proxy/) page covers the common ones with worked configs.
 
@@ -41,27 +41,25 @@ Posthorn doesn't terminate TLS — run it behind whatever reverse proxy you alre
 
 | Capability | Detail |
 |---|---|
-| Ingress | HTTP form (`application/x-www-form-urlencoded`, `multipart/form-data`) |
-| Transport | Postmark HTTP API |
-| Spam protection | Honeypot, Origin/Referer fail-closed, max body size, token-bucket rate limit with LRU eviction |
+| HTTP form ingress | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot + Origin check + rate limit + CSRF tokens (opt-in) |
+| HTTP API mode | Bearer-authenticated JSON; idempotency keys; per-request `to_override`; per-key rate limiting |
+| SMTP ingress | TCP listener with AUTH PLAIN / client-cert; STARTTLS required by default; sender allowlist + recipient allowlist or cap; size cap |
+| Transports | Postmark, Resend, Mailgun, AWS SES (SigV4), outbound-SMTP relay — five total, all bespoke (no SDK deps) |
+| Operations | `/healthz`, `/metrics` (Prometheus exposition), dry-run mode, IP-stripping option, named `trusted_proxies` presets (Cloudflare) |
 | Validation | Required fields, email syntax check |
 | Templating | Go `text/template` for subject and body, with custom-field passthrough |
-| Response handling | JSON, redirect via content negotiation, `redirect_success` / `redirect_error` |
+| Response handling | JSON, redirect via content negotiation, `redirect_success` / `redirect_error` (form mode) |
 | Failure handling | 1 retry on transient/5xx (1s), 1 retry on 429 (5s), no retry on 4xx config errors, 10s hard timeout |
-| Logging | Structured JSON with UUIDv4 submission ID |
+| Logging | Structured JSON with UUIDv4 submission ID; SMTP session IDs |
 | Deployment | Standalone Docker container or Go binary, behind any reverse proxy |
 
 ## What's out of scope for v1.0
 
 These come later, intentionally. See the [Roadmap](/roadmap/) for the full trajectory.
 
-- **JSON API ingress, API-key auth, idempotency keys, batch send** — v1.1 (API mode, for server-to-server callers)
-- **Resend, Mailgun, AWS SES, outbound-SMTP transports** — v1.2
-- **CSRF / time-based form tokens** — v1.2
-- **Prometheus metrics, health check, dry run** — v1.2
-- **SMTP ingress** (the headline post-v1.0 feature; what unblocks Ghost, Gitea, Mastodon et al.) — v1.3
-- **File attachments, webhook transport, HTML body, suppression list, durable retry queue** — v2
-- **Admin UI, proof-of-work spam challenge, PGP** — v3
+- **File attachments, webhook transport, HTML body, suppression list, durable retry queue, automatic unsubscribe injection** — v2
+- **Admin UI, proof-of-work spam challenge, PGP encryption** — v3
+- **Inbound mail parsing (MX target, IMAP polling)** — deliberately deferred to v3+
 
 See the [project brief](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md) for the full roadmap.
 
