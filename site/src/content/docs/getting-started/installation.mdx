@@ -70,14 +70,16 @@ Regardless of how you install Posthorn, you need:
 ## Verifying the install
 
 ```bash
-docker run --rm ghcr.io/craigmccaskill/posthorn:latest --version
+docker run --rm ghcr.io/craigmccaskill/posthorn:latest version
 # posthorn v1.0.0
 ```
 
 If you're running the standalone binary:
 
 ```bash
-posthorn --version
+posthorn version
 ```
+
+(`--version` and `-v` work too; `version` is the canonical subcommand. Local development builds print `posthorn v0.0.1-dev` — the released tag is injected at build time.)
 
 For a deeper sanity check, run `posthorn validate --config <your-config>` — it parses the TOML, resolves `${env.VAR}` placeholders, and reports schema errors without starting the listener.

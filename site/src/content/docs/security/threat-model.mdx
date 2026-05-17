@@ -19,7 +19,7 @@ This page summarizes what Posthorn defends against, what it doesn't, and how eac
 | 4 | Provider quota burn / resource exhaustion | [Rate limit](/features/rate-limiting/) + [max body size](/features/spam-protection/#max-body-size) | yes — set `rate_limit`, `max_body_size` |
 | 5 | Email header injection via submitter input | [Structured transport-layer guarantee](/security/header-injection/), no string concatenation of headers | no — code-level guarantee, test-enforced |
 | 6 | API key theft from logs or error output | [API keys never logged](/security/api-keys/) | no — code-level guarantee, test-enforced |
-| 7 | Cross-site request forgery on form-mode endpoints | HMAC-signed [CSRF tokens](/features/api-mode/) (`csrf_secret`) — optional, off by default | yes — set `csrf_secret` |
+| 7 | Cross-site request forgery on form-mode endpoints | HMAC-signed CSRF tokens — operator-issued at form-render time, verified on submit. Form-mode only; api-mode endpoints reject `csrf_secret` at parse time. | yes — set `csrf_secret` |
 
 ## In scope: HTTP API mode
 
@@ -45,12 +45,15 @@ This page summarizes what Posthorn defends against, what it doesn't, and how eac
 Threats 5, 6, 9, 12, 17, and 18 are **code-level guarantees**, not config options. There's no toggle to disable them; the test suite enforces them on every build.
 
 ## Out of scope
+
+| Threat | Status | Notes |
+|---|---|---|
 | Botnet spam from many low-rate IPs | v3 | Rate limit per IP doesn't catch this. Mitigation: captcha or proof-of-work (v3). |
 | DDoS / Layer 7 attacks | (not in scope) | This is the CDN/reverse-proxy's responsibility, not Posthorn's. |
 | API key theft from misconfigured deployment | documentation | If you commit your key to git or expose it in a public env file, Posthorn can't help. Treat keys as secrets; use [secret-injection mechanisms](/configuration/environment-variables/). |
-| Compromise of the upstream transport (Postmark) | not applicable | Posthorn is a thin relay; if Postmark is breached, that's an upstream incident, not a Posthorn vulnerability. |
-| Supply chain attacks on Posthorn dependencies | partial | Minimal dep tree (3 deps in v1.0); Dependabot tracks them. No defense beyond keeping deps current. |
-| Phishing emails authored by submitter content | yes — submitter content is sanitized to plaintext only | Posthorn's body is plaintext; no rendering of submitter HTML. v2 may add markdown rendering with explicit escaping. |
+| Compromise of an upstream transport (Postmark, Resend, etc.) | not applicable | Posthorn is a thin relay; if the upstream is breached, that's an upstream incident, not a Posthorn vulnerability. |
+| Supply chain attacks on Posthorn dependencies | partial | Minimal dep tree (3 external deps in v1.0); Dependabot tracks them. No defense beyond keeping deps current. |
+| Phishing emails crafted by submitter content | partial | Posthorn's body is plaintext; no rendering of submitter HTML. v2 may add markdown rendering with explicit escaping. |
 
 ## What's a Posthorn vulnerability vs. an operator misconfiguration?
 

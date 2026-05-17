@@ -1,25 +1,46 @@
 ---
-title: API keys
-description: How Posthorn handles API keys — and the guarantee that they never appear in logs.
+title: API keys & secrets
+description: How Posthorn handles credentials — and the guarantee that they never appear in logs.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 
-Posthorn's only API key in v1.0 is the **Postmark server token** used by the Postmark transport. This page documents how it's configured, how it's used, and the guarantee that it never appears in any log output.
+Posthorn handles several kinds of credentials in v1.0:
+
+- **Transport API keys** — one per configured transport (Postmark server token, Resend API key, Mailgun API key, AWS SES credentials, outbound-SMTP password).
+- **API-mode `api_keys`** — Bearer tokens accepted on API-mode endpoints. Operator-issued.
+- **CSRF `csrf_secret`** — HMAC key for form-mode CSRF tokens. Operator-generated.
+- **SMTP `smtp_users` passwords** — AUTH PLAIN credentials accepted by the inbound SMTP listener.
+
+All of them are subject to the same guarantee: **they must not appear in any log output.** This page documents how they flow through the process and how that guarantee is enforced.
 
 ## Configuration
 
-API keys are configured via `${env.VAR}` placeholders, not as literal strings in the TOML file:
+Every credential is configured via `${env.VAR}` placeholders, not literal strings in the TOML file:
 
 ```toml
+# Transport credential
 [endpoints.transport.settings]
 api_key = "${env.POSTMARK_API_KEY}"
+
+# API-mode bearer tokens
+[[endpoints]]
+auth = "api-key"
+api_keys = ["${env.WORKER_KEY_PRIMARY}", "${env.WORKER_KEY_BACKUP}"]
+
+# CSRF HMAC key
+csrf_secret = "${env.CSRF_SECRET}"
+
+# SMTP user password
+[[smtp_listener.smtp_users]]
+username = "ghost"
+password = "${env.GHOST_SMTP_PASSWORD}"
 ```
 
-Then set the env var via your deployment:
+Then set the env vars via your deployment:
 
 ```bash
-# Docker
+# Docker Compose
 docker compose --env-file .env up -d
 
 # systemd
@@ -35,62 +56,50 @@ See [Environment variables](/configuration/environment-variables/) for the full 
 
 That said, Posthorn does accept literal strings (the placeholder syntax is optional) — it's the operator's responsibility to keep that file out of git. Use `.gitignore` for any config file with literal secrets.
 
-## How the key flows
+## The guarantee (NFR3, NFR21)
 
-```text
-1. Process starts. os.Environ() reads POSTMARK_API_KEY.
-2. Config loader parses TOML. Finds ${env.POSTMARK_API_KEY} in api_key field.
-3. Loader resolves placeholder against process env. Stores resolved value in
-   memory, in a config struct.
-4. Transport is constructed with the resolved string. Stored as an unexported
-   field on the Postmark transport struct.
-5. For each request:
-     a. Build Postmark HTTP request.
-     b. Set X-Postmark-Server-Token header to the key.
-     c. POST to https://api.postmarkapp.com/email.
-6. Process exit. Memory is released. No persistent storage.
-```
+> Credentials configured via `${env.VAR}` placeholders must not appear in any log output, including error logs.
 
-At no point in this flow is the key written to a log, an error message, or any persistent storage.
+This holds across every transport (Postmark, Resend, Mailgun, SES, outbound-SMTP), every API-mode endpoint, every SMTP user, and the CSRF secret.
 
-## The guarantee (NFR3)
-
-> API keys configured via `${env.VAR}` placeholders must not appear in any log output, including error logs.
-
-Specifically:
-
-| Code path | What's logged | Key included? |
+| Code path | What's logged | Credential included? |
 |---|---|---|
-| `config_loaded` | Endpoint paths, transport types, recipient count | **no** — transport settings are not logged |
-| `submission_sent` | Submission ID, endpoint, latency, Postmark message ID | **no** |
-| `send_retry` | Error class, HTTP status, attempt number | **no** |
-| `submission_failed` | Error class, HTTP status, latency, payload (if enabled) | **no** |
-| Transport error wrap | HTTP status, response body excerpt | **no** — response bodies are truncated and inspected; if they contained the key (they shouldn't), an additional redaction pass strips it |
-| Process startup | "listening on :8080", config summary | **no** |
+| `posthorn starting` / `endpoint registered` | Endpoint paths, transport types, recipient counts | **no** — transport settings are not logged |
+| `submission_received` | Submission ID, endpoint, transport | **no** |
+| `submission_sent` | Submission ID, endpoint, transport, latency, `transport_message_id` | **no** |
+| `send_retry_scheduled` / `send_retry_failed` | Error class, HTTP status, delay, retry error | **no** — transport-error wraps shape the message to exclude the key |
+| `submission_failed` | Error string, full form payload (or field names), latency | **no** |
+| `auth_failed` (API-mode) | Endpoint, transport, latency | **no** — the rejected key never reaches the log surface |
+| `smtp_auth_failed` | Username (never password) | **no** |
+| `csrf_rejected` | Reason (`token expired`, `invalid signature`, etc.) | **no** — the secret never appears |
 
 ## How it's enforced
 
 Two complementary mechanisms:
 
-### 1. The code doesn't log the key
+### 1. The code doesn't log credentials
 
-The Postmark transport sets the key as an HTTP header during request construction. The HTTP client logs are not enabled by default. Error paths log `err.Error()`, which is shaped to exclude the key (transport errors include status code and response excerpt, never the key).
+Each transport sets its credential as an HTTP header (Postmark's `X-Postmark-Server-Token`, the `Authorization` header for Resend / Mailgun / api-mode endpoints, the `Authorization: AWS4-HMAC-SHA256` derived signature for SES, AUTH PLAIN line for SMTP) at request-construction time. The HTTP client logs are not enabled. Error paths log `err.Error()`, which is shaped to exclude the credential — transport errors carry the upstream's status code and response excerpt, never the key.
 
-This is what makes the guarantee feasible — if every code path were free to log arbitrary error details, the key could leak. By keeping the key in a header set at one specific construction site, and shaping errors at one specific wrapping site, the leak surface is small enough to audit.
+API-mode `api_keys` are matched with `crypto/subtle.ConstantTimeCompare`; on a mismatch, the request returns 401 with no key material in the log line.
 
-### 2. Tests assert the key isn't there (NFR3)
+The CSRF secret is used to verify HMAC signatures; the verification function takes the secret as a `[]byte` parameter and never echoes it back in errors.
 
-The test suite captures all log output during failing transport calls (using a mock Postmark server returning 4xx/5xx) and asserts the configured API key string does not appear:
+This is what makes the guarantee feasible — every credential lives in exactly one place in the code (the HTTP header, the AUTH line, the HMAC verifier), and error paths at every wrapping site are shaped to exclude it.
+
+### 2. Tests assert the credential isn't there
+
+The test suite captures all log output during failing operations (mock upstream returning 4xx/5xx; AUTH failures with wrong passwords; CSRF verification against a tampered token) and asserts the configured credential string does not appear:
 
 ```go
 // pseudo-code
 captured := captureLogs(func() {
     handler.ServeHTTP(w, r)
 })
-require.NotContains(t, captured, knownAPIKey)
+require.NotContains(t, captured, knownCredential)
 ```
 
-This runs on every CI build. A regression that newly logged the key — even in a debug print, even in a wrapped error — would fail this test.
+This runs on every CI build for every transport. A regression that newly logged the credential — even in a debug print, even in a wrapped error — would fail this test.
 
 ## Operator responsibilities
 
@@ -98,27 +107,27 @@ Posthorn handles the in-process flow. The operator is still responsible for:
 
 | Concern | How |
 |---|---|
-| Keeping the env-var value out of git | `.env` in `.gitignore` |
+| Keeping env-var values out of git | `.env` in `.gitignore` |
 | Keeping `.env` file permissions tight | `chmod 0640`, owned by service user |
-| Rotating compromised keys | Issue a new Postmark token, update env file, restart Posthorn |
-| Limiting key blast radius | Use a **per-server** Postmark token, not the account token. Compromised server tokens can be revoked without affecting other servers. |
-| Auditing key access | Server-side logs in Postmark dashboard show which IPs and User-Agents used the key |
+| Rotating compromised credentials | Issue new credential, update env, restart Posthorn |
+| Limiting blast radius | Use per-server / per-app tokens where the provider supports it. Compromised server tokens can be revoked without affecting other servers. |
+| Auditing credential use | Server-side logs in the provider's dashboard show which IPs and User-Agents used the key |
+| Generating a strong `csrf_secret` | 32+ bytes of random data. Example: `openssl rand -hex 32` or `python3 -c "import secrets; print(secrets.token_hex(32))"`. The config-parse layer rejects secrets shorter than 16 bytes. |
 
-## If a key is compromised
+## If a credential is compromised
 
-1. **Revoke the token in Postmark.** Dashboard → Server → API Tokens → Revoke.
-2. **Issue a new token.** Same screen.
-3. **Update the env var.**
-4. **Restart Posthorn.** Old key is now invalid; new key is in use.
+1. **Revoke or rotate at the source.** For provider keys (Postmark, Resend, Mailgun, SES IAM key, SMTP relay password) — use the provider's dashboard. For api-mode `api_keys` — pick a new value. For `csrf_secret` — generate a new 32-byte value (existing tokens issued under the old secret will be rejected on next submit; users will need to refresh the page).
+2. **Update the env var.**
+3. **Restart Posthorn.** Old credential is now invalid; new credential is in use.
 
-Posthorn does not need to coordinate with Postmark for revocation — it's a stateless HTTP API client.
+Posthorn does not need to coordinate with the provider for revocation — every transport is a stateless HTTP / SMTP client.
 
 <Aside type="caution">
-**Never share screenshots of `.env` files, `docker-compose.yml` with substituted values, or terminal sessions where `printenv` ran.** Keys leak this way more than any other.
+**Never share screenshots of `.env` files, `docker-compose.yml` with substituted values, or terminal sessions where `printenv` ran.** Credentials leak this way more often than through any code path.
 
-If you suspect a leak: revoke, rotate, audit Postmark's send logs for unfamiliar IPs in the leak window.
+If you suspect a leak: revoke, rotate, audit the provider's send logs for unfamiliar IPs in the leak window.
 </Aside>
 
-## Other transports
+## Adding a new transport
 
-The same guarantee applies to every transport (Resend, Mailgun, SES, outbound-SMTP). Each has its own per-transport credential — API key for the HTTP transports, username/password for outbound SMTP — configured the same way, with the same NFR3 test coverage. Adding a new transport requires passing the sentinel-key-not-in-logs test before it merges.
+Every transport added in v1.x or v2 must pass the NFR3 sentinel-key-not-in-logs test before merging — the test triggers a failure path with a known credential string and asserts the string does not appear in captured log output. This applies to bespoke transports the same way it applies to the five v1.0 transports.

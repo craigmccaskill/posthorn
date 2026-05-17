@@ -31,9 +31,9 @@ Three reasons:
 
 Every request runs under a `context.WithTimeout(ctx, 10*time.Second)`. When the deadline fires:
 
-- Any in-flight retry is cancelled mid-request.
+- Any in-flight retry is cancelled mid-request via the request context.
 - The handler returns 502 immediately.
-- A `timeout_exceeded` log line is written.
+- A `submission_failed` log line is written with the underlying error (Posthorn does not emit a separate `timeout_exceeded` event in v1.0 — the timeout surfaces as the cancelled retry's error).
 
 This means a worst case looks like:
 
@@ -63,36 +63,41 @@ If a `429` repeats on retry, Posthorn returns 502 to the client. The operator's 
 
 ## What ErrTerminal looks like
 
-A `4xx` response from Postmark other than `429` is almost always a **configuration error**:
+A `4xx` response from the upstream provider other than `429` is almost always a **configuration error**:
 
 | Status | Meaning |
 |---|---|
 | `401 Unauthorized` | Invalid `api_key` — wrong token, account deleted, or token revoked |
 | `403 Forbidden` | Account or sender domain suspended |
-| `422 Unprocessable Entity` | Postmark rejected the message (unverified `from`, invalid recipient, blocked content) |
+| `422 Unprocessable Entity` | Provider rejected the message (unverified `from`, invalid recipient, blocked content) |
 | `404 Not Found` | URL misconfigured (Posthorn wouldn't normally hit this — internal bug) |
 
 In every case, retrying without fixing the config will fail again. Posthorn logs the response status and returns 502 to the client. The operator's recovery is to read the log, fix the config, and re-send manually if needed.
 
 ## Observing retries
 
-Every retry attempt logs an event:
+When the first attempt fails with a retryable class, Posthorn emits a `send_retry_scheduled` event:
 
 ```json
 {
-  "time": "2026-05-14T20:01:23Z",
-  "level": "WARN",
-  "msg": "send_retry",
+  "time": "2026-05-16T20:01:23Z",
+  "level": "INFO",
+  "msg": "send_retry_scheduled",
   "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
   "endpoint": "/api/contact",
   "transport": "postmark",
-  "error_class": "transient",
+  "class": "transient",
   "status": 503,
-  "attempt": 2
+  "delay": 1000000000
 }
 ```
 
-`attempt: 1` is the initial send; `attempt: 2` is the retry. Successful retry produces a normal `submission_sent` log on the second attempt. Failed retry produces `submission_failed`.
+`delay` is nanoseconds (slog's default `Duration` encoding) — 1s for `transient`, 5s for `rate_limited`.
+
+After the retry returns, Posthorn emits one of:
+
+- `send_retry_succeeded` (no fields beyond standard) — followed by the normal `submission_sent` (the terminal event carrying `latency_ms` and `transport_message_id`).
+- `send_retry_failed` (with `error`) — followed by `submission_failed` and a 502 to the client.
 
 ## Tuning
 

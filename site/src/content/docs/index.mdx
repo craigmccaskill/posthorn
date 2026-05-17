@@ -1,9 +1,9 @@
 ---
 title: Posthorn
-description: The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark today; Resend, Mailgun, SES coming. Self-hosted, no mail server required.
+description: The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark, Resend, Mailgun, AWS SES, outbound-SMTP. Self-hosted, no mail server required.
 template: splash
 hero:
-  tagline: Self-hosted mail without the mail server. One outbound layer between every app you run and your transactional provider — Postmark today, Resend / Mailgun / AWS SES / outbound-SMTP coming.
+  tagline: Self-hosted mail without the mail server. One outbound layer between every app you run and your transactional provider — Postmark, Resend, Mailgun, AWS SES, or outbound-SMTP. Three ingress shapes (HTTP form, HTTP API, SMTP).
   image:
     file: ../../assets/logo.svg
   actions:
@@ -51,7 +51,7 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 
 ## What you connect → what you route to
 
-**Three ingress shapes,** growing across v1.x. Pick the one that fits each of your apps; one Posthorn instance handles all of them.
+**Three ingress shapes,** all shipping in v1.0. Pick the one that fits each of your apps; one Posthorn instance handles all of them.
 
 <CardGrid>
   <Card title="HTTP form ingress" icon="rocket">
@@ -77,16 +77,18 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 **Five transports,** all shipping today. Swap providers without rewriting your apps' integrations — they all talk to Posthorn the same way.
 
 <CardGrid>
-  <Card title="Postmark" icon="email">
-    Bespoke ~80-line HTTP client. No third-party SDK overhead. Headers
-    pass through Postmark's structured JSON API — no string
-    concatenation, no injection vector. API keys never appear in logs.
+  <Card title="Postmark, Resend, Mailgun" icon="email">
+    Bespoke HTTP clients, ~200-250 lines each. No third-party SDK
+    overhead. Headers pass through each upstream's structured API — no
+    string concatenation, no injection vector. API keys never appear
+    in logs. Mailgun supports US + EU regions.
   </Card>
-  <Card title="Resend, Mailgun, AWS SES, outbound SMTP" icon="puzzle">
-    Same endpoint config shape across all four. Mailgun supports US +
-    EU regions; SES uses bespoke SigV4 (no AWS SDK); outbound SMTP
-    relays through any STARTTLS-capable upstream. Swap providers
-    without changing app code or operator runbooks.
+  <Card title="AWS SES, outbound SMTP" icon="puzzle">
+    SES uses a bespoke SigV4 implementation (no AWS SDK, no transitive
+    dep tree). Outbound SMTP relays through any STARTTLS-capable
+    upstream — your Postfix smarthost, Mailtrap, Mailgun SMTP. Swap
+    transports without changing app code or operator runbooks; every
+    endpoint config has the same shape.
   </Card>
   <Card title="Webhook delivery" icon="random">
     **v2 — later.** Point Posthorn at any URL for non-email delivery
@@ -128,8 +130,9 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
   </Card>
   <Card title="Public roadmap, locked spec" icon="open-book">
     [Roadmap](/roadmap/) is public, milestones track in GitHub, every
-    feature traces back to a versioned spec. v1.0 is locked; v1.x grows
-    deliberately.
+    feature traces back to a versioned spec. v1.0 is the full surface;
+    v2 (durable storage, suppression, lifecycle webhooks, attachments)
+    is the next milestone.
   </Card>
 </CardGrid>
 
@@ -223,7 +226,7 @@ Posthorn unifies how your apps *send* mail — many ingress shapes converge on o
 A TOML file is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
 
 **Bespoke transports, audit in an afternoon.**
-Every transport integration is ~150-300 lines of Go in this repo. Postmark is ~80 lines; Resend ~150; Mailgun ~180; SES ~230 (the bespoke SigV4 implementation). No vendor SDKs in transport code, no transitive dep trees to track for CVEs, no opaque wrappers between you and the upstream API. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
+Every transport integration is ~200-400 lines of focused Go in this repo. No vendor SDKs in transport code, no transitive dep tree to track for CVEs, no opaque wrappers between you and the upstream API. SES uses a bespoke SigV4 implementation that's also reusable for other AWS-signed services in v2. The whole module has three external dependencies: a TOML parser, a UUID library, and an LRU cache. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
 
 **Public roadmap, locked v1.0.**
 The v1.0 scope is fixed; what ships is what was specified. Originally sequenced as v1.0 / v1.1 / v1.2 / v1.3, the four feature blocks (form ingress, API mode, multi-transport + ops, SMTP ingress) consolidated into a single v1.0 release before tag. v2 (durable storage + suppression + lifecycle webhooks + attachments) is the next milestone on a [public roadmap](/roadmap/) tied to GitHub milestones. No surprise scope expansions, no quiet feature drops, no version drift between docs and behavior.
@@ -234,4 +237,4 @@ PostHog is product analytics. Posthorn is an email gateway. Similar names, diffe
 
 ## License & status
 
-Apache-2.0. v1.0.0 is the current target — see the [GitHub releases page](https://github.com/craigmccaskill/posthorn/releases) for ship status. The full v1.0 specification is [locked in `spec/`](https://github.com/craigmccaskill/posthorn/tree/main/spec); v1.x trajectory lives on the [roadmap page](/roadmap/) and in the [open milestones](https://github.com/craigmccaskill/posthorn/milestones).
+Apache-2.0. See the [GitHub releases page](https://github.com/craigmccaskill/posthorn/releases) for the current tag and [open milestones](https://github.com/craigmccaskill/posthorn/milestones) for what's queued next. The full v1.0 specification is [in `spec/`](https://github.com/craigmccaskill/posthorn/tree/main/spec); the v2 trajectory lives on the [roadmap page](/roadmap/).

@@ -85,7 +85,7 @@ A token-bucket limiter per client IP, per endpoint. 5 submissions per minute mea
 
 ## What ships beyond the basics
 
-Posthorn also ships HMAC-signed [CSRF tokens](/features/api-mode/) (`csrf_secret`, off by default). Operators issue tokens server-side at form-render time; Posthorn verifies the HMAC on submit.
+Posthorn also ships HMAC-signed CSRF tokens (`csrf_secret`, off by default; **form-mode only** — api-mode endpoints reject `csrf_secret` at parse time, since server-to-server callers are authenticated). Operators issue tokens server-side at form-render time using the same `csrf_secret`; Posthorn verifies the HMAC and TTL on submit. The token field name is `_csrf_token`. See the `csrf_secret` and `csrf_token_ttl` rows in the [TOML reference](/configuration/reference/) for the config shape.
 
 ## What doesn't ship
 
@@ -102,14 +102,18 @@ For most operators, the v1.0 stack catches 95%+ of automated abuse with no opera
 
 For reference, the spam-protection layers run in this order in the request pipeline:
 
-1. **Max body size** (1) — before reading the body at all.
-2. **Method** (POST only).
-3. **Content-Type** (form-encoded).
-4. **Origin/Referer** — header-only check, before parsing the body.
-5. **Rate limit** — header-only check, before parsing the body.
-6. (body is parsed here)
-7. **Honeypot** — after parse, since it needs the form values.
+1. **Method** (POST only).
+2. **Auth** (api-mode endpoints check `Authorization: Bearer` here).
+3. **Idempotency-Key** (api-mode endpoints look up the cache here; replays short-circuit before any other check).
+4. **Content-Type** (form-encoded for form mode, JSON for api mode).
+5. **Origin/Referer** (form mode only) — header-only check.
+6. **Rate limit** — header-only check, before parsing the body. Per-IP in form mode, per-API-key in api mode.
+7. **Max body size** — enforced by `http.MaxBytesReader` wrapped before any read.
+8. (body is parsed here)
+9. **Honeypot** (form mode only) — after parse, since it needs the form values.
+10. **CSRF** (form mode only, when `csrf_secret` is set) — checks the `_csrf_token` form field.
+11. **Validation** (required fields, email format).
 
-The ordering matters: header-only checks reject obvious junk before the server pays to parse the body. The honeypot check has to wait until after parse because it needs to look at the form value of the honeypot field.
+The ordering matters: cheap header-only checks reject obvious junk before the server pays to parse the body. The honeypot check has to wait until after parse because it needs to look at the form value of the honeypot field.
 
 See [Core concepts → Request pipeline](/getting-started/concepts/#the-request-pipeline) for the full ordered list.

@@ -5,18 +5,28 @@ description: The wire format Posthorn accepts and returns.
 
 import { Aside } from '@astrojs/starlight/components';
 
-Posthorn exposes one HTTP endpoint per configured `[[endpoints]]` block. This page documents the wire format — request, response, status codes, content negotiation.
+Posthorn exposes one HTTP endpoint per configured `[[endpoints]]` block. Endpoints come in two flavors selected by the `auth` config field:
 
-## Request
+- **Form mode** (`auth = "form"`, the default) — browser form posts; honeypot/Origin/CSRF defenses; redirect responses; documented in this page below.
+- **API mode** (`auth = "api-key"`) — server-to-server JSON; Bearer auth; idempotency keys; per-request `to_override`; documented in the [API mode feature page](/features/api-mode/).
+
+Plus two always-on operational endpoints on the same listener:
+
+- `GET /healthz` — 200 OK / body `ok`
+- `GET /metrics` — Prometheus text exposition
+
+This page documents the form-mode wire format. For api-mode wire format, jump to [API mode](/features/api-mode/).
+
+## Form-mode request
 
 | Aspect | Required value |
 |---|---|
 | Method | `POST` |
-| Path | Any configured `path` (e.g., `/api/contact`) |
+| Path | Any configured form-mode `path` (e.g., `/api/contact`) |
 | Content-Type | `application/x-www-form-urlencoded` or `multipart/form-data` |
 | Body | Form-encoded key/value pairs |
 
-Other methods (`GET`, `HEAD`, `PUT`, `DELETE`, etc.) return `405 Method Not Allowed`. Other content types return `400 Bad Request`.
+Other methods (`GET`, `HEAD`, `PUT`, `DELETE`, etc.) return `405 Method Not Allowed`. Other content types return `400 Bad Request`. JSON bodies on form-mode endpoints return `400`; JSON bodies on api-mode endpoints are required (anything else returns `415 Unsupported Media Type`).
 
 ### Form-encoded example
 
@@ -104,20 +114,24 @@ Promoting every error to structured JSON is on the post-v1.0 polish list. If you
 
 ### Status codes
 
-| Status | Meaning | When |
+| Status | Meaning | Mode(s) |
 |---|---|---|
-| `200 OK` | Submission accepted and sent | Happy path; also returned silently when honeypot triggered |
-| `303 See Other` | Redirect after success or error | When `text/html` preferred and `redirect_success`/`redirect_error` configured |
-| `400 Bad Request` | Malformed request | Wrong content type, can't parse body |
-| `403 Forbidden` | Origin/Referer check failed | Both headers missing when `allowed_origins` set, or value not in allowlist |
-| `404 Not Found` | Unknown path | Path not configured |
-| `405 Method Not Allowed` | Wrong method | Not POST |
-| `413 Payload Too Large` | Body exceeded `max_body_size` | Either pre-parse cap or post-parse size |
-| `422 Unprocessable Entity` | Validation failed | Required field missing, email format invalid |
-| `429 Too Many Requests` | Rate limit exceeded | Token-bucket empty for the client IP |
-| `502 Bad Gateway` | Transport terminal failure | Postmark rejected the message (or 10s timeout) |
+| `200 OK` | Submission accepted and sent; also silent 200 on honeypot trigger (form mode) or idempotent replay (api mode); also 200 for dry-run | both |
+| `303 See Other` | Redirect after success or error | form (when `redirect_success`/`redirect_error` configured) |
+| `400 Bad Request` | Malformed request — wrong content type, unparseable body | both |
+| `401 Unauthorized` | Missing/invalid `Authorization: Bearer` | api |
+| `403 Forbidden` | Origin/Referer rejected; or CSRF rejected | form |
+| `404 Not Found` | Path not configured | both |
+| `405 Method Not Allowed` | Not POST | both |
+| `409 Conflict` | `Idempotency-Key` matches an in-flight request | api |
+| `413 Payload Too Large` | Body exceeded `max_body_size` | both |
+| `415 Unsupported Media Type` | Body wasn't `application/json` | api |
+| `422 Unprocessable Entity` | Validation failed (required field, email format, invalid `to_override`) | both |
+| `429 Too Many Requests` | Rate limit exceeded (per IP in form, per API key in api) | both |
+| `500 Internal Server Error` | Template render failed | both |
+| `502 Bad Gateway` | Transport terminal failure (or 10s timeout) | both |
 
-See [Response codes](/reference/response-codes/) for the per-code error JSON schema.
+See [Response codes](/reference/response-codes/) for the per-code error body shape and root causes.
 
 ## Content negotiation
 
@@ -196,6 +210,32 @@ curl -X POST http://localhost:8080/api/contact \
 curl -X POST http://localhost:8080/api/contact \
   -H "Accept: application/json" \
   -d "name=...&..."
+```
+
+## API mode
+
+For server-to-server callers (Cloudflare Workers, cron jobs, payment handlers), configure an endpoint with `auth = "api-key"`. The wire format is different: Bearer auth, JSON body, idempotency keys, per-request recipient override. Full reference: [API mode](/features/api-mode/).
+
+A minimal example:
+
+```http
+POST /api/transactional HTTP/1.1
+Authorization: Bearer abc123
+Content-Type: application/json
+Idempotency-Key: reset:user-42:2026-05-16T20
+
+{
+  "to_override": "alice@example.com",
+  "subject_line": "Reset your password",
+  "message": "https://app.example.com/reset/xyz"
+}
+```
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{"status":"ok","submission_id":"..."}
 ```
 
 ## What's not in v1.0

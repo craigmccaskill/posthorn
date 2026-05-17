@@ -18,13 +18,34 @@ Content-Type: application/json; charset=utf-8
 {"status":"ok","submission_id":"7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f"}
 ```
 
-Also returned silently when the **honeypot field is non-empty.** The honeypot path emits the *same* JSON shape — `status: "ok"` plus a fresh `submission_id` — so a bot inspecting the response body cannot tell honeypot rejection apart from a real success.
+Also returned silently when the **honeypot field is non-empty** (form-mode endpoints only). The honeypot path emits the *same* JSON shape — `status: "ok"` plus a fresh `submission_id` — so a bot inspecting the response body cannot tell honeypot rejection apart from a real success.
 
 ```json
 {"status":"ok","submission_id":"a1b2c3d4-..."}
 ```
 
 The submission_id on a honeypot 200 is a real UUIDv4 minted for that request; it's just never threaded into a transport send. If you grep your logs for that ID you'll see a `spam_blocked` event instead of `submission_sent`.
+
+**Dry-run 200** (endpoints with `dry_run = true`): runs the full pipeline up to but not including the transport, then returns the rendered message for inspection.
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+
+{
+  "status": "dry_run",
+  "submission_id": "...",
+  "prepared_message": {
+    "from": "Contact <noreply@example.com>",
+    "to": ["alerts@example.com"],
+    "reply_to": "alice@example.com",
+    "subject": "Contact: Alice",
+    "body": "From: Alice ..."
+  }
+}
+```
+
+**Idempotent replay 200** (api-mode endpoints with an `Idempotency-Key` header that matches a cached prior request): returns the byte-identical original response — same status, same body, same `submission_id`. The second-or-later request never reaches the transport.
 
 ## 303 See Other
 
@@ -42,6 +63,27 @@ Returned when:
 - The submission has been processed (successfully or not)
 
 The 303 status — not 302 — ensures the browser issues a GET to the redirect URL, preventing form re-submission on refresh.
+
+## 401 Unauthorized
+
+**API-mode auth failure.** Plaintext body. Only emitted by endpoints configured with `auth = "api-key"`.
+
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: text/plain; charset=utf-8
+
+unauthorized
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| `Authorization` header missing | Send `Authorization: Bearer <key>` |
+| Header present but format isn't `Bearer <key>` | Fix the prefix; must be exactly `Bearer ` followed by the key |
+| Key value doesn't match any entry in `api_keys` | Confirm the env var is set on the calling side; rotate if leaked |
+
+The constant-time compare against every configured key fires on **every** 401, so timing analysis can't enumerate the set.
 
 ## 400 Bad Request
 
@@ -121,6 +163,48 @@ Common causes:
 | GET request to an endpoint (e.g., navigating to it directly) | Always POST |
 | Browser preflight `OPTIONS` request | Configure CORS at the reverse proxy if needed |
 
+## 409 Conflict
+
+**Idempotency-Key collision in flight.** Plaintext body. Only emitted by api-mode endpoints.
+
+```http
+HTTP/1.1 409 Conflict
+Content-Type: text/plain; charset=utf-8
+
+duplicate request in flight for this Idempotency-Key
+```
+
+Returned when a second request arrives with an `Idempotency-Key` that's still being processed by an earlier in-flight request (the upstream transport hasn't returned yet). Posthorn surfaces this as 409 rather than silently blocking, so a misbehaving caller retrying without backoff sees the conflict instead of latency.
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Caller retried before the first request's response came back | Wait for the first response; the cached result will be served on subsequent retries |
+| Two distinct callers happen to generate the same key | Make keys caller-scoped, e.g. include a user/session prefix |
+
+A *completed* request with the same key returns the cached **200** (not 409). 409 specifically means "I'm still working on the first one."
+
+## 415 Unsupported Media Type
+
+**API-mode endpoint received a non-JSON body.** Plaintext body. Only emitted by endpoints configured with `auth = "api-key"`.
+
+```http
+HTTP/1.1 415 Unsupported Media Type
+Content-Type: text/plain; charset=utf-8
+
+JSON body required (application/json)
+```
+
+Common causes:
+
+| Cause | Fix |
+|---|---|
+| Caller posted form-encoded body to an api-mode endpoint | Send `Content-Type: application/json` and a JSON object body |
+| Missing `Content-Type` header | Add the header explicitly |
+
+API-mode endpoints reject form bodies at parse time; form-mode endpoints reject JSON bodies at parse time (returning 400). The mode is fixed at config-load time by the `auth` field.
+
 ## 413 Payload Too Large
 
 **Body exceeded `max_body_size`.** Plaintext body.
@@ -189,31 +273,44 @@ Common causes:
 
 ## 502 Bad Gateway
 
-**Transport terminal failure** — Postmark rejected the message or the 10-second timeout fired.
+**Transport terminal failure** — the upstream provider rejected the message or the 10-second timeout fired. Plaintext body.
 
-```json
-{
-  "error": "Transport failure",
-  "code": "transport_failure"
-}
+```http
+HTTP/1.1 502 Bad Gateway
+Content-Type: text/plain; charset=utf-8
+
+submission could not be delivered
 ```
 
-The submission ID is still logged for recovery from logs. The response body is intentionally vague — exposing transport details to the requesting client could leak information about your account or configuration.
+The submission ID is still logged for recovery; the response body is intentionally vague — exposing transport details to the requesting client could leak information about your account or configuration. Operator-facing detail (provider name, upstream status, error class) is in the `submission_failed` structured log line.
 
 Common causes:
 
 | Cause | Fix |
 |---|---|
-| `401` from Postmark — bad API key | Check `${env.POSTMARK_API_KEY}` is set and matches a valid Postmark server token |
-| `422` from Postmark — `From:` not on a verified domain | Verify your sending domain in Postmark dashboard |
-| `422` from Postmark — invalid recipient (e.g., disposable email) | Display a better validation error; Postmark won't deliver |
-| Transient `5xx` from Postmark after retry exhausted | Wait and re-try; the operator's recovery path is the failure log |
-| 10s timeout — slow upstream | Check Postmark status page; if persistent, escalate |
+| `401` from the provider — bad API key | Check `${env.PROVIDER_API_KEY}` is set and matches a valid token |
+| `422` from the provider — `From:` not on a verified domain | Verify your sending domain in the provider's dashboard |
+| `422` from the provider — invalid recipient (e.g., disposable email) | Display a better validation error; the provider won't deliver |
+| Transient `5xx` from the provider after retry exhausted | Wait and re-try; the operator's recovery path is the failure log |
+| 10s timeout — slow upstream | Check the provider's status page; if persistent, escalate |
 | Network failure during retry | Same |
 
 <Aside type="caution">
 On 502, the submission's form payload is logged at ERROR level (unless `log_failed_submissions = false`). Read your logs to recover the data and send manually if needed. There is no persistent queue in v1.0; the failed submission only lives in the log.
 </Aside>
+
+## 500 Internal Server Error
+
+**Posthorn-internal failure** — template render failed, or some other server-side error that isn't the upstream's fault. Plaintext body.
+
+```http
+HTTP/1.1 500 Internal Server Error
+Content-Type: text/plain; charset=utf-8
+
+submission could not be processed
+```
+
+Usually a configuration bug (malformed template that passed `posthorn validate` but errored on real input). The structured log line carries the underlying error.
 
 ## What you never see
 
@@ -221,6 +318,5 @@ On 502, the submission's form payload is logged at ERROR level (unless `log_fail
 |---|---|
 | `301 Moved Permanently` | Not used |
 | `307 Temporary Redirect` | Form re-POSTs are bad UX; we use 303 instead |
-| `409 Conflict` | No idempotency keys in v1.0 |
 | `503 Service Unavailable` | The 502 catch-all subsumes this |
 | `504 Gateway Timeout` | The 502 catch-all subsumes this |

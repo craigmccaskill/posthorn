@@ -3,7 +3,7 @@ title: CLI
 description: Subcommands and flags for the posthorn binary.
 ---
 
-The `posthorn` binary exposes two subcommands. There are no global flags worth knowing — everything operationally interesting is per-subcommand.
+The `posthorn` binary exposes three subcommands.
 
 ```bash
 posthorn <subcommand> [flags]
@@ -11,7 +11,7 @@ posthorn <subcommand> [flags]
 
 ## `serve`
 
-Starts the HTTP listener.
+Starts the listener(s) — HTTP always, plus the inbound SMTP listener if `[smtp_listener]` is configured.
 
 ```bash
 posthorn serve --config /etc/posthorn/config.toml
@@ -20,34 +20,37 @@ posthorn serve --config /etc/posthorn/config.toml
 | Flag | Default | Description |
 |---|---|---|
 | `--config <path>` | `/etc/posthorn/config.toml` | Path to TOML config file |
-| `--listen <addr>` | `:8080` | Bind address |
+| `--listen <addr>` | `:8080` | HTTP bind address |
+
+The SMTP listener's bind address is configured in the TOML (`smtp_listener.listen`), not via a flag.
 
 ### Behavior
 
-1. Load and validate the config (same as `validate`).
+1. Load and validate the config (same checks `validate` runs).
 2. Construct handlers, transports, rate limiters, templates per endpoint.
-3. Bind to the configured listen address.
-4. Serve HTTP forever.
+3. Bind the HTTP listener and (if configured) the SMTP listener — each in its own goroutine.
+4. Serve until SIGTERM/SIGINT.
 
 ### Signal handling
 
 | Signal | Effect |
 |---|---|
-| `SIGTERM` | Graceful shutdown: stop accepting connections, drain in-flight up to 10s, exit 0 |
+| `SIGTERM` | Graceful shutdown: stop accepting new connections, drain in-flight requests with a 15-second deadline, exit 0 |
 | `SIGINT` (Ctrl+C) | Same as SIGTERM |
-| Second `SIGTERM`/`SIGINT` | Forced exit immediately |
+| Second `SIGTERM` / `SIGINT` | Force-exit immediately with code 1 |
 
-This is the standard idiom — `kill -TERM <pid>` (or `docker stop`, or `systemctl stop`) gives Posthorn up to 10 seconds to drain. Press Ctrl+C twice in a terminal to force-exit a stuck process.
+The 15-second drain deadline is intentionally longer than the per-request 10-second hard timeout (FR22) so any in-flight retry can complete gracefully. Press Ctrl+C twice in a terminal to force-exit a stuck process.
 
 ### Logs
 
-`serve` writes structured JSON logs to stdout. With Docker, those are captured by the platform's logging driver. With systemd, they go to the journal.
+`serve` writes structured JSON logs to stdout. With Docker, those are captured by the platform's logging driver. With systemd, they go to the journal. See [Log format](/reference/log-format/) for the full event catalog.
 
 A successful startup looks like:
 
 ```json
-{"time":"2026-05-14T19:00:00Z","level":"INFO","msg":"config_loaded","endpoints":["/api/contact"]}
-{"time":"2026-05-14T19:00:00Z","level":"INFO","msg":"listening","addr":":8080"}
+{"time":"2026-05-16T19:00:00Z","level":"INFO","msg":"posthorn starting","version":"v1.0.0","listen":":8080","config":"/etc/posthorn/config.toml","endpoints":2}
+{"time":"2026-05-16T19:00:00Z","level":"INFO","msg":"endpoint registered","path":"/api/contact","transport":"postmark","recipients":1}
+{"time":"2026-05-16T19:00:00Z","level":"INFO","msg":"http ingress listening","addr":":8080"}
 ```
 
 ### Exit codes
@@ -55,10 +58,8 @@ A successful startup looks like:
 | Code | Meaning |
 |---|---|
 | `0` | Clean shutdown after SIGTERM/SIGINT |
-| `1` | Config error (the same errors `validate` would catch) |
-| `2` | Listener bind failed (port in use, permission denied) |
-| `130` | Forced exit on second SIGINT (Ctrl+C) |
-| `143` | Forced exit on second SIGTERM |
+| `1` | Runtime error (config load failed, listener bind failed, transport build failed) |
+| `2` | Unknown subcommand or argument parsing failed |
 
 ## `validate`
 
@@ -75,11 +76,13 @@ posthorn validate --config /etc/posthorn/config.toml
 ### What it checks
 
 1. TOML syntax — file parses cleanly.
-2. `${env.VAR}` placeholders — every referenced env var is set.
+2. `${env.VAR}` placeholders — every referenced env var is set (all missing reported in one error).
 3. Schema — required fields present, types match, paths start with `/`.
 4. Templates — `subject` and `body` Go templates compile.
-5. Allowed-origin sanity — `allowed_origins = []` is rejected (must be unset or non-empty).
-6. Path uniqueness — no two endpoints share a path.
+5. Mode/defense mutex — api-mode endpoints don't carry form-mode-only fields (`honeypot`, `allowed_origins`, `redirect_*`, `csrf_secret`); form-mode endpoints don't carry api-mode-only fields (`api_keys`, `idempotency_cache_size`).
+6. Allowed-origin sanity — `allowed_origins = []` is rejected.
+7. Path uniqueness — no two HTTP endpoints share a path.
+8. SMTP listener structural checks (when `[smtp_listener]` is present) — `listen` present, `allowed_senders` non-empty, auth shape valid, TLS material consistent with mode.
 
 ### Output
 
@@ -106,35 +109,33 @@ exit status 1
 - **Health check substitute.** In platforms without a `/healthz` endpoint, run `validate` as a startup probe to fail fast on config issues.
 - **Pre-commit hook.** Run `validate` from `.git/hooks/pre-commit` to prevent committing a broken config.
 
-## `--version`
+## `version`
 
 ```bash
-$ posthorn --version
-posthorn v1.0.0 (commit abc1234, built 2026-05-14)
+$ posthorn version
+posthorn v1.0.0
 ```
 
-The version string includes the semver tag, commit hash, and build timestamp. Useful for confirming which build is actually running on a host.
+Aliased to `--version` and `-v`. The output is `posthorn <version>` on a single line — the version string is injected at build time via `-ldflags "-X main.version=v1.0.0"` (Story 5.3). Local development builds print `posthorn v0.0.1-dev`.
 
-## `--help`
+## `help`
 
 ```bash
-$ posthorn --help
-Posthorn — self-hosted email gateway
+$ posthorn help
+posthorn — outbound mail gateway
 
 Usage:
-  posthorn <subcommand> [flags]
+  posthorn serve     [--config <path>] [--listen <addr>]
+  posthorn validate  [--config <path>]
+  posthorn version
+  posthorn help
 
-Subcommands:
-  serve     Start the HTTP listener
-  validate  Validate the config and exit
-
-Common flags:
-  --config <path>  Path to TOML config (default: /etc/posthorn/config.toml)
-  --help           Show help for any command
-  --version        Print version and exit
-
-Run "posthorn <subcommand> --help" for subcommand details.
+Examples:
+  posthorn serve --config /etc/posthorn/config.toml
+  posthorn validate --config ./posthorn.toml
 ```
+
+Aliased to `--help` and `-h`. Subcommand-specific help is not separately wired in v1.0 — the top-level `help` lists the flag set for each subcommand.
 
 ## Environment variables
 

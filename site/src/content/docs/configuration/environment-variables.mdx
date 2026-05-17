@@ -20,14 +20,14 @@ Two reasons:
 api_key = "${env.POSTMARK_API_KEY}"
 ```
 
-The placeholder must be the **entire value** of the string field. Mixing literal and placeholder substrings is not supported (and is rejected at validation time):
+Variable names match `[A-Z_][A-Z0-9_]*` (UPPER_SNAKE_CASE, POSIX conventions). Placeholders can appear anywhere inside a string field — including alongside literal text:
 
 ```toml
-# Not supported
-api_key = "Bearer ${env.POSTMARK_API_KEY}"
+# Allowed: literal prefix + placeholder
+custom_header = "Bearer ${env.WORKER_KEY_PRIMARY}"
 ```
 
-If you need a prefix, do that in the transport-specific code, not in config.
+Transports that need specific header formats (Postmark's `X-Postmark-Server-Token`, Resend's `Authorization: Bearer`, Mailgun's HTTP Basic, SES's signed `Authorization`) construct those formats internally — the operator just supplies the raw key as `api_key = "${env....}"`.
 
 ## Where placeholders make sense
 
@@ -39,20 +39,19 @@ If you need a prefix, do that in the transport-specific code, not in config.
 
 ## Resolution order
 
-1. TOML file is parsed.
-2. Every string field is scanned for `${env.VAR}` placeholders.
-3. The placeholder is replaced with `os.Getenv("VAR")`.
-4. If `os.Getenv` returns empty string and the field is required, config validation fails.
+1. Posthorn reads the raw TOML file from disk.
+2. Every `${env.VAR}` placeholder is replaced with `os.LookupEnv("VAR")` — this happens *before* TOML parsing, so the parser only ever sees resolved values.
+3. TOML is parsed and validated.
 
-**Empty env vars are treated as missing.** A literal empty string `""` in config is allowed; an env var that resolves to `""` is not.
+**Unset variables** (where `os.LookupEnv` returns `ok=false`) collect into a single error so operators don't play whack-a-mole on first run. **Empty-string env vars** (set but to `""`) resolve normally — the empty string flows through to the field. If the field's validator requires non-empty (`api_key`, `from`, etc.), that downstream validator will surface the failure with a clearer message.
 
 ## Missing env vars
 
-A missing `${env.VAR}` is a **config error**, not a runtime error. `posthorn validate` will surface it before the listener starts:
+A missing `${env.VAR}` is a **config error**, not a runtime error. `posthorn validate` will surface every missing variable in one shot before the listener starts:
 
 ```
-$ POSTMARK_API_KEY="" posthorn validate --config posthorn.toml
-ERROR: endpoint 0 (/api/contact): transport.settings.api_key resolves to empty value: ${env.POSTMARK_API_KEY}
+$ posthorn validate --config posthorn.toml
+config: env var(s) not set: POSTMARK_API_KEY, WORKER_KEY_PRIMARY
 exit status 1
 ```
 

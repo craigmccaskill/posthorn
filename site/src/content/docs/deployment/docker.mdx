@@ -64,14 +64,16 @@ If you need to inspect the container for development, override the image command
 
 ## Tags
 
+When a `vX.Y.Z` tag is pushed to the GitHub repo, the release workflow publishes multi-arch (`linux/amd64`, `linux/arm64`) images to GHCR.
+
 | Tag | What you get |
 |---|---|
-| `:latest` | Most recent stable release. Multi-arch. Not set for pre-releases (e.g., `-rc1`, `-test`). |
-| `:1.0.0` | Exact patch version. Multi-arch. |
-| `:1.0` | Latest patch in the 1.0.x line. Floats. |
-| `:1` | Latest release in the 1.x line. Floats. |
+| `:latest` | Most recent stable release. Multi-arch. |
+| `:vX.Y.Z` | Exact tagged version (e.g., `:v1.0.0`). Multi-arch. |
+| `:vX.Y` | Latest patch in the `X.Y.*` minor line. Floats. |
+| `:vX` | Latest release in the `X.*` major line. Floats. |
 
-For production, pin to a specific version (`:1.0.0`) and update intentionally. `:latest` is convenient for development.
+For production, pin to a specific version (`:vX.Y.Z`) and update intentionally. `:latest` is convenient for development. Check the [GHCR package page](https://github.com/craigmccaskill/posthorn/pkgs/container/posthorn) for the current tag set.
 
 ## Health checks
 

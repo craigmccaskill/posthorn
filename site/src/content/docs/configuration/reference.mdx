@@ -14,12 +14,16 @@ This page is the **canonical reference** for every field. For an annotated examp
 ## Top-level structure
 
 ```toml
-# Zero or more endpoint blocks. Each is fully independent.
+# One or more endpoint blocks. Each is fully independent.
 [[endpoints]]
 # ...endpoint fields...
 
 # Optional global logging block
 [logging]
+# ...
+
+# Optional inbound SMTP listener (v1.0 block D)
+[smtp_listener]
 # ...
 ```
 
@@ -37,15 +41,15 @@ Each `[[endpoints]]` table defines a single ingress path with its own transport,
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `to` | `[]string` | yes | — | One or more recipient email addresses. Plain `addr@host` or `"Name <addr@host>"`. |
-| `from` | string | yes | — | Sender. Must be on a Postmark-verified domain. Format: `"Name <addr@host>"`. |
-| `reply_to_email_field` | string | no | the email field | Form field whose value to use as the email's `Reply-To` header. |
+| `to` | `[]string` | yes | — | One or more default recipient addresses. Plain `addr@host` or `"Name <addr@host>"`. Each entry must parse as a valid email. API-mode endpoints can override per request via the `to_override` JSON field. |
+| `from` | string | yes | — | Sender address. Format: `"Name <addr@host>"` or plain `addr@host`. Per-request override is **not** supported (ADR-11; leaked-key spoofing prevention). |
+| `reply_to_email_field` | string | no | the value of `email_field` | Form field whose value to use as the email's `Reply-To` header. Set to a name that doesn't exist in the submission to disable Reply-To. |
 
 ### Transport
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `transport.type` | string | yes | — | Transport identifier. v1.0: only `"postmark"`. |
+| `transport.type` | string | yes | — | One of `"postmark"`, `"resend"`, `"mailgun"`, `"ses"`, `"smtp"`. |
 | `transport.settings` | table | yes | — | Transport-specific settings. See [Transports](/configuration/transports/). |
 
 ```toml
@@ -60,17 +64,45 @@ api_key = "${env.POSTMARK_API_KEY}"
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `required` | `[]string` | no | `[]` | Form fields that must be present and non-empty. Missing → 422. |
-| `email_field` | string | no | `"email"` | Form field name to validate as an email address. |
+| `required` | `[]string` | no | `[]` | Fields that must be present and non-empty in the submission. Missing → 422. |
+| `email_field` | string | no | `"email"` | Field name to validate as an email address. |
 
-### Spam protection
+### Spam protection (form-mode only)
+
+API-mode endpoints reject these fields at config-parse time.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `honeypot` | string | no | unset | Form field name that bots will fill in. Any non-empty value triggers a silent 200 (no email sent). |
-| `allowed_origins` | `[]string` | no | unset | If set, `Origin`/`Referer` must match one of these. Missing both headers → 403 (fail-closed). Empty list is rejected at config-validation time. |
-| `max_body_size` | string | no | `"1MB"` | Maximum request body size. Supports `"32KB"`, `"1MB"`, etc. Exceeding → 413. |
-| `trusted_proxies` | `[]string` | no | `[]` | CIDR ranges. When the request's RemoteAddr matches, read client IP from `X-Forwarded-For` (rightmost untrusted). |
+| `allowed_origins` | `[]string` | no | unset | If set, `Origin`/`Referer` must match one of these. Missing both headers → 403 (fail-closed). Explicitly empty (`= []`) is rejected at parse time. |
+
+### Body size
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `max_body_size` | string | no | unset (no cap) | Maximum request body size. Format: `"32KB"`, `"1MB"`, `"512KB"`. Exceeding → 413. When unset, no body cap is applied. |
+
+### Client IP / proxy handling
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `trusted_proxies` | `[]string` | no | `[]` | CIDR ranges and/or preset names. When the request's RemoteAddr is in one of these networks, the rate limiter reads the client IP from `X-Forwarded-For` (rightmost untrusted). |
+| `strip_client_ip` | bool | no | `false` | When `true`, omit the resolved client IP from log lines for this endpoint. Rate-limit bucketing is unaffected — the IP is still computed; it just doesn't reach logs. |
+
+Preset names accepted in `trusted_proxies` (v1.0 ships `cloudflare` populated; the rest are reserved as empty slots to avoid name churn when they ship):
+
+| Preset | Status |
+|---|---|
+| `cloudflare` | Shipped — 15 IPv4 + 7 IPv6 ranges, sourced from cloudflare.com/ips |
+| `aws-elb` | Reserved (no built-in CIDRs in v1.0) |
+| `gcp-lb` | Reserved (no built-in CIDRs in v1.0) |
+| `azure-front-door` | Reserved (no built-in CIDRs in v1.0) |
+
+Mix presets and explicit CIDRs:
+
+```toml
+trusted_proxies = ["cloudflare", "10.0.0.0/8"]
+```
 
 ### Rate limiting
 
@@ -82,22 +114,37 @@ interval = "1m"
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `rate_limit.count` | int | no | unset | Token bucket capacity per client IP. Required if `rate_limit` block is present. |
-| `rate_limit.interval` | duration | no | unset | Refill window. Format: Go duration string (`"1m"`, `"30s"`, `"1h"`). Required if `rate_limit` block is present. |
+| `rate_limit.count` | int | yes within block | — | Token bucket capacity. Per-IP in form mode; per-API-key in API mode. Must be positive. |
+| `rate_limit.interval` | duration | yes within block | — | Refill window. Go duration string (`"1m"`, `"30s"`, `"1h"`). Must be positive. |
 
 When `rate_limit` is omitted entirely, no rate limit is applied to the endpoint.
 
 ### API mode
 
-API mode swaps form-mode browser defenses for `Authorization: Bearer` auth and JSON body parsing. See [API mode](/features/api-mode/) for the full reference.
+API mode swaps form-mode browser defenses for `Authorization: Bearer` auth and JSON body parsing. See [API mode](/features/api-mode/).
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `auth` | string | no | `"form"` | `"form"` (default, v1.0 behavior) or `"api-key"`. The two modes are mutually exclusive per endpoint. |
-| `api_keys` | `[]string` | yes when `auth = "api-key"` | unset | Bearer tokens accepted on this endpoint. `${env.VAR}` substitution honored. Empty list is rejected at config time. |
-| `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity. Cache is in-memory, LRU-evicted, 24h TTL. v2 makes it durable. |
+| `auth` | string | no | `"form"` | `"form"` (default) or `"api-key"`. The two modes are mutually exclusive per endpoint. |
+| `api_keys` | `[]string` | yes when `auth = "api-key"` | unset | Bearer tokens accepted on this endpoint. `${env.VAR}` substitution honored. Empty list is rejected at parse time. Form-mode endpoints reject this field at parse time. |
+| `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity (LRU-evicted, 24h TTL). API-mode only — form-mode endpoints reject at parse time. |
 
-Configuring `honeypot`, `allowed_origins`, `redirect_success`, or `redirect_error` on an API-mode endpoint is a config-parse error.
+Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, or `csrf_secret` on an API-mode endpoint is a parse error (ADR-10).
+
+### CSRF (form-mode only)
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `csrf_secret` | string | no | unset (CSRF disabled) | HMAC key for token verification. Must be at least 16 bytes. When set, every form submission must carry a `_csrf_token` field issued at form-render time. API-mode endpoints reject at parse time. |
+| `csrf_token_ttl` | duration | no | `"1h"` | Maximum age of a CSRF token. Tokens older than this are rejected with 403. |
+
+See [CSRF tokens](/features/csrf/) for the issuance flow.
+
+### Dry run
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `dry_run` | bool | no | `false` | When `true`, the endpoint runs the full pipeline (validation, template render, recipient resolution) but skips `transport.Send` and returns the prepared message in the 200 response body. |
 
 ### Templates
 
@@ -106,35 +153,83 @@ Configuring `honeypot`, `allowed_origins`, `redirect_success`, or `redirect_erro
 | `subject` | string | yes | — | `text/template` source for the email subject. Inline string. |
 | `body` | string | yes | — | `text/template` source for the email body. **Inline string** if it contains `{{`, otherwise treated as a **file path**. |
 
-Form fields are available as template variables: `{{.name}}`, `{{.email}}`, `{{.message}}`. See [Templating](/features/templating/).
+Submission fields are available as template variables: `{{.name}}`, `{{.email}}`, `{{.message}}`. See [Templating](/features/templating/).
 
-### Response handling
+### Response handling (form-mode only)
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `redirect_success` | string | no | unset | URL to redirect to on success (303 See Other). Used when client prefers `text/html`. |
-| `redirect_error` | string | no | unset | URL to redirect to on validation/rate-limit failures. Optional. |
+| `redirect_error` | string | no | unset | URL to redirect to on validation/rate-limit failures. |
 
-When both are unset, all responses are JSON regardless of `Accept` header.
+When both are unset, all responses are JSON regardless of `Accept` header. API-mode endpoints reject these fields at parse time.
 
 ### Logging override
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `log_failed_submissions` | bool | no | `true` | If `true`, terminal failures log the full submission payload at ERROR level. If `false`, only metadata is logged. Per-endpoint override of the global default. |
+| `log_failed_submissions` | bool | no | `true` | When `true`, terminal failures log the full submission payload under the `form` field at ERROR level. When `false`, only field NAMES log (under `form_fields`). |
 
 ## `[logging]`
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `level` | string | no | `"info"` | One of `debug`, `info`, `warn`, `error`. |
-| `format` | string | no | `"json"` | One of `json`, `text`. JSON is recommended for production. |
-| `log_failed_submissions` | bool | no | `true` | Global default for the per-endpoint override. |
+| `level` | string | no | `"info"` | One of `debug`, `info`, `warn`, `error`. (Posthorn doesn't currently emit DEBUG events in v1.0; setting `level = "debug"` is forward-compatible.) |
+| `format` | string | no | `"json"` | Only `"json"` is supported in v1.0. Any other value is a parse error. |
+
+## `[smtp_listener]`
+
+Optional inbound SMTP ingress. When this block is present, `posthorn serve` starts a second listener alongside the HTTP one. See [SMTP ingress](/features/smtp-ingress/).
+
+### Network + TLS
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `listen` | string | yes | — | TCP listen address. Example: `":2525"`. |
+| `require_tls` | bool | no | `false` | When `true`, AUTH / MAIL / RCPT are rejected until the client has issued `STARTTLS`. Recommended `true` for any non-localhost listener. |
+| `tls_cert` | string | conditional | — | Path to PEM cert. Required when `require_tls = true` or when `auth_required` involves client certs. |
+| `tls_key` | string | conditional | — | Path to PEM private key. Same conditions as `tls_cert`. |
+
+### Authentication
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `auth_required` | string | no | `"smtp-auth"` | One of `"smtp-auth"`, `"client-cert"`, `"either"`. |
+| `smtp_users` | `[]table` | yes for `smtp-auth` or `either` | — | List of AUTH PLAIN credential pairs. Each entry has `username` (string) and `password` (string; `${env.VAR}` honored). |
+| `client_cert_ca` | string | yes for `client-cert` or `either` | — | Path to a PEM-encoded CA bundle. Client certs signed by this CA are accepted. |
+
+### Allowlists
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `allowed_senders` | `[]string` | yes (non-empty) | — | Exact addresses (`noreply@example.com`) or domain wildcards (`*@example.com`). `MAIL FROM:` outside this list is rejected. |
+| `allowed_recipients` | `[]string` | no | unset | Same syntax. When set, only `RCPT TO:` entries matching this list are accepted. When unset, the recipient-count cap below applies. |
+| `max_recipients_per_session` | int | no | `10` | Open-relay-prevention cap. Only applies when `allowed_recipients` is unset. Set to a very large value to effectively disable. |
+
+### Limits
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `max_message_size` | string | no | `"1MB"` | Maximum `DATA` blob size. Format matches `max_body_size`. Exceeding returns SMTP `552 5.3.4`. |
+| `idle_timeout` | duration | no | `"60s"` | Connection idle timeout. |
+
+### Outbound transport
+
+```toml
+[smtp_listener.transport]
+type = "postmark"
+
+[smtp_listener.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
+```
+
+Same shape as `[endpoints.transport]`. The listener forwards every accepted submission through this single transport (ADR-13 — one listener = one transport in v1.0).
 
 ## Complete annotated example
 
 ```toml
-# Two-endpoint config: a contact form and a newsletter signup.
+# Two HTTP endpoints (a contact form + a transactional api-mode endpoint)
+# plus an SMTP listener for Ghost/Gitea/etc.
 
 [logging]
 level = "info"
@@ -149,7 +244,9 @@ email_field = "email"
 honeypot = "_gotcha"
 allowed_origins = ["https://example.com", "https://www.example.com"]
 max_body_size = "64KB"
-trusted_proxies = ["10.0.0.0/8"]
+trusted_proxies = ["cloudflare"]
+csrf_secret = "${env.CSRF_SECRET}"
+csrf_token_ttl = "30m"
 subject = "Contact: {{.name}}"
 body = """
 From: {{.name}} <{{.email}}>
@@ -172,26 +269,49 @@ interval = "1m"
 # ---
 
 [[endpoints]]
-path = "/api/newsletter"
-to = ["list@example.com"]
-from = "Signups <noreply@example.com>"
-required = ["email"]
-honeypot = "_gotcha"
-allowed_origins = ["https://example.com"]
-subject = "New signup: {{.email}}"
-body = "{{.email}} subscribed."
+path = "/api/transactional"
+to = ["fallback@example.com"]
+from = "App <noreply@example.com>"
+auth = "api-key"
+api_keys = ["${env.WORKER_KEY_PRIMARY}", "${env.WORKER_KEY_BACKUP}"]
+idempotency_cache_size = 5000
+required = ["subject_line", "body"]
+subject = "{{.subject_line}}"
+body = "{{.body}}"
 
 [endpoints.transport]
-type = "postmark"
+type = "resend"
 
 [endpoints.transport.settings]
-api_key = "${env.POSTMARK_NEWSLETTER_KEY}"
+api_key = "${env.RESEND_API_KEY}"
 
 [endpoints.rate_limit]
-count = 20
+count = 100
 interval = "1m"
+
+# ---
+
+[smtp_listener]
+listen = ":2525"
+require_tls = true
+tls_cert = "/etc/posthorn/cert.pem"
+tls_key = "/etc/posthorn/key.pem"
+auth_required = "smtp-auth"
+allowed_senders = ["*@example.com"]
+max_recipients_per_session = 10
+max_message_size = "1MB"
+
+[[smtp_listener.smtp_users]]
+username = "ghost"
+password = "${env.GHOST_SMTP_PASSWORD}"
+
+[smtp_listener.transport]
+type = "postmark"
+
+[smtp_listener.transport.settings]
+api_key = "${env.POSTMARK_API_KEY}"
 ```
 
 <Aside type="tip">
-Run `posthorn validate --config posthorn.toml` after every change. It parses the file, resolves `${env.VAR}` placeholders, checks the schema, and compiles the templates — without starting the listener. Exit code 0 means the config is good.
+Run `posthorn validate --config posthorn.toml` after every change. It parses the file, resolves `${env.VAR}` placeholders, checks the schema, and (for HTTP endpoints) compiles the templates — without starting the listener. Exit code 0 means the config is good.
 </Aside>
