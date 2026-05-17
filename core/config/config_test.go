@@ -719,3 +719,31 @@ func TestLoad_EnvVar_BodyTemplateNotInterpolated(t *testing.T) {
 		t.Errorf("Body = %q, want %q (template syntax must pass through unchanged)", got, want)
 	}
 }
+
+// TestSMTPListenerConfig_EffectiveRequireTLS pins the security-by-default
+// posture: when the operator omits `require_tls`, the listener requires
+// STARTTLS. Operators explicitly set `require_tls = false` to opt into
+// plaintext (local dev only). Marketing copy and docs depend on this
+// default — a regression here would silently re-open a CVE-shaped hole.
+func TestSMTPListenerConfig_EffectiveRequireTLS(t *testing.T) {
+	t.Run("unset defaults to true", func(t *testing.T) {
+		s := &config.SMTPListenerConfig{}
+		if !s.EffectiveRequireTLS() {
+			t.Error("RequireTLS unset must resolve to true (security-by-default)")
+		}
+	})
+	t.Run("explicit true", func(t *testing.T) {
+		v := true
+		s := &config.SMTPListenerConfig{RequireTLS: &v}
+		if !s.EffectiveRequireTLS() {
+			t.Error("explicit true must resolve to true")
+		}
+	})
+	t.Run("explicit false", func(t *testing.T) {
+		v := false
+		s := &config.SMTPListenerConfig{RequireTLS: &v}
+		if s.EffectiveRequireTLS() {
+			t.Error("explicit false must resolve to false (operator opted into plaintext)")
+		}
+	})
+}

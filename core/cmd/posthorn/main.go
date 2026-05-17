@@ -165,7 +165,7 @@ func buildSMTPIngress(c *config.SMTPListenerConfig, logger *slog.Logger) (ingres
 	}
 	listenerCfg := smtp.ListenerConfig{
 		Listen:                  c.Listen,
-		RequireTLS:              c.RequireTLS,
+		RequireTLS:              c.EffectiveRequireTLS(),
 		TLSCert:                 c.TLSCert,
 		TLSKey:                  c.TLSKey,
 		ClientCertCA:            c.ClientCertCA,

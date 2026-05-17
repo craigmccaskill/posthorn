@@ -8,7 +8,7 @@ import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 This walks through standing up a working contact form on Docker against a real transactional-mail account. It assumes you've already followed [Installation](/getting-started/installation/) and have a provider API key in hand.
 
 <Aside type="note" title="Transport choice">
-This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, AWS SES, and outbound-SMTP relay** all ship in v1.0 too — the walkthrough structure doesn't change, just the `[endpoints.transport]` block at step 2. See [Transports](/configuration/transports/) for the per-provider config.
+This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, AWS SES, and outbound-SMTP relay** are also supported — the walkthrough structure doesn't change, just the `[endpoints.transport]` block at step 2. See [Transports](/configuration/transports/) for the per-provider config.
 </Aside>
 
 <Steps>
@@ -61,8 +61,16 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
    POSTMARK_API_KEY=your-postmark-server-token-here
    ```
 
-   <Aside type="caution">
-   For Postmark specifically: the *server token* is per-server, not per-account. Find it in the Postmark dashboard under your server's API Tokens tab. Other transports have analogous per-deployment credentials documented on their respective [transport pages](/configuration/transports/). Never commit any of these to git.
+   <Aside type="caution" title="Credentials hygiene">
+   This token has full permission to send mail through your account. Treat it like a database password:
+
+   - **Use scoped credentials where possible.** Postmark's *server token* is per-server, not per-account — find it under your server's API Tokens tab. Resend, Mailgun, SES, and most other providers offer analogous per-deployment or per-domain credentials. Scoped creds limit blast radius if one leaks.
+   - **Don't commit `.env` to git.** Add it to `.gitignore` before your first commit; check `git status` confirms it's untracked.
+   - **Lock down file permissions.** `chmod 0640 .env` and own it as the service user.
+   - **Pass via env vars, not literal config.** Posthorn's `${env.VAR}` syntax keeps the secret out of TOML diffs in version control.
+   - **Rotate on suspicion.** If the file was screenshotted, shared in chat, or printed via `printenv` in a session that wasn't private, revoke the key in the provider dashboard and issue a new one.
+
+   See [API keys & secrets](/security/api-keys/) for the in-process guarantee (credentials never appear in logs) and the rotation runbook.
    </Aside>
 
 4. **Write `docker-compose.yml`.**
@@ -86,10 +94,12 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
    docker compose logs -f posthorn
    ```
 
-   You should see a JSON log line like:
+   You should see JSON log lines like:
 
    ```json
-   {"time":"2026-05-14T20:00:00Z","level":"INFO","msg":"listening","addr":":8080"}
+   {"time":"2026-05-16T20:00:00Z","level":"INFO","msg":"posthorn starting","version":"v1.0.0","listen":":8080","config":"/etc/posthorn/config.toml","endpoints":1}
+   {"time":"2026-05-16T20:00:00Z","level":"INFO","msg":"endpoint registered","path":"/api/contact","transport":"postmark","recipients":1}
+   {"time":"2026-05-16T20:00:00Z","level":"INFO","msg":"http ingress listening","addr":":8080"}
    ```
 
 6. **Submit a test form.**
@@ -112,15 +122,18 @@ This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, 
 
    ```json
    {
-     "time": "2026-05-14T20:01:23Z",
+     "time": "2026-05-16T20:01:23Z",
      "level": "INFO",
      "msg": "submission_sent",
      "submission_id": "7f2c84d6-9b1e-4c2f-a3b8-1a2b3c4d5e6f",
      "endpoint": "/api/contact",
      "transport": "postmark",
-     "latency_ms": 312
+     "latency_ms": 312,
+     "transport_message_id": "0a1b2c3d-postmark-id"
    }
    ```
+
+   `transport_message_id` lets you pivot from Posthorn's log straight to the message in the Postmark dashboard.
 
 7. **Check your inbox.** The email should arrive within seconds. Subject line will be `Contact from Test User`. Body will be the rendered template.
 

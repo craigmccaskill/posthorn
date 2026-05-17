@@ -186,7 +186,7 @@ Optional inbound SMTP ingress. When this block is present, `posthorn serve` star
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `listen` | string | yes | — | TCP listen address. Example: `":2525"`. |
-| `require_tls` | bool | no | `false` | When `true`, AUTH / MAIL / RCPT are rejected until the client has issued `STARTTLS`. Recommended `true` for any non-localhost listener. |
+| `require_tls` | bool | no | `true` | When `true` (default), AUTH / MAIL / RCPT are rejected until the client has issued `STARTTLS`. Set explicitly to `false` only for local development on a loopback listener. |
 | `tls_cert` | string | conditional | — | Path to PEM cert. Required when `require_tls = true` or when `auth_required` involves client certs. |
 | `tls_key` | string | conditional | — | Path to PEM private key. Same conditions as `tls_cert`. |
 

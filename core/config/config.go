@@ -33,8 +33,15 @@ type Config struct {
 // smtp circular dependency; the smtp package converts it to its
 // internal ListenerConfig shape.
 type SMTPListenerConfig struct {
-	Listen                  string              `toml:"listen"`
-	RequireTLS              bool                `toml:"require_tls"`
+	Listen string `toml:"listen"`
+
+	// RequireTLS forces STARTTLS upgrade before AUTH / MAIL / RCPT.
+	// A *bool (per ADR-4 precedent) so we can distinguish unset (default
+	// true — TLS-required is the safe production posture documented in
+	// marketing) from explicit `require_tls = false` (operator opted into
+	// plaintext, only sensible for local development).
+	RequireTLS *bool `toml:"require_tls"`
+
 	TLSCert                 string              `toml:"tls_cert"`
 	TLSKey                  string              `toml:"tls_key"`
 	ClientCertCA            string              `toml:"client_cert_ca"`
@@ -273,6 +280,17 @@ func (s *SMTPListenerConfig) Validate() error {
 		return fmt.Errorf("idle_timeout: must be non-negative, got %v", s.IdleTimeout.Std())
 	}
 	return nil
+}
+
+// EffectiveRequireTLS resolves the *bool RequireTLS to a concrete value.
+// Unset (nil) defaults to true — STARTTLS-required is the documented
+// production default; operators opt out by explicitly setting
+// `require_tls = false` for local development.
+func (s *SMTPListenerConfig) EffectiveRequireTLS() bool {
+	if s.RequireTLS == nil {
+		return true
+	}
+	return *s.RequireTLS
 }
 
 // Validate checks one endpoint's configuration.
