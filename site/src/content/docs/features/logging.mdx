@@ -24,7 +24,7 @@ Default format is JSON. Every log entry is a single line of JSON with these stan
 | Field | Always present | Description |
 |---|---|---|
 | `time` | yes | ISO 8601 timestamp, UTC, millisecond precision |
-| `level` | yes | `INFO`, `WARN`, `ERROR` (Posthorn does not emit `DEBUG` in v1.0) |
+| `level` | yes | `INFO`, `WARN`, `ERROR` (Posthorn does not currently emit `DEBUG`) |
 | `msg` | yes | Event name (see event catalog below) |
 | `submission_id` | HTTP request-scoped events | UUIDv4 generated at request receipt |
 | `session_id` | SMTP session-scoped events | UUIDv4 generated when the SMTP connection is accepted |
@@ -129,7 +129,7 @@ When `log_failed_submissions = false`, the metadata still logs (event, error, la
 | `WARN` | One specific event — a second SIGTERM/SIGINT during graceful shutdown |
 | `ERROR` | `template_render_failed`, `submission_failed`, `smtp_submission_failed` |
 
-Posthorn does not emit `DEBUG` in v1.0. Configure the global minimum:
+Posthorn does not currently emit `DEBUG`. Configure the global minimum:
 
 ```toml
 [logging]
@@ -143,15 +143,15 @@ level = "info"
 format = "json"
 ```
 
-`"json"` is the only supported value in v1.0 (the config loader rejects anything else). Posthorn writes to stdout; structure-parsing pipelines (Loki, Elasticsearch, Datadog, CloudWatch, journald with a JSON parser) ingest the lines directly.
+`"json"` is the only supported value (the config loader rejects anything else). Posthorn writes to stdout; structure-parsing pipelines (Loki, Elasticsearch, Datadog, CloudWatch, journald with a JSON parser) ingest the lines directly.
 
 ## What never appears in logs
 
-By contract (NFR3, NFR21):
+By design:
 
 - **API keys.** Configured transport API keys, api-mode `api_keys`, `csrf_secret`, and SMTP `smtp_users` passwords — never logged in any code path. Tests verify by triggering failures with sentinel-key strings and asserting the string does not appear in captured log output.
 - **Honeypot field values.** Redacted to `"<redacted>"` if present in a `submission_failed` form payload.
-- **Submitter content in `/metrics` labels** (NFR24). The Prometheus exposition keeps cardinality bounded — labels carry only operator-configured names (endpoint paths, transport types, error class enum).
+- **Submitter content in `/metrics` labels.** The Prometheus exposition keeps cardinality bounded — labels carry only operator-configured names (endpoint paths, transport types, error class enum), never submitter content.
 
 See [API keys](/security/api-keys/) for the full guarantee.
 

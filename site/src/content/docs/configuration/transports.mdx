@@ -37,24 +37,24 @@ Different endpoints in one Posthorn instance can use different transports, or di
 
 ## What every transport guarantees
 
-These are NFR-level invariants every transport in the registry honors. They're tested per-transport — adding a new one requires passing the same suite.
+Every transport in the registry honors these invariants. They're tested per-transport — adding a new one requires passing the same suite.
 
 | Invariant | What it means |
 |---|---|
-| **No header injection** ([NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | Submitter-controlled fields (From, To, Subject, Reply-To, recipients) reach the provider through structural API constructs — JSON struct marshaling, mime/multipart writers, or pre-write CRLF validation. CRLF in any field cannot construct a sibling header. |
-| **API keys never logged** ([NFR3](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | The transport sets credentials at request-construction time and never passes them to the logger. Test suites include sentinel-token assertions that the configured key string does not appear in any captured log output, even on failure paths. |
-| **Consistent error classes** | Every transport classifies failures as `ErrTransient` (network, 5xx, transient SMTP 4xx → retry), `ErrRateLimited` (429 → retry with longer backoff), `ErrTerminal` (auth failures, 4xx other than 429, permanent SMTP 5xx → no retry). The retry policy (FR19–FR21) is ingress-agnostic. |
+| **No header injection** | Submitter-controlled fields (From, To, Subject, Reply-To, recipients) reach the provider through structural API constructs — JSON struct marshaling, multipart writers, or pre-write CRLF (carriage-return / line-feed) validation. CRLF in any field cannot construct a sibling header. |
+| **API keys never logged** | The transport sets credentials at request-construction time and never passes them to the logger. Test suites include sentinel-token assertions that the configured key string does not appear in any captured log output, even on failure paths. |
+| **Consistent error classes** | Every transport classifies failures as `ErrTransient` (network, 5xx, transient SMTP 4xx → retry), `ErrRateLimited` (429 → retry with longer backoff), `ErrTerminal` (auth failures, 4xx other than 429, permanent SMTP 5xx → no retry). The retry policy is ingress-agnostic. |
 | **Message-ID surfacing** | Where the provider returns one, `transport_message_id` lands in the `submission_sent` log line so operators can correlate Posthorn logs with the provider's dashboard. |
 
 ## Why bespoke clients, not SDKs
 
-Every transport in Posthorn is a hand-rolled HTTP (or SMTP) client. No `postmark-go`, no `aws-sdk-go-v2`, no `mailgun-go`. The reasoning is [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log):
+Every transport in Posthorn is a hand-rolled HTTP (or SMTP) client. No `postmark-go`, no `aws-sdk-go-v2`, no `mailgun-go`:
 
 - Each provider's surface area is small (typically one or two endpoints we care about). Bespoke runs ~150–250 lines per transport.
 - SDKs come with transitive dependency trees we don't want to track for security updates. The smallest mainstream email SDK still pulls in 20+ packages.
-- Bespoke gives us complete control over header construction — the structural NFR1 defense lives in the transport code, not in some SDK we'd have to audit on every release.
+- Bespoke gives us complete control over header construction — the structural header-injection defense lives in the transport code, not in some SDK we'd have to audit on every release.
 
-The marginal case is AWS SES, which needs SigV4 signing. We implement that bespoke too (~230 lines), with an explicit LOC tripwire in [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) — if bespoke ever grows past 500 LOC for a single transport, we revisit the SDK question.
+The marginal case is AWS SES, which needs Signature Version 4 (SigV4) signing. We implement that bespoke too (~230 lines), with a documented threshold: if bespoke ever grows past 500 lines of implementation for a single transport, we revisit the SDK question.
 
 ## Registering a new transport
 

@@ -64,7 +64,7 @@ Hello world
 Both forms are handled by `r.ParseForm()` and produce the same internal representation.
 
 <Aside type="note">
-**File uploads (multipart with `Content-Type: application/octet-stream` parts) are accepted at the wire level but ignored.** Posthorn does not forward attachments to the transport in v1.0. File attachments are a v2 feature. If your form includes file inputs, the file content is silently dropped — only the text fields make it to the email.
+**File uploads (multipart with `Content-Type: application/octet-stream` parts) are accepted at the wire level but ignored.** Posthorn does not currently forward attachments to the transport. Attachment support is planned for v2. If your form includes file inputs, the file content is silently dropped — only the text fields make it to the email.
 </Aside>
 
 ## Response — success
@@ -110,7 +110,7 @@ The structured `fields` map is the contract clients should program against — i
 
 Other status codes return a one-line plaintext body (`Content-Type: text/plain; charset=utf-8`). The exact strings are documented per-status in [Response codes](/reference/response-codes/). Programmatic callers should branch on **status code**, not body text — the strings are stable but not part of a versioned contract.
 
-Promoting every error to structured JSON is on the post-v1.0 polish list. If you'd find it useful, open a feature request describing the use case.
+Promoting every error to structured JSON is on the future polish list. If you'd find it useful, open a feature request describing the use case.
 
 ### Status codes
 
@@ -170,7 +170,7 @@ form.addEventListener('submit', async (e) => {
     const json = await res.json();
     showFieldErrors(json.fields);
   } else if (res.status === 429) {
-    // Plaintext body; no Retry-After header in v1.0. Back off and retry.
+    // Plaintext body; Posthorn doesn't emit a Retry-After header. Back off and retry.
     showRateLimited();
   } else {
     // Plaintext body for 4xx/5xx other than 422. Use status code, not body text.
@@ -238,7 +238,7 @@ Content-Type: application/json; charset=utf-8
 {"status":"ok","submission_id":"..."}
 ```
 
-## What's not in v1.0
+## Not currently supported
 
 | Feature | When |
 |---|---|

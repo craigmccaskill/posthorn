@@ -5,7 +5,7 @@ description: How Posthorn handles credentials — and the guarantee that they ne
 
 import { Aside } from '@astrojs/starlight/components';
 
-Posthorn handles several kinds of credentials in v1.0:
+Posthorn handles several kinds of credentials:
 
 - **Transport API keys** — one per configured transport (Postmark server token, Resend API key, Mailgun API key, AWS SES credentials, outbound-SMTP password).
 - **API-mode `api_keys`** — Bearer tokens accepted on API-mode endpoints. Operator-issued.
@@ -56,7 +56,7 @@ See [Environment variables](/configuration/environment-variables/) for the full 
 
 That said, Posthorn does accept literal strings (the placeholder syntax is optional) — it's the operator's responsibility to keep that file out of git. Use `.gitignore` for any config file with literal secrets.
 
-## The guarantee (NFR3, NFR21)
+## The guarantee
 
 > Credentials configured via `${env.VAR}` placeholders must not appear in any log output, including error logs.
 
@@ -130,4 +130,4 @@ If you suspect a leak: revoke, rotate, audit the provider's send logs for unfami
 
 ## Adding a new transport
 
-Every transport added in v1.x or v2 must pass the NFR3 sentinel-key-not-in-logs test before merging — the test triggers a failure path with a known credential string and asserts the string does not appear in captured log output. This applies to bespoke transports the same way it applies to the five v1.0 transports.
+Every new transport must pass the sentinel-key-not-in-logs test before merging — the test triggers a failure path with a known credential string and asserts the string does not appear in captured log output. This applies to bespoke transports the same way it applies to the existing five.

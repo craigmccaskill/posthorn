@@ -260,7 +260,7 @@ Content-Type: text/plain; charset=utf-8
 rate limit exceeded
 ```
 
-A `Retry-After` header is **not** emitted in v1.0 — the client gets a plain 429 and is expected to back off. (Adding `Retry-After` derived from token-bucket state is a planned post-v1.0 polish item.)
+A `Retry-After` header is **not** emitted — the client gets a plain 429 and is expected to back off. (Adding `Retry-After` derived from token-bucket state is a planned polish item.)
 
 Common causes:
 
@@ -296,7 +296,7 @@ Common causes:
 | Network failure during retry | Same |
 
 <Aside type="caution">
-On 502, the submission's form payload is logged at ERROR level (unless `log_failed_submissions = false`). Read your logs to recover the data and send manually if needed. There is no persistent queue in v1.0; the failed submission only lives in the log.
+On 502, the submission's form payload is logged at ERROR level (unless `log_failed_submissions = false`). Read your logs to recover the data and send manually if needed. There is no persistent queue; the failed submission only lives in the log. A durable retry queue is planned for v2.
 </Aside>
 
 ## 500 Internal Server Error

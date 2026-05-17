@@ -178,7 +178,7 @@ A short catalog of the events you'll actually grep for. Full schema for each is 
 
 ## Failure recovery from logs
 
-In v1.0, terminal failures (502 to the client) **store the submission payload in the log line itself** — there's no persistent queue. The `submission_failed` event with `log_failed_submissions = true` (default) carries the full `form` map. To recover:
+Terminal failures (502 to the client) **store the submission payload in the log line itself** — there's no persistent queue. The `submission_failed` event with `log_failed_submissions = true` (default) carries the full `form` map. To recover:
 
 ```bash
 # Find the failed submission by ID (the API caller has this from the response body... unless the response was eaten)
@@ -217,10 +217,10 @@ For Prometheus scraping, **don't parse logs** — Posthorn exposes a native `/me
 
 ## What does *not* appear in logs
 
-By contract (NFR3, NFR21):
+By design:
 
 - **Credentials.** Transport API keys, api-mode `api_keys`, `csrf_secret`, SMTP `smtp_users` passwords — never logged in any code path. Tests verify with sentinel-key strings on every CI build.
 - **Honeypot field values.** Redacted to `"<redacted>"` in `submission_failed.form`.
-- **Submitter content in `/metrics` labels** (NFR24). The Prometheus surface is structurally bounded — labels carry only operator-configured names.
+- **Submitter content in `/metrics` labels.** The Prometheus surface is structurally bounded — labels carry only operator-configured names (endpoint paths, transport types, error class enum), never submitter content.
 
 See [API keys & secrets](/security/api-keys/) for the full guarantee and rotation runbook.

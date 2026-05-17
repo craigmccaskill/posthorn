@@ -38,7 +38,7 @@ type = "postmark"
 api_key = "${env.POSTMARK_API_KEY}"
 ```
 
-The SMTP listener has its own `[smtp_listener.transport]` block, separate from `[[endpoints]]`. One SMTP listener = one outbound transport (multi-tenant routing by RCPT is v2 territory; see [ADR-13](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log)).
+The SMTP listener has its own `[smtp_listener.transport]` block, separate from `[[endpoints]]`. One SMTP listener has one outbound transport; per-recipient routing through different transports is a future feature.
 
 ## Open-relay prevention
 
@@ -62,7 +62,7 @@ Posthorn refuses to relay arbitrary mail. Every accepted message must clear all 
 
 ## Recipients come from the envelope, never the MIME
 
-A subtle but important invariant ([NFR22](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)): the outbound message's recipients come from the SMTP `RCPT TO` commands, **never** from the MIME `To:`/`Cc:`/`Bcc:` headers. A malicious client that sent:
+A subtle but important invariant: the outbound message's recipients come from the SMTP `RCPT TO` commands, **never** from the MIME `To:`/`Cc:`/`Bcc:` headers. A malicious client that sent:
 
 ```
 RCPT TO:<alice@example.com>

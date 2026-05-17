@@ -56,7 +56,7 @@ For `Reply-To`: the email field passes through the same JSON-encoded structured 
 
 For `Subject`: the template rendering produces a Go string, which becomes a JSON field value. Same defense — JSON encoding escapes control characters.
 
-### 3. Explicit test coverage (NFR2)
+### 3. Explicit test coverage
 
 The test suite includes a table of known injection payloads:
 
@@ -98,8 +98,8 @@ Posthorn handles header safety as a code-level invariant. Submitter input is jus
 
 Every transport (Postmark, Resend, Mailgun, SES) uses the structured-data approach. The Postmark transport set the pattern: JSON-encoded request bodies, no `Sprintf` into header values, table-driven injection tests included. The others followed.
 
-The outbound-SMTP transport is the one where headers *are* constructed as a wire-level SMTP message rather than a JSON payload. Its implementation uses `net/mail` and `net/smtp` to compose headers via the standard library's structured APIs — never `Sprintf` of submitter input into raw header lines — plus a pre-write CRLF validation at Posthorn's edge that rejects header-injection attempts before the SMTP session even opens. The same NFR2 injection-payload test table runs against it.
+The outbound-SMTP transport is the one where headers *are* constructed as a wire-level SMTP message rather than a JSON payload. Its implementation uses `net/mail` and `net/smtp` to compose headers via the standard library's structured APIs — never `Sprintf` of submitter input into raw header lines — plus a pre-write CRLF validation at Posthorn's edge that rejects header-injection attempts before the SMTP session even opens. The same injection-payload test table runs against it.
 
-The architecture explicitly bans transport implementations from constructing headers via string formatting — see [NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md) in the PRD. New transports that violate this don't merge.
+The architecture explicitly bans transport implementations from constructing headers via string formatting. New transports that violate this don't merge.
 
-The SMTP **ingress** carries the invariant too: recipients in the outbound message come from the SMTP envelope (`RCPT TO`), never from the inbound MIME `To`/`Cc`/`Bcc` headers. A malicious internal client sending `Bcc: victim@target.com` in a DATA blob can't add recipients — the header lands in the parsed map and is discarded. See [NFR22](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md) and [features/smtp-ingress](/features/smtp-ingress/).
+The SMTP **ingress** carries the invariant too: recipients in the outbound message come from the SMTP envelope (`RCPT TO`), never from the inbound MIME `To`/`Cc`/`Bcc` headers. A malicious internal client sending `Bcc: victim@target.com` in a DATA blob can't add recipients — the header lands in the parsed map and is discarded. See [SMTP ingress](/features/smtp-ingress/) for the listener-side defense.

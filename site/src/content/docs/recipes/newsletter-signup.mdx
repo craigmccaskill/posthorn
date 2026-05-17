@@ -5,12 +5,12 @@ description: A signup form that drops new email addresses into your inbox so you
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-You want a "subscribe" form on your site, but you don't want to build a list manager — that's Listmonk territory. The pragmatic v1.0 shape: a form that takes an email address, validates it, and notifies *you* by email so you can manually add the subscriber to whichever platform you actually use (Listmonk, Buttondown, Beehiiv, Substack).
+You want a "subscribe" form on your site, but you don't want to build a list manager — that's Listmonk territory. The pragmatic shape: a form that takes an email address, validates it, and notifies *you* by email so you can manually add the subscriber to whichever platform you actually use (Listmonk, Buttondown, Beehiiv, Substack).
 
 **At the end:** a `/subscribe` form that emails you whenever someone signs up. Subscriber gets a "thanks, you'll hear from us" redirect. You decide what to do with the address.
 
 <Aside type="note" title="This isn't double opt-in">
-True double-opt-in needs persistent state (store the pending subscription, generate a confirmation token, email the subscriber, wait for them to click, then mark active). Posthorn v1.0 doesn't store state — it forwards form submissions to email and stops. For double opt-in, pair Posthorn with [Listmonk](https://listmonk.app) (or any list manager); Posthorn handles the submission, Listmonk handles the confirmation flow.
+True double-opt-in needs persistent state (store the pending subscription, generate a confirmation token, email the subscriber, wait for them to click, then mark active). Posthorn doesn't store state — it forwards form submissions to email and stops. For double opt-in, pair Posthorn with [Listmonk](https://listmonk.app) (or any list manager); Posthorn handles the submission, Listmonk handles the confirmation flow.
 
 This recipe is intentionally simpler: it's "tell me about new signups" rather than "manage the full subscription lifecycle."
 </Aside>

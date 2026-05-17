@@ -23,7 +23,7 @@ password = "${env.SMTP_PASSWORD}"
 | `host` | yes | — | SMTP server hostname. |
 | `port` | yes | — | SMTP server port. Typically `587` (STARTTLS) or `2525` (alternative STARTTLS port). Port `25` is blocked outbound on most cloud providers. |
 | `username` | yes | — | SMTP AUTH PLAIN username. |
-| `password` | yes | — | SMTP AUTH PLAIN password. **Never logged** ([NFR3](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)). |
+| `password` | yes | — | SMTP AUTH PLAIN password. **Never logged** in any code path. |
 | `require_tls` | no | `true` | Require STARTTLS before sending credentials. Setting to `false` is **not recommended** outside of local testing. |
 | `tls_insecure_skip_verify` | no | `false` | Skip TLS certificate validation. **Test-only escape hatch** for self-signed certs in local dev. |
 
@@ -61,11 +61,11 @@ If you're not sure which to pick, prefer one of the HTTP API transports (Postmar
 | `MAIL FROM` / `RCPT TO` `4xx` (greylisting, `450 4.7.1`) | `ErrTransient` | yes, after 1s |
 | `MAIL FROM` / `RCPT TO` `5xx` (relay-rejected, bad address, `550 5.1.1`) | `ErrTerminal` | no |
 | `DATA` initial command `5xx` (e.g., `552 5.3.4 Message too big`) | `ErrTerminal` | no |
-| CRLF in `From` / `To` / `Subject` / `Reply-To` ([NFR1](https://github.com/craigmccaskill/posthorn/blob/main/spec/02-prd.md)) | `ErrTerminal` | no (rejected at Posthorn's edge before dialing) |
+| Carriage-return / line-feed (CRLF) in `From` / `To` / `Subject` / `Reply-To` (header injection attempt) | `ErrTerminal` | no — rejected at Posthorn's edge before dialing |
 
 ## Header injection defense
 
-SMTP is the only Posthorn transport that hand-writes the RFC 5322 message envelope (because there's no JSON struct to lean on). The structural NFR1 defense is **pre-write validation**: before the wire conversation starts, Posthorn checks that no submitter-controlled header value contains CR or LF. Any CRLF in `From`/`To`/`Subject`/`Reply-To` is rejected with `ErrTerminal` and the dial never happens.
+SMTP is the only Posthorn transport that hand-writes the RFC 5322 message envelope (because there's no JSON struct to lean on). The structural header-injection defense is **pre-write validation**: before the wire conversation starts, Posthorn checks that no submitter-controlled header value contains CR or LF. Any CRLF in `From`/`To`/`Subject`/`Reply-To` is rejected with `ErrTerminal` and the dial never happens.
 
 Additionally:
 

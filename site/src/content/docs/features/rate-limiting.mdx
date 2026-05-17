@@ -65,13 +65,13 @@ When `RemoteAddr` is in one of the trusted CIDRs, Posthorn reads `X-Forwarded-Fo
 For Cloudflare in front of your stack, list [Cloudflare's published IPv4 and IPv6 ranges](https://www.cloudflare.com/ips/).
 </Aside>
 
-## LRU cap (NFR6)
+## LRU cap
 
 The limiter tracks at most **10,000 IPs by default**. When the cap is reached, the least-recently-used bucket is evicted to make room.
 
 This bounds memory regardless of attack volume. A flood of submissions from a million different IPs won't grow Posthorn's memory unboundedly — older buckets get evicted as new ones come in. The eviction is per-endpoint, so a flood on `/api/contact` doesn't affect `/api/newsletter`.
 
-The 10K default is sized for typical homelab and indie-developer use. Larger deployments can override (though the override knob isn't exposed in v1.0 config — see [open question 1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#open-architectural-questions); the spec defaults this).
+The 10K default is sized for typical homelab and indie-developer use. Larger deployments can override the cap; the configuration knob is a planned addition.
 
 ## What happens on 429
 
@@ -86,7 +86,7 @@ rate limit exceeded
 
 Or, if the request prefers `text/html` and `redirect_error` is configured, a 303 redirect to that URL.
 
-v1.0 does **not** emit a `Retry-After` header. Clients should back off on their own (a small fixed delay or progressive backoff is fine for a form-submit retry). Computed `Retry-After` from the bucket's refill schedule is on the post-v1.0 polish list — open a feature request if you'd find it useful.
+Posthorn does **not** emit a `Retry-After` header. Clients should back off on their own (a small fixed delay or progressive backoff is fine for a form-submit retry). Computed `Retry-After` from the bucket's refill schedule is a planned polish item — open a feature request if you'd find it useful.
 
 ## Choosing values
 
@@ -118,8 +118,8 @@ Every rate-limited request logs an event:
 
 Use this to spot abuse patterns — a single IP that's been 429'd a hundred times in an hour is a bot you might want to block at the firewall level.
 
-## What's not in v1.0
+## What's not included
 
-- **Per-endpoint absolute limit.** Only per-IP. A coordinated botnet from many low-rate IPs can still drive aggregate volume up. Mitigation lands in v3 (proof-of-work / captcha).
-- **Hot reload of rate-limit config.** You restart Posthorn to change rate limits.
-- **Distributed rate limiting** across multiple Posthorn instances. v1.0 limits are per-instance. For multi-instance deployments behind a load balancer, the limit you configure applies to each instance independently — a 5/min config with 3 instances means up to 15/min in practice.
+- **Per-endpoint absolute limit.** Only per-IP. A coordinated botnet from many low-rate IPs can still drive aggregate volume up. Mitigation lands later (proof-of-work / captcha).
+- **Hot reload of rate-limit config.** Restart Posthorn to change rate limits.
+- **Distributed rate limiting** across multiple Posthorn instances. Limits are per-instance. For multi-instance deployments behind a load balancer, the limit you configure applies to each instance independently — a 5/min config with 3 instances means up to 15/min in practice.

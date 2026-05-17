@@ -60,21 +60,21 @@ Earlier versions of Posthorn also shipped a Caddy v2 module (loaded via `xcaddy 
 
 ## Does Posthorn handle file attachments?
 
-**Not in v1.0.** File attachments land in v2 alongside SQLite persistent storage. If your form has file inputs, the file content is silently ignored — only text fields make it to the email.
+**Not currently.** File attachments land in v2 alongside SQLite persistent storage. If your form has file inputs, the file content is silently ignored — only text fields make it to the email.
 
 ## Does Posthorn send confirmation emails to the submitter?
 
-**Not in v1.0.** Confirmation auto-replies are post-v1 (no specific version assigned). For now, send an explicit confirmation from a separate path (e.g., a webhook from your form handler), or accept that the redirect_success page is the confirmation.
+**Not currently.** Confirmation auto-replies are a planned future addition. For now, send an explicit confirmation from a separate path (e.g., a webhook from your form handler), or accept that the `redirect_success` page is the confirmation.
 
 ## What happens if Postmark goes down?
 
 Posthorn retries once on transient failures (1s delay). If Postmark is still down on retry, the request returns 502 to the client, and the full form payload is logged at ERROR level so you can recover it manually.
 
-There is no persistent queue in v1.0. A failed submission only exists in the log. v2 will add a SQLite-backed retry queue across restarts.
+There is no persistent queue currently. A failed submission only exists in the log. v2 will add a SQLite-backed retry queue across restarts.
 
 ## Can I hot-reload the config?
 
-**Not in v1.0.** Config is read once at startup. To change config, edit the TOML and restart the container or process. A future release may add SIGHUP-triggered reload.
+**Not currently.** Config is read once at startup. To change config, edit the TOML and restart the container or process. A future release may add SIGHUP-triggered reload.
 
 ## Why TOML, not YAML / JSON?
 

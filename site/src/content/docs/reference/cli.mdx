@@ -39,7 +39,7 @@ The SMTP listener's bind address is configured in the TOML (`smtp_listener.liste
 | `SIGINT` (Ctrl+C) | Same as SIGTERM |
 | Second `SIGTERM` / `SIGINT` | Force-exit immediately with code 1 |
 
-The 15-second drain deadline is intentionally longer than the per-request 10-second hard timeout (FR22) so any in-flight retry can complete gracefully. Press Ctrl+C twice in a terminal to force-exit a stuck process.
+The 15-second drain deadline is intentionally longer than the per-request 10-second hard timeout, so any in-flight retry can complete gracefully. Press Ctrl+C twice in a terminal to force-exit a stuck process.
 
 ### Logs
 
@@ -135,7 +135,7 @@ Examples:
   posthorn validate --config ./posthorn.toml
 ```
 
-Aliased to `--help` and `-h`. Subcommand-specific help is not separately wired in v1.0 — the top-level `help` lists the flag set for each subcommand.
+Aliased to `--help` and `-h`. Subcommand-specific help is not separately wired — the top-level `help` lists the flag set for each subcommand.
 
 ## Environment variables
 

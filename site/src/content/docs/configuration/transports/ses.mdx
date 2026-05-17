@@ -50,7 +50,7 @@ scoped to the verified sender identities in the account. A minimal policy:
 | Aspect | Behavior |
 |---|---|
 | API endpoint | `POST https://email.<region>.amazonaws.com/v2/email/outbound-emails` |
-| Authentication | AWS SigV4 (bespoke implementation; no AWS SDK) — see [ADR-1](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) and [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) |
+| Authentication | AWS Signature Version 4 (SigV4) — bespoke implementation, no AWS SDK |
 | Body format | JSON (SESv2 `SendEmail` shape: `FromEmailAddress`, `Destination.ToAddresses`, `Content.Simple.Subject.Data`, `Content.Simple.Body.Text.Data`) |
 | Per-request timeout | 5s (transport-level) |
 | `transport_message_id` | Parsed from response `MessageId` field |
@@ -95,5 +95,5 @@ The IAM policy above must scope to the verified identity ARN.
 | Mail goes to recipient's spam | DKIM CNAMEs not published, or DMARC alignment wrong | Verify DKIM via AWS console's verifier; publish DMARC `p=none` initially |
 
 <Aside type="tip">
-SES SigV4 is the most complex auth scheme of any Posthorn transport. The implementation lives in `core/transport/awssigv4.go` and is shared with any future AWS-signed transport (S3 storage in v2, SNS in v2). See [ADR-14](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md#architectural-decisions-log) for the bespoke-vs-SDK reasoning.
+SES SigV4 is the most complex auth scheme of any Posthorn transport. The implementation lives in `core/transport/awssigv4.go` and is reusable by any future AWS-signed transport (e.g. SNS, S3).
 </Aside>

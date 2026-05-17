@@ -1,6 +1,6 @@
 ---
 title: Threat model
-description: What Posthorn defends against in v1.0, and what's deliberately out of scope.
+description: What Posthorn defends against, and what's deliberately out of scope.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
@@ -52,14 +52,14 @@ Threats 5, 6, 9, 12, 17, and 18 are **code-level guarantees**, not config option
 | DDoS / Layer 7 attacks | (not in scope) | This is the CDN/reverse-proxy's responsibility, not Posthorn's. |
 | API key theft from misconfigured deployment | documentation | If you commit your key to git or expose it in a public env file, Posthorn can't help. Treat keys as secrets; use [secret-injection mechanisms](/configuration/environment-variables/). |
 | Compromise of an upstream transport (Postmark, Resend, etc.) | not applicable | Posthorn is a thin relay; if the upstream is breached, that's an upstream incident, not a Posthorn vulnerability. |
-| Supply chain attacks on Posthorn dependencies | partial | Minimal dep tree (3 external deps in v1.0); Dependabot tracks them. No defense beyond keeping deps current. |
+| Supply chain attacks on Posthorn dependencies | partial | Minimal dep tree (3 external deps); Dependabot tracks them. No defense beyond keeping deps current. |
 | Phishing emails crafted by submitter content | partial | Posthorn's body is plaintext; no rendering of submitter HTML. v2 may add markdown rendering with explicit escaping. |
 
 ## What's a Posthorn vulnerability vs. an operator misconfiguration?
 
 | Class | Examples | Whose responsibility |
 |---|---|---|
-| Posthorn code/spec bug | Header injection passes despite NFR1/NFR2 tests; API key leaks into a log; rate limit bypass via spoofed XFF when `trusted_proxies` is correctly configured | Project (file an issue) |
+| Posthorn code/spec bug | Header injection passes despite the structural defenses; API key leaks into a log; rate limit bypass via spoofed XFF when `trusted_proxies` is correctly configured | Project (file an issue) |
 | Operator misconfiguration | Loose `trusted_proxies` (`0.0.0.0/0`); committed API key to git; no allowed_origins on a public form; running Posthorn directly on port 443 without TLS | Operator (see docs) |
 
 If you find what you believe is a Posthorn vulnerability, **don't open a public GitHub issue.** Email the disclosure address in [`SECURITY.md`](https://github.com/craigmccaskill/posthorn/blob/main/SECURITY.md).
@@ -68,7 +68,7 @@ If you find what you believe is a Posthorn vulnerability, **don't open a public 
 
 The layers compose. A bot might pass the honeypot (it didn't fill the trap) and pass Origin/Referer (it scraped the form first) but trip the rate limit on its 6th submission in a minute. A determined attacker can probably bypass any single layer; the stack is designed so they have to bypass several.
 
-For most public contact forms, the v1.0 stack catches 95%+ of automated abuse with no operator friction beyond setting four config values. The cases it doesn't catch are mostly **low-rate manual abuse** — much rarer in practice than drive-by bots.
+For most public contact forms, this stack catches 95%+ of automated abuse with no operator friction beyond setting four config values. The cases it doesn't catch are mostly **low-rate manual abuse** — much rarer in practice than drive-by bots.
 
 ## Disclosure
 

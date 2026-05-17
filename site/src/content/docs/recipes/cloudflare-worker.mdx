@@ -56,7 +56,7 @@ Why the extra hop?
    ```
 
    <Aside type="note" title="`from` is endpoint-configured, `to` is per-request">
-   The `from` identity stays in TOML — operators control sender identity for all messages from this endpoint, and a leaked API key can't be used to spoof other senders ([ADR-11](https://github.com/craigmccaskill/posthorn/blob/main/spec/03-architecture.md)). Per-request recipients come in via the `to_override` field in the JSON body — see step 4. Need different sender identities? Configure separate endpoints, one per identity.
+   The `from` identity stays in TOML — operators control sender identity for all messages from this endpoint, and a leaked API key can't be used to spoof other senders. Per-request recipients come in via the `to_override` field in the JSON body — see step 4. Need different sender identities? Configure separate endpoints, one per identity.
    </Aside>
 
    Note what's _not_ in this config:
@@ -278,7 +278,7 @@ Bad patterns:
 |---|---|---|
 | `HTTP 401` from every Worker request | `Authorization` header missing or scheme wrong | Must be exactly `Authorization: Bearer <key>` (case-insensitive on `Bearer`, exact match on the key) |
 | `HTTP 415` on Worker request | Worker sent `Content-Type: text/plain` or omitted the header | Set `Content-Type: application/json` explicitly |
-| `HTTP 400 nested objects not supported` | JSON body has `{"user": {"name": "x"}}` | Flatten at the Worker (`{"user_name": "x"}`); nested object support is a post-v1.0 shape |
+| `HTTP 400 nested objects not supported` | JSON body has `{"user": {"name": "x"}}` | Flatten at the Worker (`{"user_name": "x"}`); nested object support is a planned future addition |
 | Duplicate emails when Worker retries | Idempotency-Key is random per attempt instead of stable per event | Derive the key from the logical event identifier, not from request attempt |
 | `HTTP 409` on concurrent retries | Two retries of the same logical event raced (e.g. a webhook fired twice with no backoff) | Add jittered backoff on the retry path; 409 means "the first one is still processing" |
 | Worker key shows up in your logs | Logging the failed-request body before sending | Posthorn never logs the matched key, but a Worker that logs its request body will. Audit your Worker logging. |

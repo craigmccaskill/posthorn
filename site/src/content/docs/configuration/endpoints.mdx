@@ -129,10 +129,10 @@ Paths are matched against the request URL **as Posthorn sees it after your rever
 
 ## Adding a new endpoint without restarting
 
-v1.0 reads the config once at startup. Adding a new endpoint requires:
+Posthorn reads the config once at startup. Adding a new endpoint requires:
 
 1. Edit `posthorn.toml`
 2. `posthorn validate --config posthorn.toml`
 3. Restart the container or process
 
-Hot reload is not in v1.0 scope. A future release may add SIGHUP-triggered reload.
+Hot reload is not currently supported. A future release may add SIGHUP-triggered reload.

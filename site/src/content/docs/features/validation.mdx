@@ -3,7 +3,7 @@ title: Validation
 description: Required fields, email format, and the JSON 422 error contract.
 ---
 
-Validation runs after the spam-protection layers and before template rendering. Two checks ship in v1.0: required fields and email format. Both produce structured 422 responses that include the specific failing field names.
+Validation runs after the spam-protection layers and before template rendering. Two checks are built in: required fields and email format. Both produce structured 422 responses that include the specific failing field names.
 
 ## Required fields
 
@@ -118,7 +118,7 @@ From: {{.name}} <{{.email}}>
 
 The `reply_to_email_field` config sets the email's `Reply-To` header to the value of the specified form field. Combined with a body template that includes `{{.name}}`, you get a usable reply experience.
 
-## What v1.0 doesn't validate
+## What Posthorn doesn't validate
 
 | Check | Status | Notes |
 |---|---|---|
@@ -127,7 +127,7 @@ The `reply_to_email_field` config sets the email's `Reply-To` header to the valu
 | Regex pattern match | future | e.g. `phone` must match a pattern |
 | Custom validators | (not planned) | Adds plugin complexity disproportionate to value |
 
-For v1.0, complex validation belongs in your application or your form's client-side JavaScript. Posthorn's job is to keep obviously-malformed submissions out of Postmark and out of your inbox.
+Complex validation belongs in your application or your form's client-side JavaScript. Posthorn's job is to keep obviously-malformed submissions out of your provider and out of your inbox.
 
 ## Best-practice form design
 

@@ -123,7 +123,7 @@ You run a monitoring tool — Uptime Kuma, healthchecks.io, a custom cron-with-w
 Alert traffic has a different shape than form traffic. A few patterns to think about:
 
 - **Quiet stretches punctuated by bursts.** Days of no alerts; then a network blip and your monitor fires 10 alerts in 2 minutes. The rate limit needs to let the burst through.
-- **Per-service vs. total.** v1.0 rate-limits per client IP, not per `service` field. If you have one monitoring tool firing all alerts, all alerts come from one IP — so the limit applies to *total* alert volume, not per-service.
+- **Per-service vs. total.** Posthorn rate-limits per client IP, not per `service` field. If you have one monitoring tool firing all alerts, all alerts come from one IP — so the limit applies to *total* alert volume, not per-service.
 - **Trade-off:** too tight, you lose alerts during the outages you care about. Too loose, a misconfigured monitor in a tight loop fills your inbox.
 
 A sane starting point: `count = 30, interval = "1m"`. Bump higher if you have many services or a tool that emits separate alerts per check. Add `trusted_proxies` if your monitoring tool is behind a reverse proxy you control.

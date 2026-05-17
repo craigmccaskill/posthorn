@@ -33,7 +33,7 @@ Every request runs under a `context.WithTimeout(ctx, 10*time.Second)`. When the 
 
 - Any in-flight retry is cancelled mid-request via the request context.
 - The handler returns 502 immediately.
-- A `submission_failed` log line is written with the underlying error (Posthorn does not emit a separate `timeout_exceeded` event in v1.0 — the timeout surfaces as the cancelled retry's error).
+- A `submission_failed` log line is written with the underlying error. There is no separate `timeout_exceeded` event — the timeout surfaces as the cancelled retry's error.
 
 This means a worst case looks like:
 
@@ -101,7 +101,7 @@ After the retry returns, Posthorn emits one of:
 
 ## Tuning
 
-Most of the retry constants are not configurable in v1.0. The PRD's stated values are:
+The retry constants are not currently configurable. The values are:
 
 | Constant | Value | Why |
 |---|---|---|

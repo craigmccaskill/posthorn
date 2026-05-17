@@ -42,7 +42,7 @@ Each `[[endpoints]]` table defines a single ingress path with its own transport,
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `to` | `[]string` | yes | — | One or more default recipient addresses. Plain `addr@host` or `"Name <addr@host>"`. Each entry must parse as a valid email. API-mode endpoints can override per request via the `to_override` JSON field. |
-| `from` | string | yes | — | Sender address. Format: `"Name <addr@host>"` or plain `addr@host`. Per-request override is **not** supported (ADR-11; leaked-key spoofing prevention). |
+| `from` | string | yes | — | Sender address. Format: `"Name <addr@host>"` or plain `addr@host`. Per-request override is **not** supported — a leaked API key cannot be used to spoof other senders. |
 | `reply_to_email_field` | string | no | the value of `email_field` | Form field whose value to use as the email's `Reply-To` header. Set to a name that doesn't exist in the submission to disable Reply-To. |
 
 ### Transport
@@ -89,7 +89,7 @@ API-mode endpoints reject these fields at config-parse time.
 | `trusted_proxies` | `[]string` | no | `[]` | CIDR ranges and/or preset names. When the request's RemoteAddr is in one of these networks, the rate limiter reads the client IP from `X-Forwarded-For` (rightmost untrusted). |
 | `strip_client_ip` | bool | no | `false` | When `true`, omit the resolved client IP from log lines for this endpoint. Rate-limit bucketing is unaffected — the IP is still computed; it just doesn't reach logs. |
 
-Preset names accepted in `trusted_proxies` (v1.0 ships `cloudflare` populated; the rest are reserved as empty slots to avoid name churn when they ship):
+Preset names accepted in `trusted_proxies` — `cloudflare` is populated; the rest are reserved as empty slots to avoid name churn when they're populated later:
 
 | Preset | Status |
 |---|---|
@@ -129,7 +129,7 @@ API mode swaps form-mode browser defenses for `Authorization: Bearer` auth and J
 | `api_keys` | `[]string` | yes when `auth = "api-key"` | unset | Bearer tokens accepted on this endpoint. `${env.VAR}` substitution honored. Empty list is rejected at parse time. Form-mode endpoints reject this field at parse time. |
 | `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity (LRU-evicted, 24h TTL). API-mode only — form-mode endpoints reject at parse time. |
 
-Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, or `csrf_secret` on an API-mode endpoint is a parse error (ADR-10).
+Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, or `csrf_secret` on an API-mode endpoint is a parse error — those defenses only make sense for browser-facing form endpoints.
 
 ### CSRF (form-mode only)
 
@@ -223,7 +223,7 @@ type = "postmark"
 api_key = "${env.POSTMARK_API_KEY}"
 ```
 
-Same shape as `[endpoints.transport]`. The listener forwards every accepted submission through this single transport (ADR-13 — one listener = one transport in v1.0).
+Same shape as `[endpoints.transport]`. The listener forwards every accepted submission through this single transport — one listener has one outbound transport; per-recipient routing is a future feature.
 
 ## Complete annotated example
 

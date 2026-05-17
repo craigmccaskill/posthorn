@@ -104,7 +104,7 @@ The 10-second cap is hard. Even with retries in flight, the request returns by t
 On terminal failure, Posthorn logs the **full submission payload** at ERROR level by default. The thinking: the submission has already failed; the operator's primary recovery path is reading the form contents out of the logs and sending the email manually. You can flip this off with `log_failed_submissions = false` for GDPR-sensitive contexts.
 
 <Aside type="note">
-v1.0 has **no persistent queue.** A failed submission that exhausted both retries is gone from in-memory state; only the log line remains. Persistent retry queues land in v2 along with SQLite storage.
+Posthorn has **no persistent queue.** A failed submission that exhausted both retries is gone from in-memory state; only the log line remains. Persistent retry queues land in v2 along with SQLite storage.
 </Aside>
 
 ## Deployment
