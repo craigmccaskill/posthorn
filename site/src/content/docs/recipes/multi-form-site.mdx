@@ -117,7 +117,7 @@ Same as [Contact form](/recipes/contact-form/) — a verified Postmark sender do
    The example above uses three distinct env vars (`POSTMARK_CONTACT_KEY`, `POSTMARK_FEEDBACK_KEY`, `POSTMARK_CAREERS_KEY`). You have two patterns to choose between:
 
    - **One server token, three endpoints.** Simplest. Same `api_key = "${env.POSTMARK_API_KEY}"` in all three. All forms send from the same Postmark server. Per-server statistics in Postmark conflate the three forms.
-   - **Three server tokens, three Postmark servers.** Better isolation. Each form has its own server in Postmark with its own DKIM signature, its own stats, its own rate limit upstream. Bounce one server's reputation, the other two are unaffected.
+   - **Three server tokens, three Postmark servers.** Better isolation. Each form has its own server in Postmark with its own DomainKeys Identified Mail (DKIM) signature, its own stats, its own rate limit upstream. Bounce one server's reputation, the other two are unaffected.
 
    For low-volume sites, one token is fine. For mixed traffic shapes (contact form sees real humans, careers form sees recruiter spam, feedback form sees bug reports), separate tokens earn their keep.
 

@@ -13,9 +13,9 @@ This is not Posthorn-specific. Every transactional email service has the same pr
 
 | Record | Purpose | Required by |
 |---|---|---|
-| **SPF** | Tells receiving servers which IPs are allowed to send mail "from" your domain | All major providers (Gmail, Outlook, Apple) |
-| **DKIM** | Cryptographic signature proving the message wasn't modified in transit and was authorized by your domain | All major providers |
-| **DMARC** | Policy combining SPF + DKIM results; tells receivers what to do with messages that fail one or both | Gmail required as of Feb 2024 for bulk senders; recommended for all |
+| **SPF** — Sender Policy Framework | Tells receiving servers which IPs are allowed to send mail "from" your domain | All major providers (Gmail, Outlook, Apple) |
+| **DKIM** — DomainKeys Identified Mail | Cryptographic signature proving the message wasn't modified in transit and was authorized by your domain | All major providers |
+| **DMARC** — Domain-based Message Authentication, Reporting & Conformance | Policy combining SPF + DKIM results; tells receivers what to do with messages that fail one or both | Gmail required as of Feb 2024 for bulk senders; recommended for all |
 
 Without these, your mail will be flagged, junked, or rejected outright. Postmark itself doesn't deliver mail until SPF and DKIM are verified for your sending domain.
 

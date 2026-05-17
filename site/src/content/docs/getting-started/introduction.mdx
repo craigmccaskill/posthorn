@@ -7,7 +7,7 @@ Posthorn is the **unified outbound mail layer for self-hosted projects.** One ga
 
 ## The problem
 
-Nobody wants to run a mail server in 2026. Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about SPF, DKIM, DMARC, bounces, and sender reputation.
+Nobody wants to run a mail server in 2026. Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about Sender Policy Framework (SPF), DomainKeys Identified Mail (DKIM), Domain-based Message Authentication, Reporting & Conformance (DMARC), bounces, and sender reputation.
 
 But every app you self-host has to integrate with that service **independently:**
 
@@ -41,10 +41,10 @@ Posthorn doesn't terminate TLS — run it behind whatever reverse proxy you alre
 
 | Capability | Detail |
 |---|---|
-| HTTP form ingress | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot + Origin check + rate limit + CSRF tokens (opt-in) |
+| HTTP form ingress | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot + Origin check + rate limit + Cross-Site Request Forgery (CSRF) tokens (opt-in) |
 | HTTP API mode | Bearer-authenticated JSON; idempotency keys; per-request `to_override`; per-key rate limiting |
 | SMTP ingress | TCP listener with AUTH PLAIN / client-cert; STARTTLS required by default; sender allowlist + recipient allowlist or cap; size cap |
-| Transports | Postmark, Resend, Mailgun, AWS SES (SigV4), outbound-SMTP relay — five total, all bespoke (no SDK deps) |
+| Transports | Postmark, Resend, Mailgun, AWS SES (Signature Version 4 signing), outbound-SMTP relay — five total, all bespoke (no SDK deps) |
 | Operations | `/healthz`, `/metrics` (Prometheus exposition), dry-run mode, IP-stripping option, named `trusted_proxies` presets (Cloudflare) |
 | Validation | Required fields, email syntax check |
 | Templating | Go `text/template` for subject and body, with custom-field passthrough |

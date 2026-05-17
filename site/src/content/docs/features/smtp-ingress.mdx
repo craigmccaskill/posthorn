@@ -62,7 +62,7 @@ Posthorn refuses to relay arbitrary mail. Every accepted message must clear all 
 
 ## Recipients come from the envelope, never the MIME
 
-A subtle but important invariant: the outbound message's recipients come from the SMTP `RCPT TO` commands, **never** from the MIME `To:`/`Cc:`/`Bcc:` headers. A malicious client that sent:
+A subtle but important invariant: the outbound message's recipients come from the SMTP `RCPT TO` commands, **never** from the Multipurpose Internet Mail Extensions (MIME) `To:`/`Cc:`/`Bcc:` headers in the message body. A malicious client that sent:
 
 ```
 RCPT TO:<alice@example.com>

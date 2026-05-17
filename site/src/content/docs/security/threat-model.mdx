@@ -19,7 +19,7 @@ This page summarizes what Posthorn defends against, what it doesn't, and how eac
 | 4 | Provider quota burn / resource exhaustion | [Rate limit](/features/rate-limiting/) + [max body size](/features/spam-protection/#max-body-size) | yes — set `rate_limit`, `max_body_size` |
 | 5 | Email header injection via submitter input | [Structured transport-layer guarantee](/security/header-injection/), no string concatenation of headers | no — code-level guarantee, test-enforced |
 | 6 | API key theft from logs or error output | [API keys never logged](/security/api-keys/) | no — code-level guarantee, test-enforced |
-| 7 | Cross-site request forgery on form-mode endpoints | HMAC-signed CSRF tokens — operator-issued at form-render time, verified on submit. Form-mode only; api-mode endpoints reject `csrf_secret` at parse time. | yes — set `csrf_secret` |
+| 7 | Cross-Site Request Forgery (CSRF) on form-mode endpoints | Tokens signed with a Hash-based Message Authentication Code (HMAC) — operator-issued at form-render time, verified on submit. Form-mode only; api-mode endpoints reject `csrf_secret` at parse time. | yes — set `csrf_secret` |
 
 ## In scope: HTTP API mode
 
@@ -40,7 +40,7 @@ This page summarizes what Posthorn defends against, what it doesn't, and how eac
 | 15 | RCPT bombing (many recipients per session) | `allowed_recipients` allowlist OR `max_recipients_per_session` cap |
 | 16 | Mass storage exhaustion via large DATA | `max_message_size` cap (default 1MB) |
 | 17 | Credential leak via plaintext AUTH | STARTTLS required before AUTH; refused otherwise |
-| 18 | Header smuggling via inbound MIME | Recipients come from SMTP envelope (`RCPT TO`), never from MIME `To`/`Cc`/`Bcc` headers |
+| 18 | Header smuggling via inbound Multipurpose Internet Mail Extensions (MIME) body | Recipients come from SMTP envelope (`RCPT TO`), never from MIME `To`/`Cc`/`Bcc` headers |
 
 Threats 5, 6, 9, 12, 17, and 18 are **code-level guarantees**, not config options. There's no toggle to disable them; the test suite enforces them on every build.
 

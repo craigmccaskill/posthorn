@@ -115,6 +115,7 @@ export default defineConfig({
             { label: 'CLI', slug: 'reference/cli' },
           ],
         },
+        { label: 'Design principles', slug: 'design-principles' },
         { label: 'Roadmap', slug: 'roadmap' },
         { label: 'FAQ', slug: 'faq' },
       ],

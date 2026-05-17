@@ -1,0 +1,58 @@
+---
+title: Design principles
+description: Five principles that pin the shape of Posthorn across versions, and the reasoning behind them.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+These five principles shape every Posthorn release. When a feature request, refactor proposal, or roadmap item conflicts with one of them, the principle wins and the proposal needs revisiting. Each one rules out a category of changes that would look reasonable in isolation but would gradually push Posthorn toward becoming a different product.
+
+The full project brief and architectural decision records (ADRs) live in the [`spec/`](https://github.com/craigmccaskill/posthorn/tree/main/spec) directory of the repo for anyone who wants the long form. This page is the short version.
+
+## 1. Gateway, not infrastructure
+
+Posthorn sits **between** an operator's apps and a transactional mail provider the operator already chose. It does not replace the provider. It does not run its own outbound mail server, manage its own sending-IP reputation, or host mailboxes.
+
+**Why:** the transactional-provider category is well-served by Postmark, Resend, Mailgun, AWS SES, and others. They handle deliverability, bounce processing, and reputation management at a scale and quality that's hard to replicate. Posthorn's job is to make those providers easy to integrate from a self-hosted stack — not to become one of them.
+
+**What this rules out:** running an MX target, managing DKIM key rotation, publishing DMARC aggregate reports, operating an SMTP fleet for outbound delivery.
+
+## 2. Integration layer, not mail-receiving layer
+
+Posthorn unifies the **outbound** integration concern: many ingress shapes (HTTP forms, HTTP API, SMTP from internal apps) converge on a single transport surface that talks to the operator's provider. The integration layer is one-way — many inputs, one output.
+
+**Why:** inbound mail (MX hosting, receive-side spam filtering, mailbox storage) is a different problem with a different shape, owned by mail servers like Stalwart and hosted inbound services like Postmark Inbound or Cloudflare Email Workers. Trying to do both makes for a worse product at both.
+
+**What this rules out:** acting as the MX server for a domain, parsing received mail for routing, storing inbound messages.
+
+## 3. No feature-count competition with category leaders
+
+Three established categories of self-hosted email infrastructure exist in 2026. Posthorn occupies exactly one — the gateway slot. Operators who need a mail server should use [Stalwart](https://stalw.art). Operators who want to be their own transactional provider should use [Postal](https://postalserver.io). Operators who need marketing email should use [Listmonk](https://listmonk.app). Posthorn does not try to match those projects on feature count in their lanes.
+
+**Why:** that's a known-losing fight. Each of those projects has years of focused work in their category. The right answer to "Posthorn should also do X" — where X is a feature owned by an adjacent category — is "use the better tool for that," not "let's add it."
+
+**What this rules out:** webmail UIs, mailbox storage, IP reputation management, campaign dashboards, list segmentation.
+
+## 4. Config files over admin UIs
+
+Posthorn is configured via a single TOML file. There is no runtime mutation surface that could drift from the config file. Reviewing a config diff is reviewing the system's behavior — there is no `posthorn admin` CLI, no settings page, no live-edit-this-endpoint operation that bypasses the file.
+
+**Why:** admin UIs add operational complexity (auth, audit logging, state reconciliation) and create surface for configured behavior to drift from documented behavior. The trade is real — operators edit TOML by hand instead of clicking a UI — and we pay it intentionally. A future release may add a read-only UI for browsing submissions and logs; it will not be a configuration surface.
+
+**What this rules out:** any feature that mutates runtime state outside the config file.
+
+## 5. Bespoke before SDK, when the surface is small
+
+For provider integrations with small, stable surfaces (Postmark, Resend, Mailgun, SES, outbound SMTP), Posthorn writes each integration directly using the standard library and a minimal set of dependencies. No `postmark-go`, no `aws-sdk-go-v2`, no `mailgun-go`. The bias is toward bespoke when the integration would be ~200 lines or fewer; toward an SDK when bespoke would be ~1000+.
+
+**Why:** a smaller dependency tree means a smaller security-audit surface, fewer version-pin chores, and fewer transitive packages to track. A bespoke client also gives complete control over header construction — the defense against email header injection lives in our code, not in some third-party library we'd have to re-audit on every upstream release.
+
+The whole module ships with three external dependencies: a TOML parser, a UUID library, and an LRU cache. That number is the floor this principle drives toward.
+
+**What this rules out:** pulling in vendor SDKs for transports whose surface fits in ~200 lines.
+
+---
+
+<Aside type="note" title="Going deeper">
+This page is intentionally a high-level overview. If you want the full reasoning — the project brief, the architectural decision records, the threat model, the requirement traceability matrix — read the source documents in [`spec/`](https://github.com/craigmccaskill/posthorn/tree/main/spec). Every Posthorn feature traces back to a numbered requirement in the PRD; every meaningful technical choice is documented in an ADR.
+</Aside>

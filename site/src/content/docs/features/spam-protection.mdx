@@ -85,7 +85,7 @@ A token-bucket limiter per client IP, per endpoint. 5 submissions per minute mea
 
 ## What ships beyond the basics
 
-Posthorn also ships HMAC-signed CSRF tokens (`csrf_secret`, off by default; **form-mode only** — api-mode endpoints reject `csrf_secret` at parse time, since server-to-server callers are authenticated). Operators issue tokens server-side at form-render time using the same `csrf_secret`; Posthorn verifies the HMAC and TTL on submit. The token field name is `_csrf_token`. See the `csrf_secret` and `csrf_token_ttl` rows in the [TOML reference](/configuration/reference/) for the config shape.
+Posthorn also ships Cross-Site Request Forgery (CSRF) tokens, signed with a Hash-based Message Authentication Code (HMAC) — `csrf_secret`, off by default; **form-mode only** — api-mode endpoints reject `csrf_secret` at parse time, since server-to-server callers are authenticated. Operators issue tokens server-side at form-render time using the same `csrf_secret`; Posthorn verifies the HMAC and Time-To-Live (TTL) on submit. The token field name is `_csrf_token`. See the `csrf_secret` and `csrf_token_ttl` rows in the [TOML reference](/configuration/reference/) for the config shape.
 
 ## What doesn't ship
 

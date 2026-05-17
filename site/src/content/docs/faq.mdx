@@ -93,7 +93,7 @@ Old key is invalid immediately on revocation; new key is in use after restart. B
 
 For a typical contact form, the unit of abuse is "one person or bot at one location." Per-IP catches that cleanly. Per-cookie or per-account would require persistent state Posthorn doesn't keep. Per-email-address would require parsing the body before deciding to rate-limit (wrong order — security checks should be before parse).
 
-For shared NAT/CGNAT situations where many users come from one IP, tune the limit upward. The 5-per-minute default is conservative.
+For shared Network Address Translation (NAT) or Carrier-Grade NAT (CGNAT) situations where many users come from one IP, tune the limit upward. The 5-per-minute default is conservative.
 
 ## Where do I report a bug?
 

@@ -45,7 +45,7 @@ Every HTTP request-pipeline event Posthorn emits. See the [log format reference]
 | `spam_blocked` | INFO | Honeypot fired or Origin/Referer rejected — **403** (origin) or silent **200** (honeypot) |
 | `body_too_large` | INFO | Request body exceeded the cap — **413** |
 | `rate_limited` | INFO | Token bucket empty — **429** |
-| `csrf_rejected` | INFO | CSRF token missing, expired, or invalid signature — **403** (form-mode only) |
+| `csrf_rejected` | INFO | Cross-Site Request Forgery (CSRF) token missing, expired, or invalid signature — **403** (form-mode only) |
 | `validation_failed` | INFO | Required field missing or email malformed — **422** |
 | `template_render_failed` | ERROR | Subject or body template errored — **500** |
 | `submission_dry_run` | INFO | Endpoint `dry_run = true` short-circuited — **200** with prepared message |

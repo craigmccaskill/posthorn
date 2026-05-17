@@ -86,7 +86,7 @@ API-mode endpoints reject these fields at config-parse time.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `trusted_proxies` | `[]string` | no | `[]` | CIDR ranges and/or preset names. When the request's RemoteAddr is in one of these networks, the rate limiter reads the client IP from `X-Forwarded-For` (rightmost untrusted). |
+| `trusted_proxies` | `[]string` | no | `[]` | Classless Inter-Domain Routing (CIDR) ranges and/or preset names. When the request's RemoteAddr is in one of these networks, the rate limiter reads the client IP from `X-Forwarded-For` (rightmost untrusted). |
 | `strip_client_ip` | bool | no | `false` | When `true`, omit the resolved client IP from log lines for this endpoint. Rate-limit bucketing is unaffected — the IP is still computed; it just doesn't reach logs. |
 
 Preset names accepted in `trusted_proxies` — `cloudflare` is populated; the rest are reserved as empty slots to avoid name churn when they're populated later:
@@ -127,7 +127,7 @@ API mode swaps form-mode browser defenses for `Authorization: Bearer` auth and J
 |---|---|---|---|---|
 | `auth` | string | no | `"form"` | `"form"` (default) or `"api-key"`. The two modes are mutually exclusive per endpoint. |
 | `api_keys` | `[]string` | yes when `auth = "api-key"` | unset | Bearer tokens accepted on this endpoint. `${env.VAR}` substitution honored. Empty list is rejected at parse time. Form-mode endpoints reject this field at parse time. |
-| `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity (LRU-evicted, 24h TTL). API-mode only — form-mode endpoints reject at parse time. |
+| `idempotency_cache_size` | int | no | `10000` | Per-endpoint idempotency cache capacity. Least Recently Used (LRU) eviction, 24-hour TTL (time-to-live). API-mode only — form-mode endpoints reject at parse time. |
 
 Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, or `csrf_secret` on an API-mode endpoint is a parse error — those defenses only make sense for browser-facing form endpoints.
 

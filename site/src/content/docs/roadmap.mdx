@@ -17,7 +17,7 @@ Posthorn ships in deliberately small, scoped releases. v1.0 absorbs what was ori
 
 | Ingress | Detail |
 |---|---|
-| HTTP form (default) | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot, Origin/Referer fail-closed, optional CSRF tokens, rate limit |
+| HTTP form (default) | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot, Origin/Referer fail-closed, optional Cross-Site Request Forgery (CSRF) tokens, rate limit |
 | HTTP API mode | Bearer auth, JSON body, idempotency keys, per-request `to_override`, per-key rate limit |
 | SMTP listener | AUTH PLAIN / client-cert, STARTTLS-required, sender allowlist + recipient allowlist or cap, size cap |
 
@@ -26,7 +26,7 @@ Posthorn ships in deliberately small, scoped releases. v1.0 absorbs what was ori
 | Postmark | HTTP API, server-token auth |
 | Resend | HTTP API, bearer auth |
 | Mailgun | HTTP API, basic auth, multipart body, US/EU regions |
-| AWS SES | HTTP API, SigV4 auth, region-scoped |
+| AWS SES | HTTP API, Signature Version 4 (SigV4) auth, region-scoped |
 | Outbound SMTP | Any STARTTLS-capable relay; stdlib `net/smtp` |
 
 Operational essentials: `/healthz`, `/metrics` (Prometheus exposition), dry-run mode, IP-stripping, named `trusted_proxies` presets (Cloudflare).
@@ -56,7 +56,7 @@ The architectural shift that unlocks operating Posthorn as a real mail platform:
 
 - **Suppression list** — auto on hard bounces and spam complaints; admin API for inspection and manual entries. Refuses to send to suppressed addresses (returns 200 with `{"suppressed": true}` so callers treat it as final, not transient).
 - **Durable idempotency** — the v1.0 in-memory cache becomes restart-survivable
-- **Lifecycle event callbacks** — delivery / bounce / open / click events forwarded to the originating caller with HMAC-signed webhook
+- **Lifecycle event callbacks** — delivery / bounce / open / click events forwarded to the originating caller with a Hash-based Message Authentication Code (HMAC) signed webhook
 - **Automatic unsubscribe link injection** — per-recipient signed tokens, hosted unsubscribe endpoint, RFC 8058 one-click headers (which Gmail and Yahoo now require for senders &gt;5000/day)
 - **HTML body support**
 - **File attachments** — multipart form uploads forwarded to the transport

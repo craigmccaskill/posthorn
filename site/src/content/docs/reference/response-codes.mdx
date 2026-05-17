@@ -268,8 +268,8 @@ Common causes:
 |---|---|
 | Real abuse — bot or attacker hitting the form | Working as intended |
 | Legitimate user double-clicked submit | Tune `rate_limit` upward, or disable double-submit at the client |
-| Multiple legitimate users behind shared NAT/CGNAT all hitting the form | Tune `rate_limit` upward, or accept the false-positive rate |
-| Bad `trusted_proxies` config — Posthorn sees the proxy IP, every request looks like the same IP | Set `trusted_proxies` to your reverse proxy's CIDR |
+| Multiple legitimate users behind shared Network Address Translation (NAT) or Carrier-Grade NAT (CGNAT) all hitting the form | Tune `rate_limit` upward, or accept the false-positive rate |
+| Bad `trusted_proxies` config — Posthorn sees the proxy IP, every request looks like the same IP | Set `trusted_proxies` to your reverse proxy's Classless Inter-Domain Routing (CIDR) range |
 
 ## 502 Bad Gateway
 

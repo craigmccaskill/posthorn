@@ -25,7 +25,7 @@ import { Card, CardGrid, Code, LinkCard, Aside } from '@astrojs/starlight/compon
 
 ## Why Posthorn?
 
-**Nobody wants to run a mail server in 2026.** Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about SPF, DKIM, DMARC, bounces, and sender reputation.
+**Nobody wants to run a mail server in 2026.** Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about Sender Policy Framework (SPF), DomainKeys Identified Mail (DKIM), Domain-based Message Authentication, Reporting & Conformance (DMARC), bounces, and sender reputation.
 
 But every app you self-host has to integrate with that service **independently.** Your contact form. Your Ghost blog's admin emails. Your Gitea magic links. Your Mastodon notifications. Your worker that fires a license-delivery email when someone pays. Each one needs its own copy of the API key, its own integration code, its own quirks around retry and bounce handling. **The same outbound concern duplicated five times across your stack.**
 
@@ -84,8 +84,9 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
     in logs. Mailgun supports US + EU regions.
   </Card>
   <Card title="AWS SES, outbound SMTP" icon="puzzle">
-    SES uses a bespoke SigV4 implementation (no AWS SDK, no transitive
-    dep tree). Outbound SMTP relays through any STARTTLS-capable
+    SES uses a bespoke Signature Version 4 (SigV4) implementation
+    (no AWS SDK, no transitive dep tree). Outbound SMTP relays through
+    any STARTTLS-capable
     upstream — your Postfix smarthost, Mailtrap, Mailgun SMTP. Swap
     transports without changing app code or operator runbooks; every
     endpoint config has the same shape.
@@ -102,8 +103,10 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 <CardGrid>
   <Card title="Defense in depth" icon="shield">
     Honeypot, Origin/Referer fail-closed, token-bucket rate limit with
-    LRU eviction at 10K IPs, max body size, required-field validation,
-    email syntax check, HMAC-signed CSRF tokens. API-key auth for
+    Least Recently Used (LRU) eviction at 10K IPs, max body size,
+    required-field validation,
+    email syntax check, Hash-based Message Authentication Code (HMAC)
+    signed Cross-Site Request Forgery (CSRF) tokens. API-key auth for
     server-to-server callers. SMTP listener gates open-relay abuse via
     sender allowlist, recipient allowlist or cap, AUTH and STARTTLS.
   </Card>

@@ -47,8 +47,8 @@ Sender-not-verified errors (typical 422) are common during operator onboarding â
 
 For mail to actually deliver:
 
-- **SPF** record on your sending domain authorizing Postmark
-- **DKIM** record published from Postmark's dashboard
+- **Sender Policy Framework (SPF)** record on your sending domain authorizing Postmark
+- **DomainKeys Identified Mail (DKIM)** record published from Postmark's dashboard
 - **Return-Path** custom domain (recommended)
 
 Posthorn doesn't manage any of this â€” Postmark's setup wizard walks through it. See [DNS](/security/dns/) for the cross-provider details.

@@ -209,13 +209,13 @@ A subsequent request with the same `Idempotency-Key` (within 24 hours) returns t
 
 **Scope:** keys are per-endpoint. The same `Idempotency-Key` used against `/api/transactional` and `/api/notifications` does **not** collide — each endpoint has its own cache.
 
-**Cache size:** default 10,000 entries per endpoint, LRU-evicted. Configurable via `idempotency_cache_size`. Persistence across restarts is deferred to v2; for v1.0 a Posthorn restart wipes the cache.
+**Cache size:** default 10,000 entries per endpoint, evicted Least Recently Used (LRU) first. Configurable via `idempotency_cache_size`. Persistence across restarts is deferred to v2; a Posthorn restart wipes the cache.
 
 ## Rate limiting in API mode
 
 Unlike form mode (which keys on client IP), API mode rate-limits **per matched API key**. Two workers using different keys on the same endpoint have independent buckets.
 
-This matters because server-to-server callers commonly NAT through shared egress IPs — Cloudflare Workers, for example. IP-keyed rate limiting would conflate independent callers.
+This matters because server-to-server callers commonly route through shared egress IPs via Network Address Translation (NAT) — Cloudflare Workers, for example. IP-keyed rate limiting would conflate independent callers.
 
 `trusted_proxies` does not apply to API mode (the rate-limit key isn't an IP, so there's no proxy to unwrap).
 

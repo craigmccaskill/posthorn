@@ -9,7 +9,7 @@ Posthorn handles several kinds of credentials:
 
 - **Transport API keys** — one per configured transport (Postmark server token, Resend API key, Mailgun API key, AWS SES credentials, outbound-SMTP password).
 - **API-mode `api_keys`** — Bearer tokens accepted on API-mode endpoints. Operator-issued.
-- **CSRF `csrf_secret`** — HMAC key for form-mode CSRF tokens. Operator-generated.
+- **CSRF `csrf_secret`** — Hash-based Message Authentication Code (HMAC) key for form-mode Cross-Site Request Forgery (CSRF) tokens. Operator-generated.
 - **SMTP `smtp_users` passwords** — AUTH PLAIN credentials accepted by the inbound SMTP listener.
 
 All of them are subject to the same guarantee: **they must not appear in any log output.** This page documents how they flow through the process and how that guarantee is enforced.

@@ -102,4 +102,4 @@ The outbound-SMTP transport is the one where headers *are* constructed as a wire
 
 The architecture explicitly bans transport implementations from constructing headers via string formatting. New transports that violate this don't merge.
 
-The SMTP **ingress** carries the invariant too: recipients in the outbound message come from the SMTP envelope (`RCPT TO`), never from the inbound MIME `To`/`Cc`/`Bcc` headers. A malicious internal client sending `Bcc: victim@target.com` in a DATA blob can't add recipients — the header lands in the parsed map and is discarded. See [SMTP ingress](/features/smtp-ingress/) for the listener-side defense.
+The SMTP **ingress** carries the invariant too: recipients in the outbound message come from the SMTP envelope (`RCPT TO`), never from the inbound Multipurpose Internet Mail Extensions (MIME) `To`/`Cc`/`Bcc` headers. A malicious internal client sending `Bcc: victim@target.com` in a DATA blob can't add recipients — the header lands in the parsed map and is discarded. See [SMTP ingress](/features/smtp-ingress/) for the listener-side defense.

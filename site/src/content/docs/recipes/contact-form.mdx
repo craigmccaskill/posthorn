@@ -11,7 +11,7 @@ The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, El
 
 ## Prerequisites
 
-- A Postmark account with a verified sender signature on your sending domain (SPF, DKIM, DMARC set up — see [DNS](/security/dns/))
+- A Postmark account with a verified sender signature on your sending domain — Sender Policy Framework (SPF), DomainKeys Identified Mail (DKIM), Domain-based Message Authentication, Reporting & Conformance (DMARC) set up; see [DNS](/security/dns/)
 - Postmark **server token** (per-server, found under your server's API Tokens tab — not the account-level token)
 - A Docker host you control (homelab, VPS, anywhere)
 - A reverse proxy in front of your static site already (Caddy, nginx, Traefik, Cloudflare — any will work)
@@ -193,7 +193,7 @@ The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, El
 | `HTTP 403 forbidden` from a real form submission | `allowed_origins` doesn't include the variant of your domain the form is on (e.g., you listed `yourdomain.com` but the form is on `www.yourdomain.com`) | Add both variants to `allowed_origins` |
 | `HTTP 422 validation failed` with `{"name":"required"}` etc. | The form field names don't match the `required` list in TOML | Make sure each `<input name="...">` matches an entry in `required` exactly |
 | `HTTP 200` but no email arrives | DNS — your sending domain doesn't have SPF/DKIM/DMARC set up, so Postmark accepts the submission but the recipient drops it as spam | See [DNS](/security/dns/) and verify via the recipient's "show original" header view |
-| Real users keep hitting `HTTP 429 rate limit` | Multiple users behind the same NAT, or your reverse proxy isn't forwarding client IPs | Add `trusted_proxies = ["<your-proxy-CIDR>"]` to the endpoint and bump `count` up |
+| Real users keep hitting `HTTP 429 rate limit` | Multiple users behind the same Network Address Translation (NAT) gateway, or your reverse proxy isn't forwarding client IPs | Add `trusted_proxies = ["<your-proxy-CIDR>"]` (Classless Inter-Domain Routing range) to the endpoint and bump `count` up |
 | Honeypot doesn't fire on test bots | The honeypot field isn't actually rendered in the HTML | The honeypot must be in the HTML for bots to fill it in — hidden via CSS, but present |
 | Email body lands in spam folder | DKIM / SPF / DMARC misconfiguration on the sending domain | First-time gotcha for almost every new deployment — see [DNS](/security/dns/) |
 

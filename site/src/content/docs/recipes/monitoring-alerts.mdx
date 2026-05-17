@@ -135,7 +135,7 @@ A sane starting point: `count = 30, interval = "1m"`. Bump higher if you have ma
 | `HTTP 400 form-encoded body required` | The monitoring tool is sending JSON, not form-encoded | Switch the tool to form-encoded, or reconfigure the endpoint as [API mode](/features/api-mode/) to accept JSON natively |
 | Alerts arrive without details | `details` isn't in the `required` list, so when it's missing or empty, Posthorn renders `Details: ` with nothing after it | Either add `details` to `required` (forces the monitor to include it) or accept the empty case |
 | First alert during an outage shows up, the rest get 429'd | Rate limit is set too tight for your alert volume | Bump `count` up; storms during outages are normal |
-| Alert email lands in spam | DKIM/SPF on the sending domain — same as every other Posthorn recipe | See [DNS](/security/dns/) |
+| Alert email lands in spam | DomainKeys Identified Mail (DKIM) / Sender Policy Framework (SPF) on the sending domain — same as every other Posthorn recipe | See [DNS](/security/dns/) |
 
 ## Where to go next
 

@@ -101,7 +101,7 @@ trusted_proxies = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 # ...
 ```
 
-When a request arrives from a CIDR listed in `trusted_proxies`, Posthorn reads the client IP from the **rightmost untrusted IP** in `X-Forwarded-For`. Without `trusted_proxies` configured, Posthorn uses the connection's `RemoteAddr` directly.
+When a request arrives from a Classless Inter-Domain Routing (CIDR) range listed in `trusted_proxies`, Posthorn reads the client IP from the **rightmost untrusted IP** in `X-Forwarded-For`. Without `trusted_proxies` configured, Posthorn uses the connection's `RemoteAddr` directly.
 
 <Aside type="caution">
 **Set `trusted_proxies` to exactly the proxies you trust.** A lax list (e.g., `0.0.0.0/0`) lets any client spoof their IP by setting `X-Forwarded-For` themselves, defeating the rate limiter.
