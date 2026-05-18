@@ -90,7 +90,7 @@ Posthorn handles header safety as a code-level invariant. Submitter input is jus
 
 ## What you should still do
 
-- **Validate the `email_field`** — `Posthorn does this by default with `email_field = "email"`. Don't disable it.
+- **Validate the `email_field`** — Posthorn does this by default with `email_field = "email"`. Don't disable it.
 - **Use Postmark's verified-sender domain** — Postmark rejects messages from `From` addresses not on a verified domain. This is an additional Postmark-side defense; keep it on.
 - **Set up SPF, DKIM, DMARC** on your sending domain — these don't defend against header injection but defend against your domain being used for spoofing more broadly. See [DNS](/security/dns/).
 

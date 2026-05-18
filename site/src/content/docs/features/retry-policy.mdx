@@ -3,7 +3,7 @@ title: Retry policy
 description: How Posthorn retries on transient and rate-limited errors, with a hard 10s overall cap.
 ---
 
-The retry policy is deliberately simple and bounded. v1.0 retries at most once per request, classifies failures into three buckets, and enforces a hard 10-second overall timeout. There is no exponential backoff and no jitter — both would complicate the contract without meaningful benefit at the scale and use case Posthorn targets.
+The retry policy is deliberately simple and bounded. Posthorn retries at most once per request, classifies failures into three buckets, and enforces a hard 10-second overall timeout. There is no exponential backoff and no jitter — both would complicate the contract without meaningful benefit at the scale and use case Posthorn targets.
 
 ## Decision table
 

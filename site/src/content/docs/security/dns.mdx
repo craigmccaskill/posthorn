@@ -5,7 +5,9 @@ description: Required DNS records on your sending domain. Skip these and your ma
 
 import { Aside } from '@astrojs/starlight/components';
 
-Posthorn relays mail through Postmark. Postmark sends from **your** domain (the `From:` you configure). For that mail to reach the recipient's inbox — and not their spam folder — three DNS records have to be set up correctly on your sending domain.
+Posthorn relays mail through your configured transport (Postmark, Resend, Mailgun, AWS SES, or an outbound-SMTP relay). The transport sends from **your** domain (the `From:` you configure). For that mail to reach the recipient's inbox — and not their spam folder — three DNS records have to be set up correctly on your sending domain.
+
+The DNS records below use Postmark's setup as the worked example. Resend, Mailgun, and SES walk you through the same shape via their own dashboards — different host values, same three record types. Outbound-SMTP relays depend on the upstream provider's setup.
 
 This is not Posthorn-specific. Every transactional email service has the same prerequisites. This page documents them so you don't get blindsided after going live.
 

@@ -334,7 +334,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 				)
 				h.recorder.SpamBlocked(h.cfg.Path, "origin")
-				http.Error(w, "forbidden", http.StatusForbidden)
+				h.writeErrorResponse(w, r, http.StatusForbidden, "forbidden")
 				return
 			}
 		}
@@ -354,7 +354,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			logger.Info("rate_limited", attrs...)
 			h.recorder.RateLimited(h.cfg.Path)
-			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+			h.writeErrorResponse(w, r, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
 	}
@@ -375,7 +375,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					slog.Int64("limit_bytes", h.maxBodySize),
 					slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 				)
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge, "request body too large")
 				return
 			}
 			http.Error(w, fmt.Sprintf("parse JSON: %v", err), http.StatusBadRequest)
@@ -390,7 +390,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					slog.Int64("limit_bytes", h.maxBodySize),
 					slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 				)
-				http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge, "request body too large")
 				return
 			}
 			http.Error(w, fmt.Sprintf("parse form: %v", err), http.StatusBadRequest)
@@ -410,7 +410,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 		)
 		h.recorder.SpamBlocked(h.cfg.Path, "honeypot")
-		response.WriteJSON(w, http.StatusOK, response.Success{
+		h.writeSuccessResponse(w, r, response.Success{
 			Status:       "ok",
 			SubmissionID: submissionID,
 		})
@@ -428,7 +428,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				slog.String("reason", err.Error()),
 				slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 			)
-			http.Error(w, "forbidden", http.StatusForbidden)
+			h.writeErrorResponse(w, r, http.StatusForbidden, "forbidden")
 			return
 		}
 	}
@@ -449,7 +449,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 		)
 		h.recorder.ValidationFailed(h.cfg.Path)
-		response.WriteJSON(w, http.StatusUnprocessableEntity, response.Validation(missing, fieldErrors))
+		h.writeValidationErrorResponse(w, r, response.Validation(missing, fieldErrors))
 		return
 	}
 
@@ -583,10 +583,46 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	logger.Info("submission_sent", sentAttrs...)
 	h.recorder.Sent(h.cfg.Path, h.cfg.Transport.Type, latency)
-	response.WriteJSON(w, http.StatusOK, response.Success{
+	h.writeSuccessResponse(w, r, response.Success{
 		Status:       "ok",
 		SubmissionID: submissionID,
 	})
+}
+
+// writeSuccessResponse emits a 200 response. When `redirect_success` is
+// configured on the endpoint AND the request's Accept header prefers HTML
+// (browser form submit), Posthorn returns a 303 See Other to that URL
+// instead of the JSON body. JSON is the fallback. Form-mode only — api-mode
+// endpoints reject `redirect_success` at config-parse time.
+func (h *Handler) writeSuccessResponse(w http.ResponseWriter, r *http.Request, body response.Success) {
+	if h.cfg.RedirectSuccess != "" && response.Negotiate(r.Header.Get("Accept"), true) == response.ModeRedirect {
+		http.Redirect(w, r, h.cfg.RedirectSuccess, http.StatusSeeOther)
+		return
+	}
+	response.WriteJSON(w, http.StatusOK, body)
+}
+
+// writeErrorResponse emits a plaintext error response, optionally
+// redirecting to `redirect_error` when the request prefers HTML. Used for
+// the user-facing 4xx paths (403, 413, 429) where a browser form submit
+// benefits from landing on an error page rather than seeing raw plaintext.
+func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if h.cfg.RedirectError != "" && response.Negotiate(r.Header.Get("Accept"), true) == response.ModeRedirect {
+		http.Redirect(w, r, h.cfg.RedirectError, http.StatusSeeOther)
+		return
+	}
+	http.Error(w, message, status)
+}
+
+// writeValidationErrorResponse emits a 422 validation response with the
+// field-error JSON body, or redirects to `redirect_error` when the request
+// prefers HTML and a redirect URL is configured.
+func (h *Handler) writeValidationErrorResponse(w http.ResponseWriter, r *http.Request, body response.Error) {
+	if h.cfg.RedirectError != "" && response.Negotiate(r.Header.Get("Accept"), true) == response.ModeRedirect {
+		http.Redirect(w, r, h.cfg.RedirectError, http.StatusSeeOther)
+		return
+	}
+	response.WriteJSON(w, http.StatusUnprocessableEntity, body)
 }
 
 // recordingResponseWriter wraps an http.ResponseWriter to capture the

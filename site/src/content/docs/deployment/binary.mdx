@@ -45,12 +45,14 @@ posthorn --version
 
 ## CLI
 
-Two subcommands:
+Four subcommands — `serve`, `validate`, `version`, `help`. The two you'll use day-to-day:
 
 ```bash
 posthorn validate --config /etc/posthorn/config.toml
 posthorn serve --config /etc/posthorn/config.toml
 ```
+
+See the [CLI reference](/reference/cli/) for the full surface.
 
 `validate` parses the TOML, resolves `${env.VAR}` placeholders, checks the schema, and compiles templates — without starting the listener. Exit 0 means good.
 

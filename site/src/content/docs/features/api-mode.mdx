@@ -51,12 +51,12 @@ interval = "1m"
 
 | Field | Required | Description |
 |---|---|---|
-| `auth = "api-key"` | yes | Enables API mode. Default `"form"` preserves v1.0 behavior. |
+| `auth = "api-key"` | yes | Enables API mode. Default `"form"` keeps existing form-mode endpoints unchanged. |
 | `api_keys = [...]` | yes (when `auth = "api-key"`) | List of Bearer tokens accepted on this endpoint. Multiple keys support rotation without downtime. `${env.VAR}` substitution honored. |
 | `idempotency_cache_size` | no (default 10000) | Per-endpoint cache capacity. See [Idempotency](#idempotency) below. |
 
 <Aside type="caution" title="API mode mutexes with form-mode fields">
-Configuring `honeypot`, `allowed_origins`, `redirect_success`, or `redirect_error` on an API-mode endpoint is a config-parse error, not silently ignored. Posthorn will refuse to start with a clear message naming the offending field — this exists so an operator who flips a form-mode endpoint to API mode can't accidentally leave dead spam-defense config in place and assume they're still protected.
+Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`, or `csrf_secret` on an API-mode endpoint is a config-parse error, not silently ignored. Posthorn will refuse to start with a clear message naming the offending field — this exists so an operator who flips a form-mode endpoint to API mode can't accidentally leave dead spam-defense config in place and assume they're still protected.
 </Aside>
 
 ## Making a request
@@ -68,7 +68,7 @@ curl -X POST https://yourdomain.com/api/transactional \
   -H "Authorization: Bearer $WORKER_KEY_PRIMARY" \
   -H "Content-Type: application/json" \
   --data '{
-    "subject_line": "Daily digest for May 16",
+    "subject_line": "Daily digest",
     "message": "Here is your daily digest..."
   }'
 ```

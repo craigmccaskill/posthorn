@@ -2585,3 +2585,129 @@ func TestStripClientIP_DefaultOff_LogsClientIP(t *testing.T) {
 		t.Errorf("client_ip field missing despite strip_client_ip=false (default): %s", logBuf.String())
 	}
 }
+
+// --- Redirects (content-negotiated 303) ---
+
+// handlerWithRedirects constructs a handler with redirect_success and/or
+// redirect_error configured.
+func handlerWithRedirects(t *testing.T, rt transport.Transport, redirectSuccess, redirectError string) *gateway.Handler {
+	t.Helper()
+	cfg := config.EndpointConfig{
+		Path:            "/test",
+		To:              []string{"to@example.com"},
+		From:            "from@example.com",
+		Subject:         "S",
+		Body:            "B",
+		Required:        []string{"name"},
+		RedirectSuccess: redirectSuccess,
+		RedirectError:   redirectError,
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return h
+}
+
+func TestHandler_Redirect_SuccessOnHTMLAccept(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRedirects(t, rt, "/thank-you", "")
+
+	req := urlencodedRequest("name=alice")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 See Other", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/thank-you" {
+		t.Errorf("Location = %q, want /thank-you", got)
+	}
+}
+
+func TestHandler_Redirect_JSONAcceptOverridesRedirect(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRedirects(t, rt, "/thank-you", "")
+
+	req := urlencodedRequest("name=alice")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (Accept overrides redirect)", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+}
+
+func TestHandler_NoRedirectConfigured_AlwaysJSON(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRedirects(t, rt, "", "")
+
+	req := urlencodedRequest("name=alice")
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (no redirect configured)", rec.Code)
+	}
+}
+
+func TestHandler_Redirect_ValidationFailureGoesToRedirectError(t *testing.T) {
+	rt := &recordingTransport{}
+	h := handlerWithRedirects(t, rt, "/thank-you", "/contact?error=1")
+
+	req := urlencodedRequest("name=")
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/contact?error=1" {
+		t.Errorf("Location = %q, want /contact?error=1", got)
+	}
+	if len(rt.sent) != 0 {
+		t.Errorf("transport called on validation failure: %d sends", len(rt.sent))
+	}
+}
+
+func TestHandler_Redirect_HoneypotMatchesSuccessShape(t *testing.T) {
+	// NFR5: honeypot 200 is indistinguishable from real success. If real
+	// success redirects to redirect_success, the honeypot path must too —
+	// otherwise a bot can detect the trap by inspecting the status code.
+	rt := &recordingTransport{}
+	cfg := config.EndpointConfig{
+		Path:            "/test",
+		To:              []string{"to@example.com"},
+		From:            "from@example.com",
+		Subject:         "S",
+		Body:            "B",
+		Honeypot:        "_gotcha",
+		RedirectSuccess: "/thank-you",
+	}
+	h, err := gateway.New(cfg, rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	req := urlencodedRequest("name=bot&_gotcha=trap")
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("honeypot trip status = %d, want 303 (must match real-success redirect)", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/thank-you" {
+		t.Errorf("Location = %q, want /thank-you (honeypot must redirect to same URL as real success)", got)
+	}
+	if len(rt.sent) != 0 {
+		t.Errorf("honeypot called transport: %d sends", len(rt.sent))
+	}
+}

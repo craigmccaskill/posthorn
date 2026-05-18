@@ -34,7 +34,7 @@ Transports that need specific header formats (Postmark's `X-Postmark-Server-Toke
 | Field | Typical placeholder |
 |---|---|
 | `endpoints.transport.settings.api_key` | `${env.POSTMARK_API_KEY}` |
-| `endpoints.from` | usually literal, occasionally `"Contact <${env.NOREPLY_ADDR}>"` (not supported — use literal) |
+| `endpoints.from` | usually literal, occasionally `"Contact <${env.NOREPLY_ADDR}>"` when the noreply address rotates between environments |
 | Anything else with a string value | Allowed but rarely useful |
 
 ## Resolution order

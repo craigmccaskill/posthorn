@@ -138,7 +138,7 @@ Configuring `honeypot`, `allowed_origins`, `redirect_success`, `redirect_error`,
 | `csrf_secret` | string | no | unset (CSRF disabled) | HMAC key for token verification. Must be at least 16 bytes. When set, every form submission must carry a `_csrf_token` field issued at form-render time. API-mode endpoints reject at parse time. |
 | `csrf_token_ttl` | duration | no | `"1h"` | Maximum age of a CSRF token. Tokens older than this are rejected with 403. |
 
-See [CSRF tokens](/features/csrf/) for the issuance flow.
+See [Spam protection → CSRF tokens](/features/spam-protection/#what-ships-beyond-the-basics) for the issuance flow.
 
 ### Dry run
 

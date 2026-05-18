@@ -213,7 +213,7 @@ sum by (endpoint) (
 )
 ```
 
-For Prometheus scraping, **don't parse logs** — Posthorn exposes a native `/metrics` endpoint on the same listener with the same counters. See [Docker deployment](/deployment/docker/#health-checks-and-metrics) and the `posthorn_*` counters in the [log format reference](/reference/log-format/).
+For Prometheus scraping, **don't parse logs** — Posthorn exposes a native `/metrics` endpoint on the same listener with the same counters. See [Docker → Health checks](/deployment/docker/#health-checks) for wiring it into a Docker healthcheck or Prometheus scrape config.
 
 ## What does *not* appear in logs
 

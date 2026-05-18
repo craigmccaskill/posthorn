@@ -13,7 +13,7 @@ The official image is published to GitHub Container Registry:
 docker pull ghcr.io/craigmccaskill/posthorn:latest
 ```
 
-Multi-arch tags are published for `linux/amd64` and `linux/arm64`. A small Alpine variant and a `distroless` variant share the same tag (the manifest list selects the right one for your platform).
+Multi-arch tags are published for `linux/amd64` and `linux/arm64` from a single distroless base. The manifest list selects the right architecture automatically — `docker pull` on an ARM host fetches the arm64 image, on an x86 host the amd64 image, with no flag needed.
 
 ## docker-compose.yml
 

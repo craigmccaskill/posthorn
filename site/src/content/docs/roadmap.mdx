@@ -17,7 +17,7 @@ Posthorn ships in deliberately small, scoped releases. v1.0 absorbs what was ori
 
 | Ingress | Detail |
 |---|---|
-| HTTP form (default) | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot, Origin/Referer fail-closed, optional Cross-Site Request Forgery (CSRF) tokens, rate limit |
+| HTTP form (default) | `application/x-www-form-urlencoded`, `multipart/form-data`; honeypot, Origin/Referer fail-closed, optional CSRF tokens, rate limit |
 | HTTP API mode | Bearer auth, JSON body, idempotency keys, per-request `to_override`, per-key rate limit |
 | SMTP listener | AUTH PLAIN / client-cert, STARTTLS-required, sender allowlist + recipient allowlist or cap, size cap |
 

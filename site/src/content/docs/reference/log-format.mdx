@@ -298,7 +298,7 @@ The transport accepted the message. Returned as **200**.
 }
 ```
 
-`transport_message_id` is the upstream's identifier (Postmark's `MessageID`, Resend's `id`, SES's SES Message ID, etc.). Useful for pivoting from Posthorn logs to the provider's UI. Omitted only if the transport didn't return one (rare).
+`transport_message_id` is the upstream's identifier (Postmark's `MessageID`, Resend's `id`, SES's SES Message ID, etc.). Useful for pivoting from Posthorn logs to the provider's UI. Always omitted on outbound-SMTP sends — stdlib `net/smtp` doesn't surface the relay's `queued as <id>` response, so there's no ID to log. Correlate by timestamp + recipient against the relay's own logs in that case.
 
 ### `submission_failed`
 

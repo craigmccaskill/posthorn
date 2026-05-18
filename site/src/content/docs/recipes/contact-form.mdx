@@ -11,7 +11,7 @@ The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, El
 
 ## Prerequisites
 
-- A Postmark account with a verified sender signature on your sending domain — Sender Policy Framework (SPF), DomainKeys Identified Mail (DKIM), Domain-based Message Authentication, Reporting & Conformance (DMARC) set up; see [DNS](/security/dns/)
+- A Postmark account with a verified sender signature on your sending domain (SPF + DKIM verified in Postmark; DMARC recommended but not required for a first send — see [DNS](/security/dns/))
 - Postmark **server token** (per-server, found under your server's API Tokens tab — not the account-level token)
 - A Docker host you control (homelab, VPS, anywhere)
 - A reverse proxy in front of your static site already (Caddy, nginx, Traefik, Cloudflare — any will work)
@@ -100,7 +100,7 @@ The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, El
    Expect a startup log line like:
 
    ```json
-   {"time":"2026-05-15T20:00:00Z","level":"INFO","msg":"listening","addr":":8080"}
+   {"time":"2026-05-17T20:00:00Z","level":"INFO","msg":"http ingress listening","addr":":8080"}
    ```
 
 6. **Wire `/api/contact` through your reverse proxy.**

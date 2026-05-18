@@ -71,7 +71,7 @@ The limiter tracks at most **10,000 IPs by default**. When the cap is reached, t
 
 This bounds memory regardless of attack volume. A flood of submissions from a million different IPs won't grow Posthorn's memory unboundedly — older buckets get evicted as new ones come in. The eviction is per-endpoint, so a flood on `/api/contact` doesn't affect `/api/newsletter`.
 
-The 10K default is sized for typical homelab and indie-developer use. Larger deployments can override the cap; the configuration knob is a planned addition.
+The 10K default is sized for typical homelab and indie-developer use. The cap is not currently configurable; a knob for larger deployments is a planned addition.
 
 ## What happens on 429
 
@@ -106,15 +106,18 @@ Every rate-limited request logs an event:
 
 ```json
 {
-  "time": "2026-05-14T20:01:23Z",
-  "level": "WARN",
+  "time": "2026-05-17T20:01:23Z",
+  "level": "INFO",
   "msg": "rate_limited",
   "submission_id": "...",
   "endpoint": "/api/contact",
+  "transport": "postmark",
   "client_ip": "203.0.113.42",
-  "tokens_remaining": 0
+  "latency_ms": 1
 }
 ```
+
+(In API mode, `client_ip` is omitted — the matched API key is the bucket key, and Posthorn never logs key material. When `strip_client_ip = true` is set on a form-mode endpoint, `client_ip` is omitted there too.)
 
 Use this to spot abuse patterns — a single IP that's been 429'd a hundred times in an hour is a bot you might want to block at the firewall level.
 

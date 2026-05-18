@@ -65,16 +65,9 @@ For the full grammar, see the [Go text/template docs](https://pkg.go.dev/text/te
 
 ## Variables available
 
-Every form field is available as `{{.fieldname}}`. Posthorn also exposes a small set of metadata variables:
+Every submitted field is available as `{{.fieldname}}`. Missing fields render as the empty string. Posthorn does not currently inject metadata variables (request ID, timestamp, endpoint path) into templates — those values are present in the structured log line keyed by `submission_id`, not in the email body.
 
-| Variable | Type | Description |
-|---|---|---|
-| `{{.fieldname}}` | string | Value of any form field. Missing → empty string. |
-| `{{._submission_id}}` | string | UUIDv4 generated for this submission |
-| `{{._timestamp}}` | string | RFC 3339 timestamp of receipt |
-| `{{._endpoint}}` | string | Endpoint path that received the submission |
-
-Form field names that start with `_` are still accessible — the metadata variables use `_` prefix to reduce collision risk but don't strictly reserve it.
+To include a value like a timestamp in the email, pass it as a form field from the client side, or render it in the template literally.
 
 ## Custom fields passthrough
 
@@ -130,7 +123,6 @@ If your form expects to be progressively enhanced (works without JS, gets nicer 
 
 | Scenario | Behavior |
 |---|---|
-| Form field with same name as a metadata var (e.g., `_submission_id`) | User value wins; metadata is overridden by the form data |
 | Field name with a dot (e.g., `user.name`) | Not addressable in Go templates. Avoid dots in form field names. |
 | Field name with a dash (e.g., `first-name`) | Not addressable via `{{.first-name}}` (interpreted as subtraction). Use `{{index . "first-name"}}` |
 | Empty form (all values empty) | Validation fails on required fields → 422, never reaches template |

@@ -9,7 +9,7 @@ Posthorn employs a layered spam-protection stack tuned for typical web forms. Ea
 
 | Layer | Defends against | Default |
 |---|---|---|
-| Max body size | Resource exhaustion | 1 MB |
+| Max body size | Resource exhaustion | unset (no cap; recommend setting one) |
 | Honeypot | Drive-by scraper bots | unset (recommend setting one) |
 | Origin/Referer check | Direct-POST bots that skip the form page | unset (fail-open) |
 | Rate limit | Basic targeted abuse, Postmark quota burn | unset (recommend setting one) |

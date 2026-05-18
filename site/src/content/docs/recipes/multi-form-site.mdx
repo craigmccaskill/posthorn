@@ -166,7 +166,7 @@ Same as [Contact form](/recipes/contact-form/) — a verified Postmark sender do
    {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/contact","transport":"postmark","recipients":1}
    {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/feedback","transport":"postmark","recipients":1}
    {"time":"...","level":"INFO","msg":"endpoint registered","path":"/api/careers","transport":"postmark","recipients":1}
-   {"time":"...","level":"INFO","msg":"listening","addr":":8080"}
+   {"time":"...","level":"INFO","msg":"http ingress listening","addr":":8080"}
    ```
 
 6. **Wire the three forms into your site.** Each form's `action="/api/..."` points at the matching endpoint. Different honeypot field names per form (so a generic bot scanner can't pattern-match across them).

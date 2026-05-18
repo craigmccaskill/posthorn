@@ -25,7 +25,7 @@ import { Card, CardGrid, Code, LinkCard, Aside } from '@astrojs/starlight/compon
 
 ## Why Posthorn?
 
-**Nobody wants to run a mail server in 2026.** Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and someone else worries about Sender Policy Framework (SPF), DomainKeys Identified Mail (DKIM), Domain-based Message Authentication, Reporting & Conformance (DMARC), bounces, and sender reputation.
+**Nobody wants to run a mail server in 2026.** Self-hosted operators use Postmark, Resend, Mailgun, or AWS SES because they're cheap, they handle deliverability properly, and somebody else can worry about sender authentication, bounce processing, and reputation management.
 
 But every app you self-host has to integrate with that service **independently.** Your contact form. Your Ghost blog's admin emails. Your Gitea magic links. Your Mastodon notifications. Your worker that fires a license-delivery email when someone pays. Each one needs its own copy of the API key, its own integration code, its own quirks around retry and bounce handling. **The same outbound concern duplicated five times across your stack.**
 
@@ -103,12 +103,10 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 <CardGrid>
   <Card title="Defense in depth" icon="shield">
     Honeypot, Origin/Referer fail-closed, token-bucket rate limit with
-    Least Recently Used (LRU) eviction at 10K IPs, max body size,
-    required-field validation,
-    email syntax check, Hash-based Message Authentication Code (HMAC)
-    signed Cross-Site Request Forgery (CSRF) tokens. API-key auth for
-    server-to-server callers. SMTP listener gates open-relay abuse via
-    sender allowlist, recipient allowlist or cap, AUTH and STARTTLS.
+    LRU eviction, max body size, required-field validation, email
+    syntax check, signed CSRF tokens. API-key auth for server-to-server
+    callers. SMTP listener gates open-relay abuse via sender allowlist,
+    recipient cap, AUTH PLAIN, and required STARTTLS.
   </Card>
   <Card title="One deployment shape, every front door" icon="puzzle">
     Standalone Docker container (or Go binary) that runs as a sidecar
@@ -220,19 +218,13 @@ The wedge is **the integration layer** between your self-hosted apps and the tra
 
 ## How Posthorn is built
 
-Four principles that shape every decision. Full reasoning in [the brief](https://github.com/craigmccaskill/posthorn/blob/main/spec/01-project-brief.md#design-principles).
+A few principles that shape every decision. See [Design principles](/design-principles/) for the full set with reasoning.
 
-**Integration layer, not mail-receiving layer.**
-Posthorn unifies how your apps *send* mail — many ingress shapes converge on one transport surface, talking to your provider. Receiving mail (MX hosting, inbound spam filtering, mailbox storage) is mail-server territory and Posthorn doesn't go there. The unification is one-way: many inputs, one output. The mailbox is somebody else's job.
-
-**Configuration as truth.**
-A TOML file is the source of truth. No admin UI, no settings page, no runtime mutation surface that could drift from the file in version control. Reviewing a config diff is reviewing the system's behavior. v3+ may add read-only UIs for browsing logs; configuration stays in the file.
-
-**Bespoke transports, audit in an afternoon.**
-Every transport integration is ~200-400 lines of focused Go in this repo. No vendor SDKs in transport code, no transitive dep tree to track for CVEs, no opaque wrappers between you and the upstream API. SES uses a bespoke SigV4 implementation that's also reusable for other AWS-signed services in v2. The whole module has three external dependencies: a TOML parser, a UUID library, and an LRU cache. Minimal dep surface, maximum audit surface — relevant when the integrations carry your API keys.
-
-**Public roadmap, locked v1.0.**
-The v1.0 scope is fixed; what ships is what was specified. Originally sequenced as v1.0 / v1.1 / v1.2 / v1.3, the four feature blocks (form ingress, API mode, multi-transport + ops, SMTP ingress) consolidated into a single v1.0 release before tag. v2 (durable storage + suppression + lifecycle webhooks + attachments) is the next milestone on a [public roadmap](/roadmap/) tied to GitHub milestones. No surprise scope expansions, no quiet feature drops, no version drift between docs and behavior.
+- **Gateway, not infrastructure.** Posthorn sits *between* your apps and a provider you already chose. It doesn't run its own outbound mail server, doesn't manage IP reputation, doesn't host mailboxes.
+- **Integration layer, not mail-receiving layer.** Many ingress shapes converge on one transport surface — many inputs, one output. Receiving mail is somebody else's job.
+- **Config over admin UI.** A single TOML file is the source of truth. Reviewing a config diff is reviewing the system's behavior. No runtime mutation surface.
+- **Bespoke transports, no SDKs.** Three external Go dependencies in the whole module — a TOML parser, a UUID library, an LRU cache. Every transport is ~200-400 lines of focused Go, auditable in an afternoon.
+- **Locked spec, public roadmap.** Every feature traces back to a numbered requirement. No quiet drift between docs and behavior.
 
 ## Not related to PostHog
 
