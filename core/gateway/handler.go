@@ -73,6 +73,7 @@ type Handler struct {
 	transport            transport.Transport
 	renderer             *template.Renderer
 	limiter              *ratelimit.Limiter // nil if rate_limit not configured
+	authFailLimiter      *ratelimit.Limiter // nil on form-mode endpoints; per-IP brute-force defense for api-mode 401s
 	idemCache            *idempotency.Cache // nil on form-mode endpoints
 	trustedProxies       []netip.Prefix
 	emailField           string // resolved at construction (cfg.EmailField or default)
@@ -82,6 +83,16 @@ type Handler struct {
 	logger               *slog.Logger
 	recorder             *metrics.Recorder // nil = no-op (default)
 }
+
+// defaultAuthFailureBudget caps brute-force attempts against api-mode
+// endpoints. Token bucket per client IP: defaultAuthFailureBudget tokens
+// total, refilling over defaultAuthFailureInterval. Each failed auth
+// consumes one token; successful auth consumes none. When the bucket is
+// empty, subsequent failed-auth attempts return 429 instead of 401.
+const (
+	defaultAuthFailureBudget   = 10
+	defaultAuthFailureInterval = time.Minute
+)
 
 // defaultCSRFTokenTTL is the resolved value when cfg.CSRFTokenTTL is
 // zero (operator didn't set it). One hour matches FR57's stated default.
@@ -149,7 +160,14 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 		return nil, fmt.Errorf("gateway: %w", err)
 	}
 
-	maxBody, err := spam.ParseSize(cfg.MaxBodySize)
+	// max_body_size defaults to 1 MB when unset — safe-by-default so a
+	// stray unconfigured endpoint can't be DoS'd by streaming an unbounded
+	// body. Operators bump it up for large form uploads.
+	rawMaxBodySize := cfg.MaxBodySize
+	if rawMaxBodySize == "" {
+		rawMaxBodySize = "1MB"
+	}
+	maxBody, err := spam.ParseSize(rawMaxBodySize)
 	if err != nil {
 		return nil, fmt.Errorf("gateway: max_body_size: %w", err)
 	}
@@ -171,6 +189,7 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 	// defaults to DefaultCapacity when the operator hasn't set
 	// idempotency_cache_size (FR42).
 	var idemCache *idempotency.Cache
+	var authFailLimiter *ratelimit.Limiter
 	if cfg.Auth == config.AuthAPIKey {
 		capacity := cfg.IdempotencyCacheSize
 		if capacity <= 0 {
@@ -179,6 +198,14 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 		idemCache, err = idempotency.New(capacity, idempotency.DefaultTTL)
 		if err != nil {
 			return nil, fmt.Errorf("gateway: idempotency: %w", err)
+		}
+		// Per-IP brute-force defense: limits how many 401s a single
+		// client IP can rack up before getting 429'd. Successful auth
+		// never consumes from this budget, so legitimate callers are
+		// unaffected; brute-force scanners hit it almost immediately.
+		authFailLimiter, err = ratelimit.New(defaultAuthFailureBudget, defaultAuthFailureInterval, 0)
+		if err != nil {
+			return nil, fmt.Errorf("gateway: auth-failure limiter: %w", err)
 		}
 	}
 
@@ -200,6 +227,7 @@ func New(cfg config.EndpointConfig, t transport.Transport, opts ...Option) (*Han
 		transport:            t,
 		renderer:             renderer,
 		limiter:              limiter,
+		authFailLimiter:      authFailLimiter,
 		idemCache:            idemCache,
 		trustedProxies:       prefixes,
 		emailField:           emailField,
@@ -264,6 +292,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// material in logs (NFR21).
 		matched, ok := h.authenticateAPIRequest(r)
 		if !ok {
+			// Auth-failure brute-force defense: a per-IP token bucket
+			// consumes one token on each failed auth. Once the budget
+			// is exhausted, subsequent failures from that IP return
+			// 429 instead of 401. Successful auth never consumes from
+			// this budget, so legitimate callers are unaffected.
+			clientIP := ratelimit.ClientIP(r, h.trustedProxies)
+			if h.authFailLimiter != nil && !h.authFailLimiter.Allow(clientIP) {
+				attrs := []any{slog.Int64("latency_ms", time.Since(start).Milliseconds())}
+				if !h.cfg.StripClientIP {
+					attrs = append(attrs, slog.String("client_ip", clientIP))
+				}
+				logger.Info("auth_rate_limited", attrs...)
+				h.recorder.RateLimited(h.cfg.Path)
+				http.Error(w, "too many failed authentication attempts", http.StatusTooManyRequests)
+				return
+			}
 			logger.Info("auth_failed",
 				slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 			)

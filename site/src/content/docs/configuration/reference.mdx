@@ -80,7 +80,7 @@ API-mode endpoints reject these fields at config-parse time.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `max_body_size` | string | no | unset (no cap) | Maximum request body size. Format: `"32KB"`, `"1MB"`, `"512KB"`. Exceeding → 413. When unset, no body cap is applied. |
+| `max_body_size` | string | no | `"1MB"` | Maximum request body size. Format: `"32KB"`, `"1MB"`, `"512KB"`. Exceeding → 413. The 1 MB default is safe-by-default; bump up for endpoints accepting large form uploads. |
 
 ### Client IP / proxy handling
 

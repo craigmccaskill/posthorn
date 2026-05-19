@@ -8,7 +8,7 @@ import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
 This walks through standing up a working contact form on Docker against a real transactional-mail account. It assumes you've already followed [Installation](/getting-started/installation/) and have a provider API key in hand.
 
 <Aside type="note" title="Transport choice">
-This walkthrough uses **Postmark** as the canonical example. **Resend, Mailgun, AWS SES, and outbound-SMTP relay** are also supported — the walkthrough structure doesn't change, just the `[endpoints.transport]` block at step 2. See [Transports](/configuration/transports/) for the per-provider config.
+This walkthrough uses **Postmark** as the canonical example because it has the cleanest API and generous free tier. **Resend** is the fastest path to a working send if you're starting from scratch — signup is instant (no phone verification), domain verification takes minutes. **Mailgun, AWS SES, and outbound-SMTP relay** are equally supported. The walkthrough structure is identical for all five; only the `[endpoints.transport]` block at step 2 changes. See [Transports](/configuration/transports/) for the per-provider config.
 </Aside>
 
 <Steps>

@@ -73,6 +73,24 @@ API-mode only. The `Authorization: Bearer <key>` was missing or didn't match any
 
 Key material is **never** logged.
 
+### `auth_rate_limited`
+
+API-mode only. Per-IP brute-force defense: 10 failed-auth attempts from this client IP within ~1 minute, so subsequent failures return 429 instead of 401. The bucket refills over the same window, so a slow legitimate caller who occasionally typos a key isn't affected; a brute-force scanner hits it immediately.
+
+```json
+{
+  "level": "INFO",
+  "msg": "auth_rate_limited",
+  "submission_id": "...",
+  "endpoint": "/api/transactional",
+  "transport": "postmark",
+  "client_ip": "203.0.113.42",
+  "latency_ms": 0
+}
+```
+
+`client_ip` is included for forensic follow-up. Omitted when `strip_client_ip = true` is set on the endpoint.
+
 ### `idempotent_replay`
 
 API-mode only. An `Idempotency-Key` matched a cached prior request; the original response was replayed.

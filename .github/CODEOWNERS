@@ -1,0 +1,10 @@
+# Posthorn code ownership.
+#
+# This file signals project ownership to GitHub: every PR review request
+# auto-routes to the listed owner(s). Posthorn is currently maintained by
+# a single author; the bus factor is one. Contributors evaluating the
+# project for adoption or contribution should know this up front.
+#
+# See https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+* @craigmccaskill

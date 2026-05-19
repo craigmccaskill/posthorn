@@ -85,6 +85,8 @@ Common causes:
 
 The constant-time compare against every configured key fires on **every** 401, so timing analysis can't enumerate the set.
 
+**Brute-force defense:** Posthorn tracks failed-auth attempts per client IP. After 10 failures from the same IP within ~1 minute, subsequent failed attempts return 429 (see below) until the budget refills. Successful auths never consume the budget — legitimate callers are unaffected.
+
 ## 400 Bad Request
 
 **Malformed request.** Plaintext body.
@@ -251,22 +253,34 @@ Common causes:
 
 ## 429 Too Many Requests
 
-**Rate limit exceeded** for this client IP on this endpoint. Plaintext body.
+**Rate limit exceeded.** Plaintext body. Two distinct paths trigger 429:
 
-```http
-HTTP/1.1 429 Too Many Requests
-Content-Type: text/plain; charset=utf-8
+1. The configured `rate_limit` bucket emptied for this client IP (form mode) or matched API key (API mode):
 
-rate limit exceeded
-```
+   ```http
+   HTTP/1.1 429 Too Many Requests
+   Content-Type: text/plain; charset=utf-8
 
-A `Retry-After` header is **not** emitted — the client gets a plain 429 and is expected to back off. (Adding `Retry-After` derived from token-bucket state is a planned polish item.)
+   rate limit exceeded
+   ```
+
+2. The brute-force defense fired on an API-mode endpoint — 10 failed-auth attempts from the same IP within ~1 minute. Subsequent failed-auth attempts from that IP return 429 instead of 401 until the budget refills:
+
+   ```http
+   HTTP/1.1 429 Too Many Requests
+   Content-Type: text/plain; charset=utf-8
+
+   too many failed authentication attempts
+   ```
+
+A `Retry-After` header is **not** emitted — the client is expected to back off. (Adding `Retry-After` derived from token-bucket state is a planned polish item.)
 
 Common causes:
 
 | Cause | Fix |
 |---|---|
 | Real abuse — bot or attacker hitting the form | Working as intended |
+| Brute-force scanner cycling through API-key guesses | Working as intended — the failure budget locks the IP out for ~1 minute |
 | Legitimate user double-clicked submit | Tune `rate_limit` upward, or disable double-submit at the client |
 | Multiple legitimate users behind shared Network Address Translation (NAT) or Carrier-Grade NAT (CGNAT) all hitting the form | Tune `rate_limit` upward, or accept the false-positive rate |
 | Bad `trusted_proxies` config — Posthorn sees the proxy IP, every request looks like the same IP | Set `trusted_proxies` to your reverse proxy's Classless Inter-Domain Routing (CIDR) range |

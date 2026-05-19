@@ -787,19 +787,31 @@ func TestHandler_BodySize_Within_OK(t *testing.T) {
 	}
 }
 
-func TestHandler_BodySize_Unset_NoLimit(t *testing.T) {
-	// Empty MaxBodySize means no limit — large body still passes.
+func TestHandler_BodySize_Unset_Defaults1MB(t *testing.T) {
+	// Empty MaxBodySize defaults to 1 MB — small body passes, large body
+	// rejected. Safe-by-default posture: an unconfigured endpoint cannot
+	// be DoS'd by an unbounded streamed body.
 	rt := &recordingTransport{}
 	h := handlerWithSpam(t, rt, "", nil, "")
 
-	body := strings.Repeat("x=", 5000) + "y=z" // ~10K bytes
+	// ~10K — well under 1 MB, passes.
+	body := strings.Repeat("x=", 5000) + "y=z"
 	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-
 	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 (no limit)", rec.Code)
+		t.Errorf("10K body status = %d, want 200 (well under 1 MB default)", rec.Code)
+	}
+
+	// ~2 MB — over the 1 MB default, must be rejected.
+	bigBody := "x=" + strings.Repeat("a", 2_000_000)
+	req = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(bigBody))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("2 MB body status = %d, want 413 (default cap is 1 MB)", rec.Code)
 	}
 }
 
@@ -2709,5 +2721,87 @@ func TestHandler_Redirect_HoneypotMatchesSuccessShape(t *testing.T) {
 	}
 	if len(rt.sent) != 0 {
 		t.Errorf("honeypot called transport: %d sends", len(rt.sent))
+	}
+}
+
+// --- Auth brute-force defense (per-IP failure budget) ---
+
+// TestAPIAuth_BruteForceLockout verifies that the per-IP auth-failure
+// limiter trips after the configured budget: the first N failed-auth
+// attempts return 401, the (N+1)th and beyond return 429 from the
+// same IP until the bucket refills. Successful auth never consumes
+// from the budget.
+//
+// The constants in handler.go set the budget to 10 failures per minute.
+// This test fires 11 failures from one client and asserts the transition.
+func TestAPIAuth_BruteForceLockout(t *testing.T) {
+	h, err := gateway.New(apiModeConfig("real-key"), &recordingTransport{})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// First 10 failed-auth attempts from the same client IP should 401.
+	for i := 0; i < 10; i++ {
+		req := apiRequest(`{"message":"hi"}`, "wrong-key")
+		req.RemoteAddr = "203.0.113.42:54321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i+1, rec.Code)
+		}
+	}
+
+	// 11th attempt: budget exhausted, expect 429.
+	req := apiRequest(`{"message":"hi"}`, "wrong-key")
+	req.RemoteAddr = "203.0.113.42:54321"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("attempt 11: status = %d, want 429 (budget exhausted)", rec.Code)
+	}
+
+	// A DIFFERENT IP should still get 401 (per-IP budget, not global).
+	req = apiRequest(`{"message":"hi"}`, "wrong-key")
+	req.RemoteAddr = "198.51.100.7:54321"
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("different IP: status = %d, want 401 (per-IP isolation)", rec.Code)
+	}
+}
+
+// TestAPIAuth_SuccessDoesNotConsumeFailureBudget ensures legitimate
+// callers aren't penalized: a successful auth must not decrement the
+// brute-force budget, so an attacker can't tank a legit caller's IP
+// budget by alternating valid and invalid keys.
+func TestAPIAuth_SuccessDoesNotConsumeFailureBudget(t *testing.T) {
+	rt := &recordingTransport{}
+	h, err := gateway.New(apiModeConfig("real-key"), rt)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// 100 successful auths from one IP — shouldn't trigger the
+	// brute-force defense at all.
+	for i := 0; i < 100; i++ {
+		req := apiRequest(`{"message":"hi"}`, "real-key")
+		req.RemoteAddr = "203.0.113.42:54321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("success %d: status = %d, want 200", i+1, rec.Code)
+		}
+	}
+
+	// After 100 successes, the failure budget should still be full —
+	// 10 fresh failures should all 401.
+	for i := 0; i < 10; i++ {
+		req := apiRequest(`{"message":"hi"}`, "wrong-key")
+		req.RemoteAddr = "203.0.113.42:54321"
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("post-success failure %d: status = %d, want 401 (budget unconsumed)", i+1, rec.Code)
+		}
 	}
 }

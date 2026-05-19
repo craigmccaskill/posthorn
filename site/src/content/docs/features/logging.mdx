@@ -40,6 +40,7 @@ Every HTTP request-pipeline event Posthorn emits. See the [log format reference]
 |---|---|---|
 | `submission_received` | INFO | All defenses passed; request entering the send pipeline |
 | `auth_failed` | INFO | API-mode `Authorization: Bearer` missing or unknown key — **401** |
+| `auth_rate_limited` | INFO | Per-IP failed-auth budget exhausted (brute-force defense) — **429** |
 | `idempotent_replay` | INFO | API-mode `Idempotency-Key` matched a cached prior response — replayed verbatim |
 | `idempotent_conflict` | INFO | API-mode `Idempotency-Key` matches an in-flight request — **409** |
 | `spam_blocked` | INFO | Honeypot fired or Origin/Referer rejected — **403** (origin) or silent **200** (honeypot) |
