@@ -419,7 +419,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					slog.Int64("limit_bytes", h.maxBodySize),
 					slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 				)
-				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("request body too large (limit: %d bytes)", h.maxBodySize))
 				return
 			}
 			http.Error(w, fmt.Sprintf("parse JSON: %v", err), http.StatusBadRequest)
@@ -434,7 +435,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					slog.Int64("limit_bytes", h.maxBodySize),
 					slog.Int64("latency_ms", time.Since(start).Milliseconds()),
 				)
-				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge, "request body too large")
+				h.writeErrorResponse(w, r, http.StatusRequestEntityTooLarge,
+					fmt.Sprintf("request body too large (limit: %d bytes)", h.maxBodySize))
 				return
 			}
 			http.Error(w, fmt.Sprintf("parse form: %v", err), http.StatusBadRequest)

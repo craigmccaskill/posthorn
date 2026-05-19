@@ -209,16 +209,16 @@ API-mode endpoints reject form bodies at parse time; form-mode endpoints reject 
 
 ## 413 Payload Too Large
 
-**Body exceeded `max_body_size`.** Plaintext body.
+**Body exceeded `max_body_size`.** Plaintext body — includes the cap so a client integrator knows what to compare against.
 
 ```http
 HTTP/1.1 413 Request Entity Too Large
 Content-Type: text/plain; charset=utf-8
 
-request body too large
+request body too large (limit: 1048576 bytes)
 ```
 
-The exact cap is not echoed in the response (it's in the structured log line, `limit_bytes` field, on the `body_too_large` event).
+The cap is the byte count of the resolved `max_body_size`. Default is 1 MB (1048576 bytes) when unset. The structured log line on the operator side carries the same number in the `limit_bytes` field of the `body_too_large` event.
 
 Common causes:
 

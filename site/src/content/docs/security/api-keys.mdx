@@ -101,6 +101,19 @@ require.NotContains(t, captured, knownCredential)
 
 This runs on every CI build for every transport. A regression that newly logged the credential — even in a debug print, even in a wrapped error — would fail this test.
 
+## Brute-force defense on api-mode endpoints
+
+API-mode endpoints (`auth = "api-key"`) carry an additional layer of defense against credential-scanning attacks: a per-IP **failed-auth budget**. Each client IP gets 10 failed-auth attempts per minute. Beyond the budget, subsequent failed attempts return **429 Too Many Requests** instead of 401 until the budget refills.
+
+Key properties:
+
+- **Per-IP, not per-key.** A scanner cycling through random Bearer tokens from one IP exhausts the budget regardless of which keys it tries.
+- **Successful auth never consumes the budget.** Legitimate callers from the same IP are unaffected even when sharing an egress with a misbehaving worker.
+- **No configuration knob in v1.0** — the budget is fixed at 10 failures per minute. Tunable per-endpoint configuration is a planned future addition.
+- **Constant-time key compare runs on every attempt** — including the ones that hit 429 — so timing-attack signatures stay flat.
+
+For evidence that the defense is firing, search logs for `auth_rate_limited`. The event carries `client_ip` (omitted when `strip_client_ip = true`), `endpoint`, and `submission_id` for correlation.
+
 ## Operator responsibilities
 
 Posthorn handles the in-process flow. The operator is still responsible for:

@@ -102,7 +102,15 @@ API mode uses `Authorization: Bearer <key>`. Key comparison is constant-time (`c
 3. Switch callers to the new key
 4. Remove the old key, restart again
 
-Failed auth returns HTTP 401. The failed key is **never written to logs** — operators investigating auth failures see a `auth_failed` log line with the endpoint and timestamp, but no key material.
+Failed auth returns HTTP 401. The failed key is **never written to logs** — operators investigating auth failures see an `auth_failed` log line with the endpoint and timestamp, but no key material.
+
+### Brute-force defense
+
+Posthorn tracks failed-auth attempts per client IP. After **10 failed auth attempts from one IP within ~1 minute**, the bucket empties and subsequent failed attempts from that IP return **429 Too Many Requests** instead of 401, with body `too many failed authentication attempts`. The bucket refills at the same rate, so a slow legitimate caller who occasionally typos a key recovers; a brute-force scanner trying thousands of keys per minute hits the lockout within seconds.
+
+**Successful auth never consumes the budget,** so legitimate callers from the same IP are unaffected even if a misconfigured worker shares the egress with a brute-forcer. Once locked out, the IP can still attempt — Posthorn just returns 429 until the bucket refills enough to allow another attempt.
+
+The log event is `auth_rate_limited` (INFO level) with `client_ip` set for forensic follow-up. Omitted when `strip_client_ip = true` is configured on the endpoint.
 
 ## JSON body shape
 
