@@ -304,6 +304,8 @@ api_key = "${env.RESEND_API_KEY}"
 
 Expected `submission_sent` log line: `transport_message_id` populated from Resend's response `id` field (UUID shape).
 
+**Validated 2026-05-24 against `craigmccaskill.com` via Resend.** Live send returned HTTP 200 with `transport_message_id` UUID; received message at `craig.mccaskill@gmail.com` showed `dkim=pass header.s=resend` and `spf=pass` (Resend's underlying SES IP). NFR3 sentinel-key check passed: a deliberately wrong key returned HTTP 502 with `error: "transport: API key is invalid (class=terminal status=401)"`, and the sentinel string did not appear in captured logs.
+
 ### Mailgun
 
 ```toml
