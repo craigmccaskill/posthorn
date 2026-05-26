@@ -44,9 +44,9 @@ The SMTP listener has its own `[smtp_listener.transport]` block, separate from `
 
 Posthorn refuses to relay arbitrary mail. Every accepted message must clear all of:
 
-1. **Authentication** — either SMTP AUTH PLAIN against `smtp_users`, or a TLS client certificate signed by `client_cert_ca`. `auth_required = "either"` accepts both.
+1. **Authentication** — SMTP AUTH PLAIN against `smtp_users`, or a TLS client certificate signed by `client_cert_ca`. `auth_required = "either"` accepts both. For internal-network-only deployments where network access already implies trust, `auth_required = "none"` skips this layer entirely (see the [internal-SMTP-relay recipe](/recipes/internal-smtp-relay/)).
 2. **STARTTLS** — when `require_tls = true` (default), clients can't send AUTH or MAIL until they've upgraded to TLS.
-3. **Sender allowlist** — `allowed_senders` is required. Entries can be exact addresses or `*@domain` wildcards. `*` allows any sender (only do this with strong auth).
+3. **Sender allowlist** — `allowed_senders` is required. Entries can be exact addresses or `*@domain` wildcards. `*` allows any sender (only do this with strong auth or a tightly-firewalled internal listener).
 4. **Recipient bound** — either `allowed_recipients` (allowlist) or `max_recipients_per_session` (cap, default 10). Both protect against RCPT bombing.
 5. **Size cap** — `max_message_size` (default 1MB). DATA blobs exceeding this return `552 5.3.4`.
 

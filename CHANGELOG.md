@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet — next entry will become v1.0.1 or v1.1.0._
+_Nothing yet — next entry will become v1.0.2 or v1.1.0._
+
+## [1.0.1] — 2026-05-26
+
+First user feedback from production deployment surfaced two unergonomic gates on the SMTP listener for the most common deployment shape: container-to-container traffic on a private Docker network. This release lowers the friction for that shape without compromising the production-facing one.
+
+### Added
+
+- **`auth_required = "none"` mode on the SMTP listener.** Disables AUTH PLAIN handling entirely for listeners on private/internal networks where network access already implies trust (Docker bridge, loopback). The sender allowlist (`allowed_senders`) and recipient cap remain in force as the only ingress gates — Posthorn refuses to function as an open relay regardless of auth mode. Pairs with `require_tls = false` to skip the TLS cert requirement entirely when the deployment doesn't need on-wire encryption.
+- **New recipe at [/recipes/internal-smtp-relay/](https://posthorn.dev/recipes/internal-smtp-relay/)** walking through the Docker Compose pattern: shared private network, Posthorn with `auth_required = "none"` + `require_tls = false`, application services (Remark42, Gitea, Ghost, Mastodon, Authentik, Vaultwarden, Healthchecks.io) pointing at `posthorn:2525` with no TLS or AUTH credentials. Includes the configuration env-var matrix for each named app.
+- **New docs page at [/deployment/api-mode-deployment/](https://posthorn.dev/deployment/api-mode-deployment/)** covering safe deployment shapes for HTTP api-mode endpoints — when to bind to loopback, how to use Cloudflare Tunnel + Cloudflare Access service tokens for off-VPS callers (recommended), IP allowlist as a weaker alternative, and mTLS as the strongest. Cross-linked from the Cloudflare Worker recipe, the api-mode feature page, and the threat model.
+
+### Changed
+
+- **`smtp_listener.auth_required` validation error now mentions `"none"`** as a valid option and links to the internal-SMTP-relay recipe, so operators landing on the error have somewhere to look.
+
+### Internal
+
+- Test coverage extended to pin both halves of the AuthNone contract: the validation gate (config validates without cert/key when `auth_required = "none"` and `require_tls = false`), and the wire-level behavior (EHLO doesn't advertise AUTH; MAIL/RCPT/DATA proceeds without authentication; sender allowlist still enforced).
+- The `tls_cert` / `tls_key` requirement is now only triggered when `require_tls = true` OR when `auth_required` involves client certificates — `auth_required = "none"` + `require_tls = false` is the documented internal-network path with no cert requirement.
 
 ## [1.0.0] — 2026-05-16
 

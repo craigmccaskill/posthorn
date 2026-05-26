@@ -31,6 +31,14 @@ const (
 	AuthClientCert AuthMode = "client-cert"
 	// AuthEither accepts either SMTP AUTH or client-cert.
 	AuthEither AuthMode = "either"
+	// AuthNone disables authentication on the listener. The sender
+	// allowlist + recipient cap remain in force as the only gates.
+	// Only safe when the listener is bound to a private network
+	// (Docker bridge, loopback) where network access already implies
+	// trust. The validator refuses to combine AuthNone with a public
+	// bind address only by convention — exposing a bare-listener
+	// publicly is the operator's responsibility to avoid.
+	AuthNone AuthMode = "none"
 )
 
 // User is a single SMTP AUTH PLAIN credential pair.
@@ -113,11 +121,11 @@ func (c *ListenerConfig) Validate() error {
 		mode = AuthSMTP
 	}
 	switch mode {
-	case AuthSMTP, AuthClientCert, AuthEither:
+	case AuthSMTP, AuthClientCert, AuthEither, AuthNone:
 		// ok
 	default:
-		return fmt.Errorf("smtp_listener.auth_required: must be %q, %q, or %q; got %q",
-			AuthSMTP, AuthClientCert, AuthEither, c.AuthRequired)
+		return fmt.Errorf("smtp_listener.auth_required: must be one of %q, %q, %q, or %q; got %q — see /deployment/api-mode-deployment/ for the internal-only deployment pattern",
+			AuthSMTP, AuthClientCert, AuthEither, AuthNone, c.AuthRequired)
 	}
 
 	// AuthSMTP / AuthEither require at least one user.
@@ -143,6 +151,10 @@ func (c *ListenerConfig) Validate() error {
 	}
 
 	// STARTTLS / TLS-only client cert require cert + key.
+	// AuthNone with require_tls=false is the intentional internal-network
+	// path that skips both — the sender allowlist + recipient cap remain
+	// as the only gates, appropriate only on a private network where
+	// network access already implies trust.
 	if c.RequireTLS || mode == AuthClientCert || mode == AuthEither {
 		if c.TLSCert == "" {
 			return errors.New("smtp_listener.tls_cert: required when require_tls=true or auth_required includes client-cert")

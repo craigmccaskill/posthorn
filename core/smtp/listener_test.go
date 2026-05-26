@@ -639,3 +639,116 @@ func writeSelfSignedCert(t *testing.T) (certPath, keyPath string) {
 // Ensure the TLS package is used so the import isn't dead in builds
 // where only some tests run.
 var _ = tls.VersionTLS12
+
+// --- AuthNone (internal-network deployment) ---
+
+// TestListenerConfig_AuthNone_NoTLS_Valid pins the canonical internal-only
+// deployment shape: AuthNone + RequireTLS=false + sender allowlist is
+// sufficient. No cert/key or smtp_users required.
+func TestListenerConfig_AuthNone_NoTLS_Valid(t *testing.T) {
+	c := ListenerConfig{
+		Listen:                  ":2525",
+		AllowedSenders:          []string{"*@example.com"},
+		AuthRequired:            AuthNone,
+		MaxRecipientsPerSession: 5,
+		Transport:               config.TransportConfig{Type: "postmark", Settings: map[string]any{"api_key": "k"}},
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("AuthNone+RequireTLS=false should validate, got: %v", err)
+	}
+}
+
+// TestListenerConfig_AuthNone_RequireTLS_StillNeedsCert keeps the
+// existing TLS gate intact when the operator explicitly opts into TLS
+// even without auth.
+func TestListenerConfig_AuthNone_RequireTLS_StillNeedsCert(t *testing.T) {
+	c := ListenerConfig{
+		Listen:         ":2525",
+		AllowedSenders: []string{"*@example.com"},
+		AuthRequired:   AuthNone,
+		RequireTLS:     true,
+		Transport:      config.TransportConfig{Type: "postmark", Settings: map[string]any{"api_key": "k"}},
+	}
+	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "tls_cert") {
+		t.Errorf("AuthNone+RequireTLS=true should still require cert; got: %v", err)
+	}
+}
+
+// TestListenerConfig_AuthRequired_UnknownValue_HintsAtNone confirms the
+// error string surfaces the new `"none"` option so operators landing on
+// it have somewhere to look.
+func TestListenerConfig_AuthRequired_UnknownValue_HintsAtNone(t *testing.T) {
+	c := ListenerConfig{
+		Listen:         ":2525",
+		AllowedSenders: []string{"*@example.com"},
+		AuthRequired:   AuthMode("nonsense"),
+		Transport:      config.TransportConfig{Type: "postmark", Settings: map[string]any{"api_key": "k"}},
+	}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("expected validate error for nonsense auth_required")
+	}
+	if !strings.Contains(err.Error(), `"none"`) {
+		t.Errorf("validate error should mention \"none\" as a valid option; got: %v", err)
+	}
+}
+
+// TestSMTP_AuthNone_HappyPath_DeliversMessage exercises the wire flow
+// for an internal-network deployment: client connects, no AUTH needed,
+// MAIL/RCPT/DATA flows directly. The sender allowlist is the only
+// ingress gate.
+func TestSMTP_AuthNone_HappyPath_DeliversMessage(t *testing.T) {
+	cfg := baseTestConfig()
+	cfg.AuthRequired = AuthNone
+	cfg.RequireTLS = false
+	cfg.SMTPUsers = nil // not needed in AuthNone mode
+	f := startListener(t, cfg)
+	tp := f.dial()
+
+	_ = tp.PrintfLine("EHLO client.test")
+	expectMultiline(t, tp, 250)
+
+	// No AUTH command — go straight to MAIL.
+	_ = tp.PrintfLine("MAIL FROM:<svc@example.com>")
+	expect(t, tp, 250)
+	_ = tp.PrintfLine("RCPT TO:<dest@yourdomain.com>")
+	expect(t, tp, 250)
+	_ = tp.PrintfLine("DATA")
+	expect(t, tp, 354)
+	dataBody := "From: svc@example.com\r\n" +
+		"Subject: Internal relay test\r\n" +
+		"\r\n" +
+		"Body.\r\n"
+	_ = tp.PrintfLine("%s.", dataBody)
+	expect(t, tp, 250)
+	_ = tp.PrintfLine("QUIT")
+	expect(t, tp, 221)
+
+	waitForSend(t, f.mt, 1, 500*time.Millisecond)
+	if got := len(f.mt.Sent()); got != 1 {
+		t.Errorf("transport.Send calls = %d, want 1 (AuthNone happy path)", got)
+	}
+}
+
+// TestSMTP_AuthNone_SenderAllowlist_StillEnforced confirms the open-relay
+// prevention layer survives even when auth is disabled. AllowedSenders
+// is the only thing standing between the listener and a true open relay
+// in this mode, so the test is load-bearing.
+func TestSMTP_AuthNone_SenderAllowlist_StillEnforced(t *testing.T) {
+	cfg := baseTestConfig()
+	cfg.AuthRequired = AuthNone
+	cfg.RequireTLS = false
+	cfg.SMTPUsers = nil
+	cfg.AllowedSenders = []string{"*@example.com"} // not "*@evil.com"
+	f := startListener(t, cfg)
+	tp := f.dial()
+
+	_ = tp.PrintfLine("EHLO c")
+	expectMultiline(t, tp, 250)
+
+	_ = tp.PrintfLine("MAIL FROM:<intruder@evil.com>")
+	code, _ := expectCode(t, tp)
+	if code != 550 {
+		t.Errorf("AuthNone with disallowed sender got %d, want 550 (allowlist still enforced)", code)
+	}
+}

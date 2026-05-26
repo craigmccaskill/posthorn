@@ -194,8 +194,8 @@ Optional inbound SMTP ingress. When this block is present, `posthorn serve` star
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `auth_required` | string | no | `"smtp-auth"` | One of `"smtp-auth"`, `"client-cert"`, `"either"`. |
-| `smtp_users` | `[]table` | yes for `smtp-auth` or `either` | — | List of AUTH PLAIN credential pairs. Each entry has `username` (string) and `password` (string; `${env.VAR}` honored). |
+| `auth_required` | string | no | `"smtp-auth"` | One of `"smtp-auth"`, `"client-cert"`, `"either"`, or `"none"`. See the [internal-SMTP-relay recipe](/recipes/internal-smtp-relay/) for when `"none"` is appropriate (private Docker network only — the sender allowlist becomes the only ingress gate). |
+| `smtp_users` | `[]table` | yes for `smtp-auth` or `either` | — | List of AUTH PLAIN credential pairs. Each entry has `username` (string) and `password` (string; `${env.VAR}` honored). Not used in `"none"` mode. |
 | `client_cert_ca` | string | yes for `client-cert` or `either` | — | Path to a PEM-encoded CA bundle. Client certs signed by this CA are accepted. |
 
 ### Allowlists

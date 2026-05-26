@@ -166,10 +166,15 @@ func (s *session) canAdvertiseAuth() bool {
 
 func (s *session) authRequiredAndMissing() bool {
 	mode := s.l.cfg.EffectiveAuthMode()
-	if mode == AuthSMTP {
+	switch mode {
+	case AuthNone:
+		// No auth required — the sender allowlist + recipient cap are
+		// the only gates. Only safe on private networks where network
+		// access already implies trust (Docker bridge, loopback).
+		return false
+	case AuthSMTP:
 		return s.authedUser == ""
-	}
-	if mode == AuthClientCert {
+	case AuthClientCert:
 		return !s.authedViaCert
 	}
 	// AuthEither: missing if neither path succeeded.

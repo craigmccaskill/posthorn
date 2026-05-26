@@ -1,0 +1,164 @@
+---
+title: Internal SMTP relay (Docker Compose)
+description: Run Posthorn's SMTP listener on the same Docker network as Remark42, Gitea, Ghost, or any other self-hosted app that speaks SMTP. No TLS cert, no AUTH credentials — the sender allowlist + network isolation do the work.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+You're running [Remark42](https://remark42.com) (or Gitea / Ghost / Mastodon / Authentik / any other self-hosted app that emits SMTP for transactional mail) on the same Docker host as Posthorn. You want Remark42's password resets and comment notifications to flow through Posthorn to your transactional provider. The naïve fix is to set up SMTP AUTH and generate a self-signed TLS cert just so Remark42 will agree to talk to the listener. The better fix is to recognize that **container-to-container traffic on a private Docker network doesn't need TLS or AUTH** — network isolation is already the trust boundary.
+
+**At the end:** Remark42 sends SMTP on `posthorn:2525` over a private Docker network, no TLS, no AUTH credentials, and Posthorn forwards the message via your configured transport (Postmark, Resend, Mailgun, SES). The sender allowlist (`*@yourdomain.com`) is the only ingress gate.
+
+## When this recipe applies
+
+| Situation | Use this recipe? |
+|---|---|
+| Posthorn + app on the same Docker host, on a shared private network | Yes |
+| Posthorn + app on the same host but different networks | Yes (with care that the bridge isn't internet-reachable) |
+| Posthorn on one host, app on another, communicating over the public internet | **No.** Use [API mode](/features/api-mode/) or production SMTP (TLS + AUTH) |
+| Posthorn on Docker, app on the same machine but outside Docker | Yes if you bind to a loopback Docker bridge; otherwise treat as cross-host |
+
+The principle: if network access to Posthorn already implies trust (because the network is private and operator-controlled), the SMTP AUTH layer adds setup work without adding security. The sender allowlist + recipient cap remain in force as the open-relay-prevention gates.
+
+<Aside type="caution" title="Private network only">
+`auth_required = "none"` is only safe when the listener is **not reachable from the public internet**. If you `ports: - "2525:2525"` to a host port that's externally reachable, you've created an open SMTP relay. Either keep the listener purely internal to a Docker network (no `ports:` exposure) OR bind to a loopback address (`127.0.0.1:2525:2525`).
+</Aside>
+
+## Walkthrough
+
+<Steps>
+
+1. **Set up a private Docker network.**
+
+   ```yaml
+   # docker-compose.yml
+   networks:
+     internal:
+       internal: true   # no external connectivity
+   ```
+
+   The `internal: true` flag tells Docker that nothing inside this network has internet egress. That's overkill for some setups; if your apps also need internet (e.g., Remark42 verifying email links via a webhook), use a regular bridge network without that flag and rely on the absence of `ports:` exposure for isolation.
+
+2. **Add Posthorn to the network with the new auth mode.**
+
+   ```yaml
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       networks:
+         - internal
+       # No ports: — only reachable from inside the network.
+   ```
+
+3. **Write `posthorn.toml`.**
+
+   ```toml
+   # Internal SMTP relay for Docker-network apps.
+   [smtp_listener]
+   listen          = ":2525"
+   auth_required   = "none"
+   require_tls     = false
+   allowed_senders = ["*@yourdomain.com"]
+   max_recipients_per_session = 10
+   max_message_size = "1MB"
+
+   [smtp_listener.transport]
+   type = "postmark"
+
+   [smtp_listener.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+   ```
+
+   Note: no `tls_cert`, no `tls_key`, no `[[smtp_listener.smtp_users]]`. The allowlist of senders does the gatekeeping.
+
+4. **Add Remark42 to the same network and point it at Posthorn.**
+
+   ```yaml
+   services:
+     remark42:
+       image: umputun/remark42:latest
+       restart: unless-stopped
+       networks:
+         - internal
+       environment:
+         REMARK_URL: https://comments.yourdomain.com
+         # ... other Remark42 settings ...
+
+         # SMTP relay via Posthorn — no TLS, no AUTH.
+         AUTH_EMAIL_ENABLE:    "true"
+         NOTIFY_TYPE:          "email"
+         NOTIFY_EMAIL_FROM:    "noreply@yourdomain.com"
+         SMTP_HOST:            "posthorn"
+         SMTP_PORT:            "2525"
+         SMTP_TLS:             "false"
+         SMTP_STARTTLS:        "false"
+         # No SMTP_USERNAME, no SMTP_PASSWORD.
+   ```
+
+5. **Start the stack.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   You should see Posthorn register the listener:
+
+   ```json
+   {"msg":"smtp_listener registered","listen":":2525","transport":"postmark","smtp_users":0}
+   ```
+
+   `smtp_users: 0` is correct — there are no users because there's no auth.
+
+6. **Trigger a Remark42 email** (e.g., request a password reset link from the comments admin UI). The Posthorn log should show the session:
+
+   ```json
+   {"msg":"smtp_session_open","session_id":"...","tls":"no"}
+   {"msg":"smtp_submission_sent","session_id":"...","transport_message_id":"..."}
+   {"msg":"smtp_session_close","session_id":"...","reason":"quit"}
+   ```
+
+   The email lands at the recipient via Postmark within seconds.
+
+</Steps>
+
+## Other apps with the same pattern
+
+This recipe extends directly to any app that speaks SMTP and can be configured to skip TLS + AUTH:
+
+| App | SMTP env vars to set |
+|---|---|
+| **Gitea** | `GITEA__mailer__PROTOCOL=smtp`, `GITEA__mailer__SMTP_ADDR=posthorn`, `GITEA__mailer__SMTP_PORT=2525`, `GITEA__mailer__FROM=noreply@yourdomain.com` (no user / password) |
+| **Ghost** | `mail.options.host=posthorn`, `mail.options.port=2525`, `mail.options.secure=false` (no auth) |
+| **Mastodon** | `SMTP_SERVER=posthorn`, `SMTP_PORT=2525`, `SMTP_AUTH_METHOD=none`, `SMTP_OPENSSL_VERIFY_MODE=none`, `SMTP_TLS=false` |
+| **Authentik** | `email.host=posthorn`, `email.port=2525`, `email.use_tls=false` (leave user/password blank) |
+| **Vaultwarden** | `SMTP_HOST=posthorn`, `SMTP_PORT=2525`, `SMTP_SECURITY=off` |
+| **Healthchecks.io** | `EMAIL_HOST=posthorn`, `EMAIL_PORT=2525`, `EMAIL_USE_TLS=False` |
+
+All of them benefit from the same model: one Posthorn config, one set of provider credentials, one place to rotate keys and tail logs. The apps don't need to know which provider Posthorn forwards to.
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `posthorn validate` fails with `tls_cert: required when require_tls=true` | `require_tls = true` is still set | Set `require_tls = false` explicitly (don't rely on absence — `*bool` defaulting prefers TLS) |
+| `MAIL FROM` rejected with `550 5.7.1 Sender not authorized` | The app's configured `From:` doesn't match `allowed_senders` | Add the address (or a `*@domain` wildcard) to `allowed_senders` |
+| Client connects but the listener immediately closes | The app is sending `STARTTLS` and the listener has no cert | Tell the app to skip STARTTLS (the env var differs per app; common name: `SMTP_TLS=false`, `SMTP_STARTTLS=false`, `email.use_tls=false`) |
+| App config has `user` + `password` fields you don't know what to put in | Leave them blank or omit them entirely | The listener doesn't perform AUTH in `auth_required = "none"` mode; the app shouldn't try to send credentials |
+| Posthorn started fine but the app can't connect | Probably a network mismatch — the app isn't on the same Docker network | Check `docker compose config` to confirm both services are in `networks: - internal` |
+
+## Production posture vs. internal posture
+
+This recipe is the **internal posture** — appropriate when Posthorn is on a network where you trust everyone who can reach it. The **production posture** (TLS + AUTH + signed certs) is appropriate when Posthorn is reachable from outside that trust boundary.
+
+The two postures can coexist on different listeners if you need both, but Posthorn v1.0 ships with one `[smtp_listener]` block per process. Run two Posthorn instances if you need a public + internal split, or pick the lower-friction posture (internal) when the deployment shape allows.
+
+## See also
+
+- [SMTP ingress feature page](/features/smtp-ingress/) — the full state machine and config surface
+- [TOML reference](/configuration/reference/#smtp_listener) — every `[smtp_listener]` field
+- [Deploying API mode safely](/deployment/api-mode-deployment/) — the same "don't expose if you don't need to" principle applied to HTTP API mode endpoints
