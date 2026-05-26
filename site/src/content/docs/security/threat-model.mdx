@@ -28,9 +28,10 @@ This page summarizes what Posthorn defends against, what it doesn't, and how eac
 | 8 | Unauthorized API mode submissions | `Authorization: Bearer` constant-time compare against `api_keys` list |
 | 9 | Timing attack against the API-key compare | `crypto/subtle.ConstantTimeCompare` |
 | 10 | Brute-force scan of the API-key space | Per-IP failure budget — 10 failed-auth attempts from one IP within ~1 minute trips the bucket and subsequent failures return 429. Successful auths never consume the budget. |
-| 11 | Duplicate-send from worker retries | Idempotency cache (24h TTL) returns byte-identical replay |
-| 12 | Replay attack via stale idempotency keys | 24h TTL eviction; in-flight collision returns 409 |
-| 13 | Spoofing via leaked API key (per-request `from`) | `from` is endpoint-configured; not overridable per request |
+| 11 | Public exposure of api-mode endpoint to arbitrary internet scanners | **Deployment-layer** defense — bind to loopback / private network for in-VPS callers, or front public endpoints with Cloudflare Tunnel + Access service tokens. See [Deploying API mode safely](/deployment/api-mode-deployment/). Posthorn's in-process defenses (brute-force lockout, rate limit, constant-time compare) cover what reaches the listener; the listener should not be reachable by arbitrary callers in the first place. |
+| 12 | Duplicate-send from worker retries | Idempotency cache (24h TTL) returns byte-identical replay |
+| 13 | Replay attack via stale idempotency keys | 24h TTL eviction; in-flight collision returns 409 |
+| 14 | Spoofing via leaked API key (per-request `from`) | `from` is endpoint-configured; not overridable per request |
 
 ## In scope: SMTP ingress
 

@@ -16,9 +16,17 @@ Why the extra hop?
 
 **At the end:** a Worker that POSTs JSON to `/api/transactional` with `Authorization: Bearer <key>` and `Idempotency-Key: <uuid>`, retries safely on transient failure, and never duplicate-sends.
 
+<Aside type="caution" title="Read this before exposing Posthorn publicly">
+Because the Worker runs on Cloudflare's edge, it needs to reach Posthorn over the public internet. That means your Posthorn endpoint is publicly probeable — Bearer auth + brute-force lockout defend it, but the endpoint itself is reachable by anyone scanning for it.
+
+**Strongly recommended:** put Posthorn behind Cloudflare Tunnel + Cloudflare Access service tokens. Cloudflare authenticates the Worker at the edge before requests reach Posthorn; unauthenticated scanners get rejected by Cloudflare's network. Setup is ~30 minutes and free for personal use.
+
+See **[Deploying API mode safely](/deployment/api-mode-deployment/)** for the full setup walkthrough, the three deployment options ranked by security strength, and the trade-offs. If your callers are on the same VPS as Posthorn (cron jobs, in-VPS workers), you don't need to expose anything publicly at all.
+</Aside>
+
 ## Prerequisites
 
-- Posthorn running at a reachable URL (see [Deployment → Docker](/deployment/docker/) or [Standalone](/deployment/binary/))
+- Posthorn running at a reachable URL (see [Deployment → Docker](/deployment/docker/), [Standalone](/deployment/binary/), or [Deploying API mode safely](/deployment/api-mode-deployment/) for the recommended Cloudflare Tunnel + Access setup)
 - A Postmark account with a verified sender signature ([DNS](/security/dns/))
 - A Cloudflare Worker (or any host that speaks HTTPS)
 

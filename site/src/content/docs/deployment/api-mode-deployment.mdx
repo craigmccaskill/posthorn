@@ -1,0 +1,200 @@
+---
+title: Deploying API mode safely
+description: Where to expose Posthorn's API-mode endpoints, and how to keep them off the public internet when you don't need them there.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+API-mode endpoints (`auth = "api-key"`) are designed for server-to-server callers — workers, cron jobs, internal services. Unlike form-mode endpoints, which are defended by Origin/Referer fail-closed + honeypot + per-IP rate limit (the defenses browser traffic earns), API-mode endpoints don't have a browser-side identity signal. The only authentication is the Bearer token.
+
+That makes **where you expose the API endpoint** as important as the endpoint itself. This page walks through the three common deployment shapes and the security responsibility each entails. Pick the lowest-exposure shape that fits your callers.
+
+## TL;DR
+
+| Shape | Public reachability | Threat surface | Your responsibility |
+|---|---|---|---|
+| **Loopback / private network** (default) | None | Zero outside attackers | Minimal |
+| **Public, Cloudflare Tunnel + Access** | Authenticated callers only | Edge-rejected before reaching Posthorn | Manage the service token in your caller |
+| **Public, Bearer auth only** | Anyone on the internet | Probeable + brute-forceable (Posthorn defends but the surface is real) | Own the public-endpoint hygiene |
+
+## The simplest path: don't expose if you don't need to
+
+If your API-mode callers are **on the same host or network as Posthorn** — a cron job on the same VPS, a backend service in the same Docker network, an internal queue worker — bind Posthorn to loopback or a private network only.
+
+**Loopback bind (single-host):**
+
+```yaml
+# docker-compose.yml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    ports:
+      - "127.0.0.1:8080:8080"   # loopback only; not reachable from outside
+    volumes:
+      - ./posthorn.toml:/etc/posthorn/config.toml:ro
+    env_file: .env
+```
+
+**Private Docker network (multi-container):**
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:latest
+    # No `ports:` exposure — only reachable from within the network.
+    networks:
+      - internal
+    volumes:
+      - ./posthorn.toml:/etc/posthorn/config.toml:ro
+    env_file: .env
+
+  my-worker:
+    image: my-worker:latest
+    networks:
+      - internal
+    environment:
+      POSTHORN_URL: http://posthorn:8080
+      POSTHORN_API_KEY: ${POSTHORN_API_KEY}
+
+networks:
+  internal:
+    internal: true   # no external connectivity at all
+```
+
+With these patterns, **nothing about Posthorn's API surface is reachable from the public internet.** The only attackers are ones already on your host or inside your network — usually nobody.
+
+This is the recommended default for most homelab and indie-developer deployments. If all your callers are on the same VPS, you don't need a public API endpoint.
+
+<Aside type="note">
+The contact-form / form-mode use case is different. Form-mode endpoints **have** to be publicly reachable — the visitor's browser POSTs to them. Run those behind your normal reverse proxy with `allowed_origins` configured. The form-mode defenses are designed for the public-facing case. This page is about API mode specifically.
+</Aside>
+
+## When you need to expose API mode publicly
+
+Cloudflare Workers, GitHub Actions, hosted CI runners, and other off-VPS callers can't reach a private endpoint. For those cases, you need a public path — but you don't have to make it a *fully open* public path.
+
+Three options, ranked by security strength.
+
+### Option 1 (recommended): Cloudflare Tunnel + Cloudflare Access service tokens
+
+The canonical "private API endpoint for my own clients" pattern. Cloudflare authenticates the caller at the edge **before** the request reaches Posthorn. Unauthorized requests are rejected by Cloudflare's network; your VPS never sees them.
+
+**Setup (one-time, ~30 min):**
+
+1. **Install `cloudflared` on your Posthorn VPS** and create a tunnel:
+
+   ```bash
+   cloudflared tunnel create posthorn
+   cloudflared tunnel route dns posthorn posthorn.yourdomain.com
+   ```
+
+2. **Configure the tunnel** to route `posthorn.yourdomain.com` → `http://localhost:8080`:
+
+   ```yaml
+   # ~/.cloudflared/config.yml
+   tunnel: <your-tunnel-id>
+   credentials-file: /root/.cloudflared/<your-tunnel-id>.json
+   ingress:
+     - hostname: posthorn.yourdomain.com
+       service: http://localhost:8080
+     - service: http_status:404
+   ```
+
+3. **In the Cloudflare Zero Trust dashboard**, create an Access application for `posthorn.yourdomain.com`. Set the policy type to **Service Auth** (not the human-identity options). Generate a **service token** — Cloudflare hands you a `Client ID` + `Client Secret` pair.
+
+4. **In your Worker (or other caller)**, send both the service token and Posthorn's Bearer token on every request:
+
+   ```javascript
+   await fetch(`${env.POSTHORN_URL}/api/transactional`, {
+     method: "POST",
+     headers: {
+       // Cloudflare Access — validated at the edge.
+       "CF-Access-Client-Id":     env.CF_ACCESS_CLIENT_ID,
+       "CF-Access-Client-Secret": env.CF_ACCESS_CLIENT_SECRET,
+       // Posthorn Bearer — validated by Posthorn after Cloudflare lets the request through.
+       "Authorization":   `Bearer ${env.POSTHORN_KEY}`,
+       "Content-Type":    "application/json",
+       "Idempotency-Key": crypto.randomUUID(),
+     },
+     body: JSON.stringify({ /* ... */ }),
+   });
+   ```
+
+5. **Posthorn stays bound to loopback.** The tunnel is the only network path in. Posthorn's listener never accepts a connection from anyone except the local `cloudflared` daemon.
+
+**What this gets you:** scanners hitting `posthorn.yourdomain.com` directly get a 403 from Cloudflare's edge. They never reach your VPS, never touch Posthorn's brute-force budget, never appear in your logs. Only requests with a valid service-token pair get proxied through the tunnel to Posthorn — and those still face Posthorn's Bearer auth on top.
+
+**Cost:** free for up to 50 users on Cloudflare Zero Trust. The initial setup is the bulk of the work; once running, it's invisible.
+
+### Option 2: IP allowlist at the reverse proxy
+
+Cloudflare publishes their Workers egress IP ranges. Configure your reverse proxy (Caddy / nginx / Traefik) to only accept connections from those ranges, and rely on Posthorn's Bearer auth for the actual caller authentication.
+
+**Caveats:**
+
+- **All Cloudflare Workers share egress IPs.** This narrows the attack surface to "anyone running a Cloudflare Worker" rather than "anyone on the internet." That's better but not narrow.
+- **No caller authentication at the network layer** — only source-IP filtering. Combined with Bearer auth + brute-force lockout it's defensible, but it's a layered defense rather than a strong one.
+- **You have to maintain the IP list.** Cloudflare publishes updates; you have to pull them. Worse, if you migrate off Cloudflare Workers to a different host, the allowlist has to follow.
+
+```nginx
+# nginx example
+location /api/ {
+    # Cloudflare's published Worker egress ranges (refresh from
+    # https://www.cloudflare.com/ips/ — check periodically).
+    allow 173.245.48.0/20;
+    allow 103.21.244.0/22;
+    # ... more ranges ...
+    deny all;
+
+    proxy_pass http://localhost:8080;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+This option is acceptable for low-stakes deployments where Cloudflare Access feels like overkill. For anything sensitive, prefer Option 1.
+
+### Option 3: Mutual TLS at the reverse proxy
+
+Issue a client certificate per caller (or one shared cert). Require mTLS at your reverse proxy. Configure the Worker (or other caller) to attach the cert via Cloudflare's mTLS feature or equivalent.
+
+This is the strongest option and the most complex setup. If you're considering it, you're probably already at the scale where Cloudflare Access (Option 1) is the more practical answer for less operational overhead.
+
+```
+Caller → presents client cert → reverse proxy validates against CA → proxies to Posthorn
+                                                                       (Posthorn still checks Bearer)
+```
+
+We don't ship a worked example because the configuration is reverse-proxy-specific (Caddy's `client_auth`, nginx's `ssl_client_certificate`, etc.) and not Posthorn-specific. Refer to your reverse proxy's mTLS docs.
+
+## What Posthorn defends against on its own
+
+Even if your endpoint is fully exposed, Posthorn provides these defenses without configuration:
+
+- **Constant-time Bearer auth compare** (`crypto/subtle.ConstantTimeCompare`) — timing analysis cannot enumerate the key set.
+- **Per-IP brute-force lockout** — 10 failed auths from one IP within ~1 minute triggers 429 instead of 401. Refills automatically. Successful auths never consume the budget.
+- **Per-API-key rate limit** — independent buckets per matched key, so one compromised or abused key can't burn the budget for others.
+- **API keys never appear in logs** — failed-auth log lines don't echo the rejected key string. Verified by `crypto/subtle` + sentinel-key tests on every CI build.
+- **Request body size cap** — 1 MB default prevents memory-exhaustion DoS from streamed bodies.
+
+These reduce the impact of a fully-public deployment but don't eliminate the attack surface. The actual elimination happens at the network layer — loopback bind, private network, or zero-trust auth via Cloudflare Access. Posthorn's in-process defenses are the second line, not the first.
+
+## Recommended deployment shape, by use case
+
+| Your callers | Recommended shape |
+|---|---|
+| Only apps on the same VPS (Ghost, Gitea, Mastodon, cron jobs) | Loopback bind. No public exposure. |
+| Apps in the same Docker network | Private Docker network. No public exposure. |
+| One specific off-VPS caller (e.g., a single Cloudflare Worker) | Cloudflare Tunnel + Access service tokens. |
+| Multiple off-VPS callers, infrequent | Cloudflare Tunnel + Access service tokens (still). |
+| A public-facing contact form on a static site | **Use form mode, not API mode.** Origin/Referer fail-closed + honeypot + rate limit are designed for this case. |
+
+The last row is the most important: **don't build a publicly-reachable browser form on an API-mode endpoint.** Form mode is designed for public exposure with the defenses to match. API mode is designed for authenticated server-to-server callers. Choose the mode by use case, not by which one looks more "modern."
+
+## See also
+
+- [Cloudflare Worker recipe](/recipes/cloudflare-worker/) — the canonical off-VPS caller pattern
+- [API mode reference](/features/api-mode/) — Bearer auth, idempotency, brute-force defense
+- [Reverse proxy](/deployment/reverse-proxy/) — Caddy / nginx / Traefik patterns
+- [Threat model](/security/threat-model/) — the security model Posthorn defends against in total

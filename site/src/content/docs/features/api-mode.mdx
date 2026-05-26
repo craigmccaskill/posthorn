@@ -112,6 +112,8 @@ Posthorn tracks failed-auth attempts per client IP. After **10 failed auth attem
 
 The log event is `auth_rate_limited` (INFO level) with `client_ip` set for forensic follow-up. Omitted when `strip_client_ip = true` is configured on the endpoint.
 
+Brute-force lockout is the **in-process** protection. The **network-layer** protection — keeping unauthorized callers from reaching Posthorn at all — is a deployment decision: bind to loopback for in-VPS callers, or front the endpoint with Cloudflare Tunnel + Access service tokens for off-VPS callers like Cloudflare Workers. See [Deploying API mode safely](/deployment/api-mode-deployment/) for the three deployment shapes and how to pick.
+
 ## JSON body shape
 
 The JSON body is a flat object whose keys become template variables. Primitive types coerce automatically:

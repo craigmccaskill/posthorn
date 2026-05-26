@@ -71,6 +71,7 @@ export default defineConfig({
             { label: 'Docker (recommended)', slug: 'deployment/docker' },
             { label: 'Standalone binary', slug: 'deployment/binary' },
             { label: 'Reverse proxy', slug: 'deployment/reverse-proxy' },
+            { label: 'Deploying API mode safely', slug: 'deployment/api-mode-deployment' },
             { label: 'Reading the logs', slug: 'deployment/reading-logs' },
           ],
         },
