@@ -92,6 +92,24 @@ The block is alphabetically sorted by field name for stable output across runs. 
 
 This means you can add new fields to your HTML form without touching the Posthorn config — they show up in the email automatically.
 
+## Reply-To header from a form field
+
+For contact-form-shaped endpoints, the practical win is being able to **hit reply in your mail client and respond directly to the visitor** rather than to your own `noreply@` address. Posthorn handles this automatically: when a submission carries a valid email address in a known form field, that address becomes the `Reply-To:` header on the outbound message.
+
+```toml
+[[endpoints]]
+# ...
+reply_to_email_field = "email"   # default; rarely needs to be set explicitly
+```
+
+How it works:
+
+- `reply_to_email_field` names the form field whose value to use. Default is `email_field` (which itself defaults to `"email"`), so a typical contact form with an `email` field gets this behavior for free.
+- The field's value is validated as a syntactic email address before being used; malformed values are dropped silently and `Reply-To` stays unset.
+- To disable the behavior entirely (e.g., for endpoints where you don't want the submitter's address echoed back), point the field at something that doesn't exist: `reply_to_email_field = "_disabled"`.
+
+The `from` field stays as your sending identity (`noreply@yourdomain.com` or similar); the `to` field is who receives the mail; the `reply_to_email_field` setting controls who a "reply" goes to. Three concerns, three fields.
+
 ## Subject and body validation
 
 Both templates are parsed at config-load time. Syntax errors fail `posthorn validate` (and prevent the listener from starting). A subject template that fails to parse looks like:

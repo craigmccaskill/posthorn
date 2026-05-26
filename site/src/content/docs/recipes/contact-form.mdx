@@ -66,6 +66,10 @@ The canonical Posthorn use case. You have a static site (Astro, Jekyll, Hugo, El
 
    Replace `yourdomain.com` with your actual domain, and `you@yourdomain.com` with where you want the contact mail delivered.
 
+   <Aside type="tip" title="Hit-reply-to-respond">
+   `reply_to_email_field = "email"` is the line that makes "reply" in your mail client go directly to the visitor's address instead of to `noreply@yourdomain.com`. The submitter's email becomes the `Reply-To:` header on every submission that includes a valid email field. Default is the `email_field` value (which itself defaults to `"email"`), so most contact forms get this for free; you only need to set this explicitly when your form's email field has a different name or you want to disable the behavior. Disable by pointing it at a field that doesn't exist (e.g., `reply_to_email_field = "_disabled"`).
+   </Aside>
+
 3. **Write `.env`.**
 
    ```bash
