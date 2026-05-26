@@ -181,8 +181,22 @@ func Load(path string) (*Config, error) {
 	}
 
 	var cfg Config
-	if err := toml.Unmarshal(resolved, &cfg); err != nil {
+	md, err := toml.Decode(string(resolved), &cfg)
+	if err != nil {
 		return nil, fmt.Errorf("config: parse TOML: %w", err)
+	}
+
+	// Reject unknown top-level keys and unknown struct fields. Silent
+	// acceptance of typos (e.g., writing `starttls = true` when the
+	// real field is `require_tls`) is a high-cost foot-gun: the parse
+	// succeeds, the runtime behavior doesn't match the intent, and the
+	// operator only finds out when something downstream fails to work.
+	if undecoded := md.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		return nil, fmt.Errorf("config: unknown field(s) — likely a typo or stale config: %s", strings.Join(keys, ", "))
 	}
 
 	if err := cfg.Validate(); err != nil {

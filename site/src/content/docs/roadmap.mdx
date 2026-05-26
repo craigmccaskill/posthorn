@@ -65,6 +65,13 @@ The architectural shift that unlocks operating Posthorn as a real mail platform:
 
 The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.0 deployments keep working unchanged.
 
+## Smaller items on the queue (v1.0.x / v1.1)
+
+Operator feedback from the v1.0 launch surfaced a few quality-of-life items that don't justify a v2 wait. These ship as patch releases or a 1.1 feature bump:
+
+- **Auto-generate ephemeral self-signed TLS certs** when `require_tls = true` and no `tls_cert`/`tls_key` is provided. For internal-network deployments where TLS-on-the-wire is wanted but certificate file management isn't. Requires explicit startup logging that the cert is ephemeral and not trustworthy for external clients. [Issue #27](https://github.com/craigmccaskill/posthorn/issues/27).
+- **Friendlier validation errors with deployment-pattern hints.** Errors that surface common-config-shape examples ("for internal Docker networks, use auth_required = none; for production, use smtp-auth with require_tls = true"). Polish, but the validation surface is where new operators first encounter Posthorn's mental model. [Issue #28](https://github.com/craigmccaskill/posthorn/issues/28).
+
 ## v3 — speculative
 
 No date. Depends entirely on community traction:

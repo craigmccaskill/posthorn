@@ -747,3 +747,72 @@ func TestSMTPListenerConfig_EffectiveRequireTLS(t *testing.T) {
 		}
 	})
 }
+
+// TestLoad_UnknownField_Rejects pins the strict-field behavior: a typo
+// or stale config key (the canonical case being someone writing
+// `starttls = true` when the real field is `require_tls`) must fail
+// parsing rather than silently render the runtime behavior wrong.
+//
+// Spec: a real user hit this exact case wiring Remark42; the TOML parser
+// silently accepted `starttls` and STARTTLS wasn't actually advertised,
+// leaving the operator to debug runtime behavior with no surfaceable
+// signal. This test prevents the regression class.
+func TestLoad_UnknownField_Rejects(t *testing.T) {
+	t.Run("top-level typo", func(t *testing.T) {
+		// Prefix a stray top-level key. (Must be before any [table]
+		// header — bare keys appended after a table header attach to
+		// that table, and transport.settings is map[string]any which
+		// legitimately catches arbitrary provider-specific keys.)
+		c := "mysterious_setting = true\n" + minimalTOML
+		_, err := loadString(t, c)
+		if err == nil {
+			t.Fatal("expected unknown-field error for stray top-level key")
+		}
+		if !strings.Contains(err.Error(), "unknown field") {
+			t.Errorf("error should mention 'unknown field': %v", err)
+		}
+		if !strings.Contains(err.Error(), "mysterious_setting") {
+			t.Errorf("error should name the offending key: %v", err)
+		}
+	})
+	t.Run("nested typo in smtp_listener", func(t *testing.T) {
+		// `starttls` doesn't exist; the real key is `require_tls`.
+		c := minimalTOML + `
+[smtp_listener]
+listen = ":2525"
+starttls = true
+allowed_senders = ["*@example.com"]
+
+[[smtp_listener.smtp_users]]
+username = "u"
+password = "p"
+
+[smtp_listener.transport]
+type = "postmark"
+
+[smtp_listener.transport.settings]
+api_key = "k"
+`
+		_, err := loadString(t, c)
+		if err == nil {
+			t.Fatal("expected unknown-field error for `starttls`")
+		}
+		if !strings.Contains(err.Error(), "starttls") {
+			t.Errorf("error should name `starttls` as the offending key: %v", err)
+		}
+	})
+	t.Run("typo in endpoint", func(t *testing.T) {
+		// `csrf_secrets` (plural) doesn't exist; the real key is `csrf_secret`.
+		c := strings.Replace(minimalTOML,
+			`body = "Body"`,
+			`body = "Body"`+"\n"+`csrf_secrets = "0123456789abcdef0123456789abcdef"`,
+			1)
+		_, err := loadString(t, c)
+		if err == nil {
+			t.Fatal("expected unknown-field error for `csrf_secrets` (plural typo)")
+		}
+		if !strings.Contains(err.Error(), "csrf_secrets") {
+			t.Errorf("error should name the offending key: %v", err)
+		}
+	})
+}

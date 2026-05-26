@@ -7,28 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_Nothing yet — next entry will become v1.0.2 or v1.1.0._
+_Nothing yet — next entry will become v1.0.1 or v1.1.0._
 
-## [1.0.1] — 2026-05-26
-
-First user feedback from production deployment surfaced two unergonomic gates on the SMTP listener for the most common deployment shape: container-to-container traffic on a private Docker network. This release lowers the friction for that shape without compromising the production-facing one.
-
-### Added
-
-- **`auth_required = "none"` mode on the SMTP listener.** Disables AUTH PLAIN handling entirely for listeners on private/internal networks where network access already implies trust (Docker bridge, loopback). The sender allowlist (`allowed_senders`) and recipient cap remain in force as the only ingress gates — Posthorn refuses to function as an open relay regardless of auth mode. Pairs with `require_tls = false` to skip the TLS cert requirement entirely when the deployment doesn't need on-wire encryption.
-- **New recipe at [/recipes/internal-smtp-relay/](https://posthorn.dev/recipes/internal-smtp-relay/)** walking through the Docker Compose pattern: shared private network, Posthorn with `auth_required = "none"` + `require_tls = false`, application services (Remark42, Gitea, Ghost, Mastodon, Authentik, Vaultwarden, Healthchecks.io) pointing at `posthorn:2525` with no TLS or AUTH credentials. Includes the configuration env-var matrix for each named app.
-- **New docs page at [/deployment/api-mode-deployment/](https://posthorn.dev/deployment/api-mode-deployment/)** covering safe deployment shapes for HTTP api-mode endpoints — when to bind to loopback, how to use Cloudflare Tunnel + Cloudflare Access service tokens for off-VPS callers (recommended), IP allowlist as a weaker alternative, and mTLS as the strongest. Cross-linked from the Cloudflare Worker recipe, the api-mode feature page, and the threat model.
-
-### Changed
-
-- **`smtp_listener.auth_required` validation error now mentions `"none"`** as a valid option and links to the internal-SMTP-relay recipe, so operators landing on the error have somewhere to look.
-
-### Internal
-
-- Test coverage extended to pin both halves of the AuthNone contract: the validation gate (config validates without cert/key when `auth_required = "none"` and `require_tls = false`), and the wire-level behavior (EHLO doesn't advertise AUTH; MAIL/RCPT/DATA proceeds without authentication; sender allowlist still enforced).
-- The `tls_cert` / `tls_key` requirement is now only triggered when `require_tls = true` OR when `auth_required` involves client certificates — `auth_required = "none"` + `require_tls = false` is the documented internal-network path with no cert requirement.
-
-## [1.0.0] — 2026-05-16
+## [1.0.0] — 2026-05-26
 
 Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blocks ship in a single release: form-mode HTTP ingress, API-mode HTTP ingress, multi-transport + operational maturity, and an SMTP listener. Originally sequenced as v1.0 → v1.1 → v1.2 → v1.3 themed releases; consolidated into v1.0 before tag.
 
@@ -36,7 +17,7 @@ Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blo
 
 - HTTP form ingress with multiple independent endpoints per config (FR1, FR2)
 - Postmark HTTP API transport with bespoke ~80-line client (FR3, FR4, ADR-1)
-- Honeypot field, Origin/Referer fail-closed check, max body size, token-bucket rate limit with LRU eviction at 10K IPs (FR5–FR9, NFR4, NFR6)
+- Honeypot field, Origin/Referer fail-closed check, max body size (1 MB safe default; configurable), token-bucket rate limit with LRU eviction at 10K IPs (FR5–FR9, NFR4, NFR6)
 - Required-field and email-format validation returning structured 422 (FR10, FR11)
 - Go `text/template` rendering for subject and body with custom-fields passthrough block (FR12, FR13)
 - JSON responses, content negotiation, `redirect_success` / `redirect_error` (FR14–FR16)
@@ -47,6 +28,7 @@ Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blo
 - Multi-stage Dockerfile producing a distroless static image for `linux/amd64` and `linux/arm64`, published to `ghcr.io/craigmccaskill/posthorn` on tag push (NFR12, NFR13)
 - GitHub Actions CI: `go vet` and `go test -race -count=1`
 - Public documentation site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight)
+- Strict TOML field validation — unknown / misspelled config keys (e.g., `starttls` when the real field is `require_tls`) fail at parse time with a clear error naming the offending key, rather than being silently ignored and producing wrong runtime behavior.
 
 ### Block B — API mode
 
@@ -58,6 +40,7 @@ Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blo
 - New `core/idempotency/` package; new `idempotency_cache_size` endpoint config (default 10000)
 - Per-request `to_override` in api-mode JSON bodies — string or array of email addresses replaces the endpoint's `to` list for the request. Each address validated as syntactic email; empty array or any invalid address returns 422. `from` is intentionally not overridable to prevent spoofing via leaked keys (FR46, ADR-11)
 - API keys configured via `${env.VAR}` are subject to NFR3's "never appear in log output" invariant; tests verify with sentinel-key assertions (NFR21)
+- Per-IP brute-force defense for failed auth: 10 failed attempts from one IP within ~1 minute trip a bucket and subsequent failures return 429 (instead of 401) until the budget refills. Successful auths never consume the budget, so legitimate callers are unaffected. New `auth_rate_limited` log event records the lockout for forensic follow-up.
 
 ### Block C — Multi-transport + operational maturity
 
@@ -80,6 +63,7 @@ Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blo
 - New `core/ingress/` package: minimal `Ingress` interface (Start/Stop/Name); `HTTPIngress` wraps `http.Server` for the v1.0 lifecycle (FR60, FR61, ADR-12)
 - New `core/smtp/` package: TCP listener accepting SMTP from internal clients; full state machine for EHLO/STARTTLS/AUTH/MAIL/RCPT/DATA/QUIT/RSET/NOOP (FR62)
 - SMTP AUTH PLAIN with constant-time password compare; client-cert auth as alternative (`auth_required = "either"`) (FR63)
+- `auth_required = "none"` mode for internal-network deployments where network access already implies trust (Docker bridge, loopback). Disables the AUTH state entirely; the sender allowlist (`allowed_senders`) and recipient cap remain in force as the only ingress gates. Pairs with `require_tls = false` to skip the TLS cert requirement.
 - STARTTLS required by default (`require_tls = true`); rejected before AUTH/MAIL when plaintext (FR67)
 - Sender allowlist (`allowed_senders`, exact-or-`*@domain` syntax) — required, non-empty (FR64)
 - Recipient cap OR allowlist (default cap 10 per session) preventing RCPT bombing (FR65)
@@ -92,6 +76,10 @@ Initial public release. The v1.0 spec is in [`spec/`](./spec/). Four feature blo
 
 - The Caddy v2 adapter module (previously planned as a secondary deployment shape under FR27–FR30 / NFR10 / ADR-6 / ADR-7) was cut before tagging v1.0.0. The single-shape standalone-behind-any-reverse-proxy story keeps the product thesis cleaner and avoids ongoing per-feature carve-outs. Caddy users keep first-class support as a reverse proxy — see [posthorn.dev/deployment/reverse-proxy](https://posthorn.dev/deployment/reverse-proxy/).
 - Batch send API (originally listed as a v1.1 feature) was dropped 2026-05-16 — see [spec/01-project-brief.md](spec/01-project-brief.md) §"Deliberately not on the roadmap" for the reasoning. Reconsidered if a concrete operator workload surfaces with the need.
+
+### Documentation
+
+In addition to the per-feature pages, the site ships five recipes (contact form, newsletter signup, multi-form site, monitoring alerts, transactional email from a Cloudflare Worker, internal SMTP relay for Docker Compose), a [Design principles](https://posthorn.dev/design-principles/) page, a [Reading the logs](https://posthorn.dev/deployment/reading-logs/) ops guide, and a [Deploying API mode safely](https://posthorn.dev/deployment/api-mode-deployment/) guide covering loopback bind, Cloudflare Tunnel + Cloudflare Access service tokens, IP allowlist, and mTLS deployment shapes for API-mode endpoints.
 
 ### Dependencies
 
