@@ -1,0 +1,297 @@
+---
+title: A static Hugo blog with Comentario comments
+description: Wire a Hugo static site's contact form and Comentario's comment-notification emails through one Posthorn instance. Two ingress shapes (HTTP form + internal SMTP), one transactional provider, one config file.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+You're running a [Hugo](https://gohugo.io) static blog and you've added [Comentario](https://comentario.app) to handle comments. Now both pieces of your blog stack need to send email — Hugo's contact form takes visitor submissions, and Comentario sends moderation + notification mail when comments arrive. The naïve fix is to integrate each one with your transactional provider independently (two API keys to manage, two retry policies, two log shapes). The Posthorn fix is to point both at a single Posthorn instance and let it handle the provider integration once.
+
+**At the end:** a Hugo blog with a `/contact/` form that POSTs to Posthorn via HTTP, and Comentario running in Docker on the same host SMTP'ing to Posthorn over a private network. Both flow through one transactional provider (Postmark / Resend / Mailgun / SES) via Posthorn. One config file. One set of credentials. One log stream.
+
+This is the recipe the maintainer uses on their own blog, so the walkthrough reflects a working setup rather than a theoretical one.
+
+## The shape
+
+```text
+┌─────────────────────┐
+│ Hugo static site    │            HTTP form POST
+│ (CDN / static host) │ ────────────────────────────┐
+└─────────────────────┘                              │
+                                                     ▼
+┌──────────────────────────────────────────────────────────────┐
+│  Docker host                                                 │
+│                                                              │
+│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
+│  │  Comentario  │ ───internal────▶  │  Posthorn         │    │
+│  │  (Docker)    │   Docker network  │  - HTTP form ingress
+│  └──────────────┘   posthorn:2525   │  - SMTP listener  │ ──▶ Postmark
+│                                     │    (auth=none)    │
+│                                     └───────────────────┘    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+The Hugo site is static — it deploys to a CDN, Netlify, GitHub Pages, or your own static host. It doesn't run alongside Posthorn. Visitors' browsers POST the contact form across the public internet to Posthorn's HTTP endpoint (which sits behind your reverse proxy).
+
+Comentario IS dynamic — it runs as a container on the same Docker host as Posthorn. It sends comment-notification email by talking SMTP to `posthorn:2525` over an internal Docker network. Posthorn's SMTP listener accepts the connection without TLS or AUTH (the network is private; trust is established at the network layer) and forwards the message via the configured HTTP transport.
+
+## Prerequisites
+
+- A Hugo site you build and deploy (the recipe doesn't care where it's hosted)
+- A Docker host with `docker compose` (where Posthorn + Comentario will live)
+- A transactional mail provider account — Postmark, Resend, Mailgun, or AWS SES — with a verified sending domain
+- A reverse proxy in front of the Docker host (Caddy, nginx, Traefik) that can route `/api/contact` to Posthorn
+
+## Walkthrough
+
+<Steps>
+
+1. **Set up the Docker Compose stack.**
+
+   The key piece is the **private internal network** — Posthorn and Comentario share a Docker network that's not reachable from the public internet, but Posthorn ALSO has a port exposed via your reverse proxy for the HTTP form endpoint.
+
+   ```yaml
+   # docker-compose.yml
+   networks:
+     posthorn-internal:
+       internal: true   # no external connectivity
+
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       networks:
+         - posthorn-internal
+       ports:
+         - "127.0.0.1:8080:8080"  # HTTP — reverse-proxied from your front door
+
+     comentario:
+       image: registry.gitlab.com/comentario/comentario:latest
+       restart: unless-stopped
+       networks:
+         - posthorn-internal
+       depends_on:
+         - posthorn
+       env_file: .env.comentario
+       volumes:
+         - comentario-data:/data
+       # Comentario's own HTTP port for the comment UI/API.
+       ports:
+         - "127.0.0.1:8081:8080"  # adjust to taste
+
+   volumes:
+     comentario-data:
+   ```
+
+   Posthorn binds to **`127.0.0.1:8080`** — the reverse proxy on the host forwards external traffic to it. Posthorn's SMTP listener (port 2525, configured in `posthorn.toml`) is NOT exposed via `ports:` — it's only reachable from within the `posthorn-internal` Docker network, where Comentario lives.
+
+2. **Write `posthorn.toml`.**
+
+   ```toml
+   # ─── HTTP form ingress for the Hugo blog's /contact form ───
+   [[endpoints]]
+   path = "/api/contact"
+   to = ["you@example.com"]
+   from = "Contact Form <noreply@example.com>"
+   honeypot = "_gotcha"
+   allowed_origins = ["https://yourblog.example.com"]
+   required = ["name", "email", "message"]
+   subject = "Contact: {{.name}}"
+   body = """
+   From: {{.name}} <{{.email}}>
+
+   {{.message}}
+   """
+   redirect_success = "/contact/thanks/"
+
+   [endpoints.transport]
+   type = "postmark"
+
+   [endpoints.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+
+   [endpoints.rate_limit]
+   count = 5
+   interval = "1m"
+
+   # ─── SMTP listener for Comentario (and any other in-Docker app) ───
+   [smtp_listener]
+   listen          = ":2525"
+   auth_required   = "none"
+   require_tls     = false
+   allowed_senders = ["*@example.com"]
+   max_recipients_per_session = 10
+   max_message_size = "1MB"
+
+   [smtp_listener.transport]
+   type = "postmark"
+
+   [smtp_listener.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+   ```
+
+   Two ingresses share one transport configuration — the form endpoint and the SMTP listener both forward via the same Postmark API key. Switching providers is a single TOML edit.
+
+   The SMTP listener uses `auth_required = "none"` + `require_tls = false` because it's only reachable from within the `posthorn-internal` Docker network. Open-relay prevention is handled by `allowed_senders` (your domain only) + the recipient cap.
+
+3. **Write `.env`.**
+
+   ```bash
+   POSTMARK_API_KEY=your-postmark-server-token-here
+   ```
+
+   (Or whichever provider you picked. The internal-SMTP-relay recipe has the per-provider transport blocks if you're not using Postmark.)
+
+4. **Write `.env.comentario`.**
+
+   Point Comentario's mail config at Posthorn:
+
+   ```bash
+   COMENTARIO_BASE_URL=https://comments.yourblog.example.com
+
+   # Mail config — Posthorn is the SMTP server.
+   COMENTARIO_EMAIL_FROM=Comments <noreply@example.com>
+   COMENTARIO_SMTP_HOST=posthorn
+   COMENTARIO_SMTP_PORT=2525
+   COMENTARIO_SMTP_USERNAME=
+   COMENTARIO_SMTP_PASSWORD=
+   COMENTARIO_SMTP_ENCRYPTION=none
+
+   # ... other Comentario settings (admin user, secret keys, etc.) ...
+   ```
+
+   `COMENTARIO_SMTP_USERNAME` and `COMENTARIO_SMTP_PASSWORD` are intentionally empty. `COMENTARIO_SMTP_ENCRYPTION=none` tells Comentario to skip STARTTLS. Both align with Posthorn's `auth_required = "none"` + `require_tls = false`.
+
+   The `COMENTARIO_EMAIL_FROM` address must match one of Posthorn's `allowed_senders` patterns (`*@example.com` allows everything on that domain).
+
+5. **Configure your reverse proxy to route `/api/contact` to Posthorn.**
+
+   Caddy example (Caddyfile):
+
+   ```caddy
+   yourblog.example.com {
+       # Static site served from the build output directory.
+       root * /var/www/yourblog
+       file_server
+
+       # Form submissions to Posthorn.
+       reverse_proxy /api/contact http://127.0.0.1:8080
+   }
+
+   # Comentario admin UI / API (subdomain).
+   comments.yourblog.example.com {
+       reverse_proxy http://127.0.0.1:8081
+   }
+   ```
+
+   Adjust hosts to match your DNS. The static-site root could also be a `redir` to a CDN — Caddy doesn't have to serve the static files itself; it just has to handle the `/api/contact` path.
+
+6. **Add the contact form to Hugo.**
+
+   Drop this into a `content/contact.md` (or wherever you put pages):
+
+   ```html
+   <form method="POST" action="/api/contact">
+     <label>
+       Name
+       <input name="name" type="text" required>
+     </label>
+     <label>
+       Email
+       <input name="email" type="email" required>
+     </label>
+     <label>
+       Message
+       <textarea name="message" required></textarea>
+     </label>
+
+     <!-- Honeypot — invisible to humans, irresistible to bots. -->
+     <input type="text" name="_gotcha" tabindex="-1" autocomplete="off"
+            style="position:absolute;left:-9999px" aria-hidden="true">
+
+     <button type="submit">Send</button>
+   </form>
+   ```
+
+   When a visitor submits, the browser POSTs to `/api/contact` on `yourblog.example.com`, Caddy proxies that to Posthorn, Posthorn templates the email and sends via Postmark. On success, the visitor redirects to `/contact/thanks/` (because `redirect_success` is configured on the endpoint).
+
+7. **Embed Comentario into your Hugo pages.**
+
+   This part is Comentario-specific (not Posthorn). The standard Comentario embed is one script tag plus a `<div>` per page:
+
+   ```html
+   <!-- in your Hugo single.html or wherever you want comments -->
+   <div id="comentario"></div>
+   <script defer src="https://comments.yourblog.example.com/comentario.js"></script>
+   ```
+
+   When someone posts a comment, Comentario sends a notification email via the path you wired in steps 2–4: Comentario container → Posthorn (internal Docker network, SMTP on `:2525`) → Postmark → your inbox.
+
+8. **Bring it up and test.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   Posthorn should log both ingresses registered:
+
+   ```json
+   {"msg":"endpoint registered","path":"/api/contact","transport":"postmark","recipients":1}
+   {"msg":"smtp_listener registered","listen":":2525","transport":"postmark","smtp_users":0}
+   {"msg":"http ingress listening","addr":":8080"}
+   {"msg":"smtp ingress listening","addr":":2525"}
+   ```
+
+   `smtp_users: 0` is correct — auth-none mode means no users configured.
+
+   **Test the contact form** by submitting it from your live blog. Watch Posthorn's logs for `submission_sent`. The email arrives at your inbox via Postmark.
+
+   **Test the comment notification** by posting a comment via Comentario's UI. Watch Posthorn's logs for `smtp_session_open` → `smtp_submission_sent`. The email arrives.
+
+   Both go through the same `transport_message_id` shape on the log line, the same retry policy, the same provider account. One credential to rotate if you ever need to.
+
+</Steps>
+
+## Why this beats running each integration independently
+
+The thesis of Posthorn is exactly this stack. Without it:
+
+- Hugo contact form: you'd build a [Formspree](https://formspree.io)-style webhook or POST directly to your provider's API from a Cloudflare Worker / Vercel function (extra hop, extra provider, extra credential)
+- Comentario: you'd configure its built-in SMTP client to talk directly to Postmark's SMTP gateway (separate credential, separate retry policy embedded in Comentario, no unified log)
+
+With Posthorn:
+
+- One API key for the provider (in Posthorn's config)
+- One retry policy (Posthorn's, applied uniformly)
+- One log stream (Posthorn's structured JSON, with `submission_id` threading through every event)
+- Provider migration is one line in `posthorn.toml` — Comentario doesn't need to know, the Hugo contact form doesn't need to know
+
+When Posthorn is down, both surfaces fail in the same way; when Posthorn's logs show a problem, both surfaces are visible. The operational surface area shrinks from "two integrations to maintain" to "one gateway to maintain."
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Contact form POST returns 403 Forbidden | Form's `action` doesn't match `allowed_origins` config, or the Origin header is missing | Add the form's host to `allowed_origins`; check that the form is served over HTTPS so `Origin` is sent |
+| Comentario SMTP shows `connection refused` to posthorn:2525 | Posthorn and Comentario aren't on the same Docker network | Confirm both services list `posthorn-internal` in `networks:` |
+| Comentario sends to plaintext SMTP and Posthorn rejects | `COMENTARIO_SMTP_ENCRYPTION` is set to `tls` or `starttls` | Set it to `none`; the listener doesn't have a TLS cert |
+| Comment notifications work but contact form emails don't (or vice versa) | The reverse proxy isn't forwarding `/api/contact` | Test with `curl -X POST https://yourblog.example.com/api/contact ...`; if it returns 502, the proxy route is missing |
+| Both fail with `From: address not authorized` | `from` address (in either the endpoint config or `COMENTARIO_EMAIL_FROM`) isn't on your `allowed_senders` allowlist | Add it (or use a `*@yourdomain.com` wildcard) |
+| Comentario sends but spam folder | DNS — your sending domain doesn't have SPF / DKIM / DMARC set up | First-day fix; see [DNS](/security/dns/) |
+
+## Wiring a different transport
+
+The recipe above uses Postmark as the transport for both ingresses. Switching to Resend / Mailgun / SES / outbound-SMTP is a TOML edit in two places (the form endpoint's `[endpoints.transport]` and the listener's `[smtp_listener.transport]`). Comentario and the contact form don't notice. See [Transports](/configuration/transports/) for the per-provider config blocks.
+
+You can also use **different transports per ingress** — e.g., Postmark for the high-touch contact form, AWS SES for high-volume comment notifications — by giving them different transport configs. Each ingress has its own block.
+
+## See also
+
+- [Internal SMTP relay](/recipes/internal-smtp-relay/) — the more generic recipe this one specializes; covers Remark42, Gitea, Ghost, Mastodon, Authentik, Vaultwarden, and Healthchecks.io with the same pattern
+- [Contact form on a static site](/recipes/contact-form/) — just the Hugo-side half of this recipe
+- [SMTP ingress](/features/smtp-ingress/) — the full listener feature page

@@ -97,6 +97,7 @@ export default defineConfig({
             { label: 'Monitoring alerts via webhook', slug: 'recipes/monitoring-alerts' },
             { label: 'Transactional email from a Cloudflare Worker', slug: 'recipes/cloudflare-worker' },
             { label: 'Internal SMTP relay (Docker Compose)', slug: 'recipes/internal-smtp-relay' },
+            { label: 'Hugo blog + Comentario comments', slug: 'recipes/hugo-comentario' },
           ],
         },
         {
