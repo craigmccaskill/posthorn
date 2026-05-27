@@ -37,19 +37,6 @@ export default defineConfig({
           href: 'https://github.com/craigmccaskill/posthorn',
         },
       ],
-      head: [
-        {
-          tag: 'meta',
-          attrs: {
-            property: 'og:image',
-            content: 'https://posthorn.dev/og.png',
-          },
-        },
-        {
-          tag: 'meta',
-          attrs: { name: 'twitter:card', content: 'summary_large_image' },
-        },
-      ],
       customCss: ['./src/styles/custom.css'],
       sidebar: [
         {
