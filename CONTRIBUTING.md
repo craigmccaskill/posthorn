@@ -4,20 +4,22 @@ Thanks for your interest. This guide covers what you need to build, test, and co
 
 ## Scope
 
-The v1.0 specification is **locked**. The full requirements live in [`spec/`](./spec/) across three documents:
+The v1.0 specification is shipped. The full requirements live in [`spec/`](./spec/) across three documents:
 
 1. [`spec/01-project-brief.md`](./spec/01-project-brief.md) — problem, users, scope, threat model, risks
 2. [`spec/02-prd.md`](./spec/02-prd.md) — functional and non-functional requirements, epic and story breakdown
 3. [`spec/03-architecture.md`](./spec/03-architecture.md) — file layout, lifecycle, request flow, component design, ADRs
 
-Contributions outside the locked v1.0 scope (SMTP ingress, additional transports beyond Postmark, CSRF tokens, file attachments, webhook transport, SQLite, admin UI) should wait for v1.1+ planning. The canonical "out of scope" list is in [`spec/01-project-brief.md`](./spec/01-project-brief.md) §"MVP Scope > Out of scope". If you're unsure, open an issue before writing code.
+v1.0 covers three ingress shapes (HTTP form, HTTP API with Bearer auth + idempotency, SMTP listener) and five transports (Postmark, Resend, Mailgun, AWS SES, outbound-SMTP relay) plus the operational surface (`/healthz`, `/metrics`, dry-run, CSRF tokens, named `trusted_proxies` presets, IP-stripping).
+
+The next milestone is **v2 — platform features**: persistent storage (SQLite submission log + durable retry queue across restarts), suppression list, lifecycle event callbacks (HMAC-signed webhooks), durable idempotency, RFC 8058 one-click unsubscribe, file attachments, HTML body, multiple outputs per endpoint, multi-tenant SMTP routing. The canonical "deliberately not on the roadmap" list is in [`spec/01-project-brief.md`](./spec/01-project-brief.md). If you're unsure whether a contribution fits, open an issue before writing code.
 
 The architecture doc's [Architectural decisions log](./spec/03-architecture.md#architectural-decisions-log) records the ADRs that pin the structure. To deviate from any of them, update the architecture doc with the new decision and rationale before changing code.
 
 ## Prerequisites
 
 - Go 1.25+
-- A Postmark account for end-to-end testing (a sandbox token is sufficient)
+- An account with at least one of the supported transactional providers for end-to-end testing (Postmark sandbox token, Resend test key, Mailgun sandbox domain, AWS SES sandbox, or a generic outbound-SMTP relay like Mailtrap)
 - Docker (optional, for testing the container deployment)
 
 ## Repository layout
@@ -47,7 +49,7 @@ CI runs `go vet ./...` and `go test -race -count=1 -timeout=2m ./...` on every p
 
 ## End-to-end smoke test
 
-Whenever you touch `core/gateway/`, `core/transport/`, `core/template/`, or `core/config/`, run the [manual end-to-end test](./docs/manual-test.md) against a real Postmark account before opening a PR. The unit tests cover config and pipeline behavior; the manual procedure exercises the full request pipeline through the transport and confirms mail actually delivers.
+Whenever you touch `core/gateway/`, `core/transport/`, `core/template/`, `core/smtp/`, `core/ingress/`, or `core/config/`, run the [manual end-to-end test](./docs/manual-test.md) against a real provider account before opening a PR. The unit tests cover config and pipeline behavior; the manual procedure exercises the full request pipeline through the transport and confirms mail actually delivers. The manual-test doc covers form mode, API mode (Bearer auth + idempotency), and the SMTP listener.
 
 ## Commit conventions
 
@@ -62,7 +64,7 @@ If implementation reveals something the spec missed, update the relevant doc in 
 
 ## Security
 
-This codebase handles untrusted input from public form submissions and credentials for an outbound email API. Security-relevant changes — header construction, API key handling, rate limiting, input validation, fail-closed origin checks — require explicit test coverage per the security NFRs in [`spec/02-prd.md`](./spec/02-prd.md) (NFR1 through NFR4).
+This codebase handles untrusted input from public form submissions, server-to-server callers (API mode), and internal-network SMTP clients, plus credentials for an outbound email provider. Security-relevant changes — header construction, API key handling, rate limiting, input validation, fail-closed origin checks, SMTP envelope vs. MIME header handling, idempotency-key tampering, brute-force lockouts — require explicit test coverage per the security NFRs in [`spec/02-prd.md`](./spec/02-prd.md) (NFR1 through NFR24).
 
 For vulnerability reporting, see [SECURITY.md](./SECURITY.md). **Do not open public GitHub issues for security vulnerabilities.**
 
