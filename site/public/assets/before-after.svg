@@ -55,10 +55,10 @@
     </g>
 
     <g>
-      <path d="M 200 98  C 240 98,  255 210, 290 210" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 174 C 240 174, 260 213, 290 213" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 250 C 240 250, 260 215, 290 215" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 326 C 240 326, 255 220, 290 220" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 98  C 240 98,  260 195, 290 195" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 174 C 240 174, 260 208, 290 208" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 250 C 240 250, 260 220, 290 220" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 326 C 240 326, 260 232, 290 232" class="arrow-ink" marker-end="url(#arrow-ink)"/>
     </g>
 
     <g transform="translate(0, 386)">
@@ -98,12 +98,14 @@
       <text x="300" y="218" text-anchor="middle" class="gateway-text">Posthorn</text>
     </g>
 
-    <!-- Apps → Posthorn -->
+    <!-- Apps → bus bar → Posthorn (four stubs converge, one arrow exits) -->
     <g>
-      <path d="M 200 98  C 220 98,  220 210, 240 210" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 174 C 220 174, 225 213, 240 213" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 250 C 220 250, 225 215, 240 215" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 326 C 220 326, 220 220, 240 220" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 98  L 220 98"  class="arrow-ink"/>
+      <path d="M 200 174 L 220 174" class="arrow-ink"/>
+      <path d="M 200 250 L 220 250" class="arrow-ink"/>
+      <path d="M 200 326 L 220 326" class="arrow-ink"/>
+      <path d="M 220 98  L 220 326" class="arrow-ink"/>
+      <path d="M 220 213 L 240 213" class="arrow-ink" marker-end="url(#arrow-ink)"/>
     </g>
 
     <!-- Posthorn → any provider (brass) -->
