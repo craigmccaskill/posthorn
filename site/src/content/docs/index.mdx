@@ -33,20 +33,24 @@ And on cloud hosts that block outbound SMTP — DigitalOcean, AWS Lightsail, Lin
 
 **Posthorn is the bridge.** One container, one config, one set of credentials. Your apps point at Posthorn. Posthorn talks to your transactional mail provider.
 
-```text
-┌──────────────────┐
-│ Your apps        │
-│ ────────         │      one HTTP / SMTP-net hop
-│ contact form     │
-│ Ghost            │  ──────────────────┐
-│ Gitea            │                    │
-│ Mastodon         │                    ▼
-│ payment worker   │              ┌──────────┐         ┌─────────────┐
-│ launch script    │              │ Posthorn │ ───────▶│  Postmark   │
-└──────────────────┘              └──────────┘   one   │  (or Resend │
-                                                  key  │  Mailgun,   │
-                                                       │  SES, SMTP) │
-                                                       └─────────────┘
+```d2
+direction: right
+
+apps: Your apps {
+  hugo: "Hugo contact form"
+  ghost: Ghost
+  gitea: Gitea
+  mastodon: Mastodon
+  worker: "Payment worker"
+  cron: "Cron script"
+}
+
+posthorn: Posthorn
+
+provider: "Postmark · Resend\nMailgun · AWS SES\nOutbound SMTP"
+
+apps -> posthorn: "HTTP / SMTP"
+posthorn -> provider: "HTTPS\n(one credential)"
 ```
 
 ## What you connect → what you route to
@@ -225,10 +229,6 @@ A few principles that shape every decision. See [Design principles](/design-prin
 - **Config over admin UI.** A single TOML file is the source of truth. Reviewing a config diff is reviewing the system's behavior. No runtime mutation surface.
 - **Bespoke transports, no SDKs.** Three external Go dependencies in the whole module — a TOML parser, a UUID library, an LRU cache. Every transport is ~200-400 lines of focused Go, auditable in an afternoon.
 - **Locked spec, public roadmap.** Every feature traces back to a numbered requirement. No quiet drift between docs and behavior.
-
-## Not related to PostHog
-
-PostHog is product analytics. Posthorn is an email gateway. Similar names, different categories, zero functional overlap.
 
 ## License & status
 
