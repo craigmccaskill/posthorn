@@ -55,10 +55,12 @@
     </g>
 
     <g>
-      <path d="M 200 98  C 240 98,  260 195, 290 195" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 174 C 240 174, 260 208, 290 208" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 250 C 240 250, 260 220, 290 220" class="arrow-ink" marker-end="url(#arrow-ink)"/>
-      <path d="M 200 326 C 240 326, 260 232, 290 232" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 98  L 240 98"  class="arrow-ink"/>
+      <path d="M 200 174 L 240 174" class="arrow-ink"/>
+      <path d="M 200 250 L 240 250" class="arrow-ink"/>
+      <path d="M 200 326 L 240 326" class="arrow-ink"/>
+      <path d="M 240 98  L 240 326" class="arrow-ink"/>
+      <path d="M 240 213 L 290 213" class="arrow-ink" marker-end="url(#arrow-ink)"/>
     </g>
 
     <g transform="translate(0, 386)">
