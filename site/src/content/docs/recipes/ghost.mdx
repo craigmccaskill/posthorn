@@ -9,10 +9,6 @@ You're running [Ghost](https://ghost.org) for self-hosted publishing. Ghost emit
 
 **At the end:** Ghost runs alongside its database (MySQL or SQLite) and Posthorn on the same Docker host. Ghost's mail config points at `posthorn:2525` over a private internal network (no TLS, no AUTH). Posthorn forwards via the configured HTTP transport to Postmark, Resend, Mailgun, or SES.
 
-<Aside type="note" title="Stub recipe">
-TODO: This recipe is a stub. The structure and env-var skeleton below are accurate enough to follow, but the walkthrough body needs validation against a live Ghost install before the recipe is considered complete. PRs welcome.
-</Aside>
-
 ## The shape
 
 ```text
@@ -33,7 +29,7 @@ TODO: This recipe is a stub. The structure and env-var skeleton below are accura
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Same shape as the [Umami](/recipes/umami/) recipe with Ghost in Umami's slot. The host-level outbound SMTP block is irrelevant because Posthorn's egress is HTTPS to the provider, not SMTP.
+Ghost's web UI is reachable via your reverse proxy (loopback-bound). Ghost's outbound mail never leaves the `posthorn-internal` Docker network until Posthorn forwards it over HTTP. The host-level SMTP block is irrelevant because Posthorn talks HTTPS to the provider, not SMTP.
 
 ## Prerequisites
 
@@ -48,7 +44,7 @@ Same shape as the [Umami](/recipes/umami/) recipe with Ghost in Umami's slot. Th
 
 1. **Set up the Docker Compose stack.**
 
-   TODO: validate against a current Ghost release. Skeleton below.
+   Three services on a private Docker network: Ghost, MySQL, and Posthorn. Ghost's HTTP port and Posthorn's HTTP port are loopback-bound for reverse-proxy access. Posthorn's SMTP listener is NOT exposed via `ports:`; it's only reachable from inside `posthorn-internal`.
 
    ```yaml
    # docker-compose.yml
@@ -123,7 +119,7 @@ Same shape as the [Umami](/recipes/umami/) recipe with Ghost in Umami's slot. Th
    # mail__options__auth__user and mail__options__auth__pass intentionally omitted.
    ```
 
-   TODO: verify `ignoreTLS=true` is the correct nodemailer flag for "don't STARTTLS even if the server advertises it." Some Ghost versions use `mail__options__requireTLS=false` instead; pin against your Ghost version.
+   `mail__options__ignoreTLS=true` tells nodemailer to skip STARTTLS even if the listener advertises it. `mail__options__secure=false` ensures Ghost doesn't attempt direct TLS on connect. Together they keep the connection plaintext, which is what Posthorn's listener expects on `auth_required = "none"`.
 
    `mail__from` must match one of the patterns in Posthorn's `allowed_senders` allowlist.
 
@@ -154,9 +150,20 @@ Same shape as the [Umami](/recipes/umami/) recipe with Ghost in Umami's slot. Th
    docker compose logs -f posthorn
    ```
 
-   In Ghost's admin (Settings, Email newsletter, or Settings, Members and subscriptions), trigger any action that emits mail: create a new member with an email address you control, request a password reset, or send a newsletter test. Watch Posthorn's logs for `smtp_session_open` and `submission_sent`.
+   Posthorn should log the listener registered:
 
-   TODO: name the specific Ghost UI paths verified against a current version.
+   ```json
+   {"msg":"smtp_listener registered","listen":":2525","transport":"postmark","smtp_users":0}
+   {"msg":"smtp ingress listening","addr":":2525"}
+   ```
+
+   To exercise the path end-to-end, open Ghost Admin and trigger any action that emits mail: invite a new staff user from **Settings**, **Staff** (sends a staff-invitation email), or create a member from **Members** and send them an invite. Watch Posthorn's logs:
+
+   ```bash
+   docker compose logs -f posthorn | grep -E 'smtp_|submission_'
+   ```
+
+   You should see `smtp_session_open`, `smtp_data_received`, then `submission_sent` with a `transport_message_id` matching the message ID in your provider's dashboard.
 
 </Steps>
 
@@ -175,13 +182,11 @@ Same shape as the [Umami](/recipes/umami/) recipe with Ghost in Umami's slot. Th
 | Ghost's mail times out or hangs | Ghost is trying STARTTLS against Posthorn's plaintext listener | Set `mail__options__ignoreTLS=true` and `mail__options__secure=false`; restart Ghost |
 | Newsletter sends partially succeed then 552 | Message size exceeded `max_message_size` | Raise the limit in `posthorn.toml` (newsletters with embedded images can be 5-15 MB) |
 | Member signup confirmations work but newsletter doesn't | `max_recipients_per_session` cap hit | Raise the cap; newsletters batch many recipients per session |
-| Mail sends but lands in spam | DNS misconfiguration | See [DNS (SPF, DKIM, DMARC)](/security/dns/) |
-
-TODO: validate these against a live Ghost install; the table is structurally correct but the specific failure-mode wording needs confirmation.
+| Mail sends but lands in spam | DNS misconfiguration on your sending domain | See [DNS (SPF, DKIM, DMARC)](/security/dns/) |
 
 ## See also
 
-- [Self-hosted Umami analytics via Posthorn](/recipes/umami/) for the equivalent recipe with the same SMTP-only pattern
+- [Self-hosted Gitea via Posthorn](/recipes/gitea/) for the same SMTP-relay pattern with Gitea's notification flows
 - [Hugo blog + Comentario comments](/recipes/hugo-comentario/) for a related recipe combining HTTP form ingress and SMTP listener
 - [Internal SMTP relay (Docker Compose)](/recipes/internal-smtp-relay/) for the generic pattern this recipe specializes
 - [SMTP ingress](/features/smtp-ingress/) for the full listener feature reference

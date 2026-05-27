@@ -1,0 +1,183 @@
+---
+title: Self-hosted Gitea via Posthorn
+description: Route Gitea's transactional mail (issue notifications, password resets, account activation) through Posthorn's SMTP listener. Sidesteps the cloud-VPS outbound-SMTP block, consolidates credentials with the rest of your stack.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+You're running [Gitea](https://about.gitea.com) for self-hosted Git. Gitea emits SMTP for account activation, password resets, issue and pull request notifications, and admin alerts. On a cloud VPS (DigitalOcean, Lightsail, Linode, Vultr) that blocks outbound SMTP on ports 25, 465, and 587, Gitea can't reach a transactional provider directly. Posthorn's SMTP listener accepts Gitea's connection on a private Docker network and forwards via HTTP to whichever provider you've already chosen.
+
+**At the end:** Gitea runs alongside Posthorn on the same Docker host. Gitea's mailer points at `posthorn:2525` over a private internal network (no TLS, no AUTH). Posthorn forwards via the configured HTTP transport to Postmark, Resend, Mailgun, or SES.
+
+## The shape
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  Docker host                                                 │
+│                                                              │
+│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
+│  │  Gitea       │ ───internal────▶  │  Posthorn         │    │
+│  │  (Docker)    │   Docker network  │  - SMTP listener  │ ──▶ Postmark / Resend
+│  └──────────────┘   posthorn:2525   │    (auth=none)    │     Mailgun / SES
+│                                     └───────────────────┘    │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Gitea's web UI is reachable via your reverse proxy (loopback-bound). Gitea's outbound mail never leaves the `posthorn-internal` Docker network until Posthorn forwards it over HTTP. The host-level SMTP block is irrelevant because Posthorn talks HTTPS to the provider, not SMTP.
+
+## Prerequisites
+
+- A Docker host with `docker compose`
+- A transactional mail provider account (Postmark, Resend, Mailgun, or AWS SES) with a verified sending domain
+- A reverse proxy in front of the Docker host (Caddy, nginx, Traefik) for Gitea's web UI
+
+## Walkthrough
+
+<Steps>
+
+1. **Set up the Docker Compose stack.**
+
+   Gitea + Posthorn on a private Docker network. Gitea's HTTP port and Posthorn's HTTP port are loopback-bound for reverse-proxy access. Posthorn's SMTP listener is NOT exposed via `ports:`; it's only reachable from inside `posthorn-internal`.
+
+   ```yaml
+   # docker-compose.yml
+   networks:
+     posthorn-internal:
+       internal: true   # no external connectivity
+
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       networks:
+         - posthorn-internal
+       ports:
+         - "127.0.0.1:8080:8080"   # Posthorn HTTP, reverse-proxied
+       # SMTP listener (:2525) intentionally NOT exposed via ports.
+
+     gitea:
+       image: gitea/gitea:1
+       restart: unless-stopped
+       depends_on:
+         - posthorn
+       env_file: .env.gitea
+       volumes:
+         - gitea-data:/data
+         - /etc/timezone:/etc/timezone:ro
+         - /etc/localtime:/etc/localtime:ro
+       networks:
+         - posthorn-internal
+       ports:
+         - "127.0.0.1:3000:3000"   # Gitea web UI, reverse-proxied
+         - "127.0.0.1:2222:22"     # SSH for git clone, optional
+
+   volumes:
+     gitea-data:
+   ```
+
+   Gitea ships with SQLite by default; the recipe above uses that. For higher-traffic instances, add a `gitea-db` Postgres service on the same network and set `GITEA__database__DB_TYPE=postgres` plus the connection vars.
+
+2. **Write `.env.gitea`.**
+
+   Gitea reads `app.ini` config keys from environment variables with the `GITEA__section__KEY` pattern (double-underscore separators). Point the mailer at Posthorn:
+
+   ```bash
+   # .env.gitea
+   USER_UID=1000
+   USER_GID=1000
+
+   # Base URL must match your reverse-proxy host.
+   GITEA__server__ROOT_URL=https://git.example.com/
+
+   # Mail config. Posthorn is the SMTP server.
+   GITEA__mailer__ENABLED=true
+   GITEA__mailer__PROTOCOL=smtp
+   GITEA__mailer__SMTP_ADDR=posthorn
+   GITEA__mailer__SMTP_PORT=2525
+   GITEA__mailer__FROM="Gitea <noreply@example.com>"
+   # GITEA__mailer__USER and GITEA__mailer__PASSWD intentionally omitted.
+   ```
+
+   `PROTOCOL=smtp` is the plaintext SMTP mode (no TLS). The other valid values for this field are `smtps`, `smtp+starttls`, `smtp+unix`, `sendmail`, and `dummy`; the recipe uses plain `smtp` because the private Docker network is the trust boundary and Posthorn's listener accepts plaintext + no-auth on that network only.
+
+   `GITEA__mailer__FROM` must match one of the patterns in Posthorn's `allowed_senders` allowlist (configured in the next step). A wildcard like `*@example.com` covers any sender on your domain.
+
+3. **Write `posthorn.toml`.**
+
+   ```toml
+   # SMTP listener for Gitea (and any other in-Docker app).
+   [smtp_listener]
+   listen          = ":2525"
+   auth_required   = "none"
+   require_tls     = false
+   allowed_senders = ["*@example.com"]
+   max_recipients_per_session = 20
+   max_message_size = "2MB"
+
+   [smtp_listener.transport]
+   type = "postmark"
+
+   [smtp_listener.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+   ```
+
+   Add `POSTMARK_API_KEY=...` to your `.env` file. Switching to Resend, Mailgun, or SES is a TOML edit; see [Transports](/configuration/transports/) for the per-provider settings blocks.
+
+   `max_recipients_per_session = 20` is a small bump over the default of 10 because Gitea batches CC recipients on PR notifications when multiple reviewers are assigned. Bump higher if you have large review groups.
+
+   `auth_required = "none"` is safe because the listener has no `ports:` exposure (step 1). Open-relay prevention is handled by `allowed_senders` plus the recipient cap. See [Internal SMTP relay](/recipes/internal-smtp-relay/) for the longer reasoning.
+
+4. **Bring it up and trigger a test.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   Posthorn should log the listener registered:
+
+   ```json
+   {"msg":"smtp_listener registered","listen":":2525","transport":"postmark","smtp_users":0}
+   {"msg":"smtp ingress listening","addr":":2525"}
+   ```
+
+   Gitea has a built-in test-mail action in its admin UI. After completing first-time setup (creating the initial admin account), navigate to **Site Administration**, **Configuration**, and use the **Send Testing Email To** input near the bottom of the page. Watch Posthorn's logs:
+
+   ```bash
+   docker compose logs -f posthorn | grep -E 'smtp_|submission_'
+   ```
+
+   You should see `smtp_session_open`, `smtp_data_received`, then `submission_sent` with a `transport_message_id` matching the message ID in your provider's dashboard.
+
+   For an end-to-end test of the real flows, open an issue on a test repo and `@`-mention a different user who has email notifications enabled; or trigger a password reset from the login page.
+
+</Steps>
+
+## Why this beats Gitea's direct SMTP
+
+- **Sidesteps cloud-VPS port blocks.** Gitea talking SMTP to a container on a loopback Docker network never traverses the host's outbound stack, so blocks on 25, 465, 587 don't apply. Posthorn's egress is HTTPS.
+- **One credential.** The Postmark, Resend, Mailgun, or SES key lives in Posthorn's `.env`, not Gitea's. Rotating is a single Posthorn restart; Gitea doesn't know it changed.
+- **One log stream.** Account activations, password resets, and PR/issue notifications flow through Posthorn's structured JSON, alongside any other app (Comentario, Ghost) on the same listener.
+- **Provider migration without touching Gitea.** Switching from Postmark to Resend is a TOML edit on the Posthorn side. Gitea still talks SMTP to `posthorn:2525`.
+
+## Gotchas
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `connection refused` from Gitea to `posthorn:2525` | Services aren't on the same Docker network | Confirm both `gitea` and `posthorn` list `posthorn-internal` under `networks:` |
+| Gitea logs `530 5.7.0 Must issue a STARTTLS command first` | Gitea was set to `PROTOCOL=smtp+starttls` against Posthorn's no-TLS listener | Set `GITEA__mailer__PROTOCOL=smtp` (plain) and restart |
+| Gitea sends but Posthorn rejects with `sender not allowed` | `GITEA__mailer__FROM` address isn't on `allowed_senders` | Add the sender (or use a `*@example.com` wildcard) |
+| PR notifications work but emails to specific users don't | The user's notification preferences have email disabled, or the email field is empty | Check the user's notification settings page; verify the email field has a verified address |
+| Test mail works but real notifications never arrive | Gitea's mailer queue may be paused after a startup error | Restart Gitea; check `gitea` container logs for `mailer` events on boot |
+| Mail sends but lands in spam | DNS misconfiguration on your sending domain | See [DNS (SPF, DKIM, DMARC)](/security/dns/); first-time gotcha for almost every new sending domain |
+
+## See also
+
+- [Self-hosted Ghost via Posthorn](/recipes/ghost/) for the same SMTP-relay pattern with Ghost's member-mail flows
+- [Hugo blog + Comentario comments](/recipes/hugo-comentario/) for a related recipe combining HTTP form ingress and SMTP listener
+- [Internal SMTP relay (Docker Compose)](/recipes/internal-smtp-relay/) for the generic pattern this recipe specializes
+- [SMTP ingress](/features/smtp-ingress/) for the full listener feature reference
