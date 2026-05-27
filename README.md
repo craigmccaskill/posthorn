@@ -7,7 +7,7 @@
 
 **The unified outbound mail layer for self-hosted projects.** One gateway between every app you self-host and the transactional mail provider you've already picked. Three ingress shapes (HTTP form, HTTP API, SMTP), five transports (Postmark, Resend, Mailgun, AWS SES, outbound-SMTP relay), single Go binary, single TOML config.
 
-> *Not related to [PostHog](https://posthog.com). PostHog is product analytics. Posthorn is an email gateway. Different categories, zero functional overlap.*
+**Real-world stacks:** [Hugo + Comentario](https://posthorn.dev/recipes/hugo-comentario/) · [Ghost](https://posthorn.dev/recipes/ghost/) · [Gitea](https://posthorn.dev/recipes/gitea/) · [Umami digest cron](https://posthorn.dev/recipes/umami/) · [Cloudflare Worker](https://posthorn.dev/recipes/cloudflare-worker/)
 
 ## Why
 
@@ -42,7 +42,7 @@ The wedge is **the integration layer** between your self-hosted apps and the tra
 
 ## Documentation
 
-**[posthorn.dev](https://posthorn.dev)** — getting started, configuration reference, deployment guides, feature deep-dives, security model, HTTP API reference, FAQ. Five recipes covering contact forms, signup notifications, multi-form sites, monitoring alerts, and transactional email from a Cloudflare Worker.
+**[posthorn.dev](https://posthorn.dev)** — getting started, configuration reference, deployment guides, feature deep-dives, security model, HTTP API reference, FAQ. Ten recipes covering contact forms, newsletter signups, multi-form sites, monitoring alerts, Cloudflare Workers, internal SMTP relay (Docker Compose), and full case studies for Hugo+Comentario, Ghost, Gitea, and self-hosted Umami digests.
 
 For project history and the v1.0 spec, see [`spec/`](./spec/).
 
@@ -217,12 +217,6 @@ git clone https://github.com/craigmccaskill/posthorn
 cd posthorn/core
 go build -o /tmp/posthorn ./cmd/posthorn
 /tmp/posthorn version
-```
-
-Or install directly:
-
-```bash
-go install github.com/craigmccaskill/posthorn/cmd/posthorn@latest
 ```
 
 ## Contributing
