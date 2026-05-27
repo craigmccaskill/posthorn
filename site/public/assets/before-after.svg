@@ -50,17 +50,17 @@
     </g>
 
     <g>
-      <rect x="290" y="184" width="130" height="58" rx="10" class="provider"/>
-      <text x="355" y="218" text-anchor="middle" class="dest-text">Postmark</text>
+      <rect x="290" y="154" width="130" height="118" rx="10" class="provider"/>
+      <text x="355" y="207" text-anchor="middle" class="dest-text">Postmark</text>
+      <text x="355" y="225" text-anchor="middle" class="dest-sub">× 4 integrations</text>
     </g>
 
+    <!-- Four separate Manhattan-routed arrows, each its own integration -->
     <g>
-      <path d="M 200 98  L 240 98"  class="arrow-ink"/>
-      <path d="M 200 174 L 240 174" class="arrow-ink"/>
-      <path d="M 200 250 L 240 250" class="arrow-ink"/>
-      <path d="M 200 326 L 240 326" class="arrow-ink"/>
-      <path d="M 240 98  L 240 326" class="arrow-ink"/>
-      <path d="M 240 213 L 290 213" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 98  L 245 98  L 245 170 L 290 170" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 174 L 255 174 L 255 200 L 290 200" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 250 L 255 250 L 255 226 L 290 226" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 326 L 245 326 L 245 256 L 290 256" class="arrow-ink" marker-end="url(#arrow-ink)"/>
     </g>
 
     <g transform="translate(0, 386)">
