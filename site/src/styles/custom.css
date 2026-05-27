@@ -74,3 +74,32 @@
 .right-sidebar h2 {
   color: var(--sl-color-accent);
 }
+
+/* ─── D2 diagrams: brass-and-ink theme ────────────────────────────
+   astro-d2 emits inline SVGs that ship with their own colour table
+   keyed on classes like .fill-B1, .stroke-B1, .fill-B5, etc. Override
+   them so every diagram on the site reads as warm paper with ink lines
+   and a brass accent, matching the launch-post visual language.
+
+   Selectors use the tag+class form (svg.d2-svg .fill-X) to beat the
+   inline .d2-<hash> .fill-X selectors on specificity without resorting
+   to !important. The result holds in both light and dark page modes
+   because diagrams are intentionally light islands (a docs convention
+   for legibility regardless of OS preference). */
+svg.d2-svg .fill-N7 { fill: #fdfaf3; }   /* page background → paper cream */
+svg.d2-svg .fill-B4 { fill: #ece6d4; }   /* outer container → warm divider */
+svg.d2-svg .fill-B5 { fill: #fdfaf3; }   /* inner node → paper cream */
+svg.d2-svg .fill-B6 { fill: #d4a300; }   /* accent node (provider) → brass */
+svg.d2-svg .fill-B1 { fill: #17181c; }   /* arrowheads → ink */
+svg.d2-svg .stroke-B1 { stroke: #17181c; }  /* shape outlines + edges → ink */
+svg.d2-svg .fill-N1 { fill: #17181c; }   /* primary text → ink */
+svg.d2-svg .fill-N2 { fill: #545861; }   /* edge labels / muted text */
+
+/* Sequence-diagram-specific tweaks. The actor headers + lifelines reuse
+   the same class names; the rules above cover them. Connection lines
+   get a slightly heavier ink so they don't disappear against the cream. */
+svg.d2-svg .connection.stroke-B1 { stroke-width: 1.75; }
+
+/* Mute the streaks/sketch overlays D2 layers on top for texture;
+   they're off-palette for the brass-and-ink look. */
+svg.d2-svg [class*="sketch-overlay-"] { display: none; }

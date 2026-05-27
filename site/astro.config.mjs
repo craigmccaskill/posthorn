@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import d2 from 'astro-d2';
+import caddyfileGrammar from './syntax/caddyfile.tmLanguage.json' with { type: 'json' };
 
 export default defineConfig({
   site: 'https://posthorn.dev',
@@ -17,6 +18,13 @@ export default defineConfig({
       title: 'Posthorn',
       description:
         'The unified outbound mail layer for self-hosted projects. One gateway between your apps and your transactional mail provider — Postmark, Resend, Mailgun, AWS SES, or outbound-SMTP. Three ingress shapes (HTTP form, HTTP API, SMTP). Self-hosted, no mail server required.',
+      expressiveCode: {
+        shiki: {
+          langs: [
+            { ...caddyfileGrammar, aliases: ['caddy'] },
+          ],
+        },
+      },
       logo: {
         src: './src/assets/logo.svg',
         replacesTitle: false,

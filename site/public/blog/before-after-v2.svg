@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 540" role="img" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" aria-labelledby="title desc">
+  <title id="title">The unified outbound mail layer</title>
+  <desc id="desc">Before: four self-hosted apps (Hugo contact form, Comentario, Gitea, weekly digest cron) each carry the burden of converting their native protocol to a transactional provider's HTTP API. After: all four point at Posthorn using their native protocols (HTTP form, HTTP API, SMTP) and Posthorn forwards to any one of five providers.</desc>
+
+  <defs>
+    <marker id="arrow-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#17181c"/>
+    </marker>
+    <marker id="arrow-brass" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#d4a300"/>
+    </marker>
+  </defs>
+
+  <style>
+    .panel-title  { font-size: 18px; font-weight: 700; fill: #17181c; }
+    .panel-sub    { font-size: 12px; fill: #545861; font-style: italic; }
+    .app-text     { font-size: 14px; fill: #17181c; font-weight: 600; }
+    .app-sub      { font-size: 11px; fill: #545861; }
+    .dest-text    { font-size: 14px; font-weight: 700; fill: #17181c; }
+    .dest-sub     { font-size: 11px; fill: #17181c; }
+    .footnote     { font-size: 12px; fill: #545861; }
+    .edge-label   { font-size: 11px; fill: #545861; font-style: italic; }
+    .ingress-tag  { font-size: 10px; fill: #545861; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+    .divider      { stroke: #ece6d4; stroke-width: 1; }
+    .app-box      { fill: #fdfaf3; stroke: #17181c; stroke-width: 1.5; }
+    .provider     { fill: #d4a300; stroke: #17181c; stroke-width: 2; }
+    .gateway      { fill: #17181c; stroke: #d4a300; stroke-width: 2; }
+    .gateway-text { font-size: 16px; font-weight: 700; fill: #fdfaf3; letter-spacing: 0.02em; }
+    .gateway-sub  { font-size: 10px; fill: #d4a300; letter-spacing: 0.06em; text-transform: uppercase; }
+    .arrow-ink    { stroke: #17181c; stroke-width: 1.4; fill: none; }
+    .arrow-brass  { stroke: #d4a300; stroke-width: 2.5; fill: none; }
+    .arrow-dim    { stroke: #888b96; stroke-width: 1; fill: none; stroke-dasharray: 2 2; }
+  </style>
+
+  <!-- ─────────────────────── BEFORE PANEL ─────────────────────── -->
+  <g transform="translate(0,0)">
+    <text x="240" y="28" class="panel-title" text-anchor="middle">Before</text>
+    <text x="240" y="46" class="panel-sub"   text-anchor="middle">every app reinvents the integration</text>
+
+    <!-- App boxes -->
+    <g>
+      <rect x="20" y="76" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="100" text-anchor="middle" class="app-text">Hugo contact form</text>
+      <text x="110" y="118" text-anchor="middle" class="app-sub">static site · HTTP form</text>
+
+      <rect x="20" y="156" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="180" text-anchor="middle" class="app-text">Comentario</text>
+      <text x="110" y="198" text-anchor="middle" class="app-sub">Docker · SMTP</text>
+
+      <rect x="20" y="236" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="260" text-anchor="middle" class="app-text">Gitea</text>
+      <text x="110" y="278" text-anchor="middle" class="app-sub">VPS · SMTP</text>
+
+      <rect x="20" y="316" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="340" text-anchor="middle" class="app-text">Weekly digest cron</text>
+      <text x="110" y="358" text-anchor="middle" class="app-sub">VPS · HTTP API</text>
+    </g>
+
+    <!-- Each app sprouts its OWN integration glue. Arrows wobble into Postmark. -->
+    <g>
+      <path d="M 200 105 C 270 105, 280 220, 320 222" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 185 C 270 185, 285 222, 320 225" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 265 C 270 265, 285 226, 320 228" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 345 C 270 345, 280 232, 320 232" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+
+      <!-- Per-arrow conversion labels showing the work each app duplicates -->
+      <text x="245" y="98"  class="edge-label">→ converts HTTP form → Postmark API</text>
+      <text x="245" y="178" class="edge-label">→ converts SMTP → Postmark API</text>
+      <text x="245" y="294" class="edge-label">→ converts SMTP → Postmark API</text>
+      <text x="245" y="374" class="edge-label">→ writes Postmark API calls by hand</text>
+    </g>
+
+    <!-- Postmark destination -->
+    <g>
+      <rect x="320" y="198" width="140" height="58" rx="10" class="provider"/>
+      <text x="390" y="225" text-anchor="middle" class="dest-text">Postmark</text>
+      <text x="390" y="244" text-anchor="middle" class="dest-sub">(HTTP API)</text>
+    </g>
+
+    <!-- Footnote -->
+    <g transform="translate(0, 432)">
+      <text x="240" y="0"  text-anchor="middle" class="footnote">Four credentials to rotate.</text>
+      <text x="240" y="20" text-anchor="middle" class="footnote">Four retry policies. Four log shapes.</text>
+      <text x="240" y="40" text-anchor="middle" class="footnote">Four mental models of “what does a 429 mean?”</text>
+    </g>
+  </g>
+
+  <!-- Vertical divider between panels -->
+  <line x1="510" y1="20" x2="510" y2="520" class="divider"/>
+
+  <!-- ─────────────────────── AFTER PANEL ─────────────────────── -->
+  <g transform="translate(520, 0)">
+    <text x="240" y="28" class="panel-title" text-anchor="middle">After</text>
+    <text x="240" y="46" class="panel-sub"   text-anchor="middle">apps speak their native protocol; Posthorn does the rest</text>
+
+    <!-- App boxes -->
+    <g>
+      <rect x="20" y="76" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="100" text-anchor="middle" class="app-text">Hugo contact form</text>
+      <text x="110" y="118" text-anchor="middle" class="app-sub">static site · HTTP form</text>
+
+      <rect x="20" y="156" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="180" text-anchor="middle" class="app-text">Comentario</text>
+      <text x="110" y="198" text-anchor="middle" class="app-sub">Docker · SMTP</text>
+
+      <rect x="20" y="236" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="260" text-anchor="middle" class="app-text">Gitea</text>
+      <text x="110" y="278" text-anchor="middle" class="app-sub">VPS · SMTP</text>
+
+      <rect x="20" y="316" width="180" height="58" rx="8" class="app-box"/>
+      <text x="110" y="340" text-anchor="middle" class="app-text">Weekly digest cron</text>
+      <text x="110" y="358" text-anchor="middle" class="app-sub">VPS · HTTP API</text>
+    </g>
+
+    <!-- Apps → Posthorn (ink), each labelled with the actual ingress shape used -->
+    <g>
+      <path d="M 200 105 C 230 105, 240 220, 260 222" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 185 C 230 185, 245 222, 260 225" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 265 C 230 265, 245 226, 260 228" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+      <path d="M 200 345 C 230 345, 240 232, 260 232" class="arrow-ink" marker-end="url(#arrow-ink)"/>
+
+      <!-- Ingress-shape callouts (small caps tags above each arrow) -->
+      <text x="215" y="98"  class="ingress-tag">HTTP form</text>
+      <text x="215" y="178" class="ingress-tag">SMTP listener</text>
+      <text x="215" y="294" class="ingress-tag">SMTP listener</text>
+      <text x="215" y="374" class="ingress-tag">HTTP API</text>
+    </g>
+
+    <!-- Posthorn gateway (the hero) -->
+    <g>
+      <rect x="260" y="190" width="140" height="68" rx="10" class="gateway"/>
+      <text x="330" y="216" text-anchor="middle" class="gateway-text">Posthorn</text>
+      <text x="330" y="240" text-anchor="middle" class="gateway-sub">one gateway</text>
+    </g>
+
+    <!-- Posthorn → provider (brass) -->
+    <g>
+      <rect x="430" y="160" width="130" height="128" rx="10" class="provider"/>
+      <text x="495" y="184" text-anchor="middle" class="dest-text">Any provider</text>
+      <text x="495" y="206" text-anchor="middle" class="dest-sub">Postmark</text>
+      <text x="495" y="222" text-anchor="middle" class="dest-sub">Resend</text>
+      <text x="495" y="238" text-anchor="middle" class="dest-sub">Mailgun</text>
+      <text x="495" y="254" text-anchor="middle" class="dest-sub">AWS SES</text>
+      <text x="495" y="270" text-anchor="middle" class="dest-sub">Outbound SMTP</text>
+
+      <path d="M 400 224 L 430 224" class="arrow-brass" marker-end="url(#arrow-brass)"/>
+    </g>
+
+    <!-- Footnote -->
+    <g transform="translate(0, 432)">
+      <text x="240" y="0"  text-anchor="middle" class="footnote">One credential. One retry policy.</text>
+      <text x="240" y="20" text-anchor="middle" class="footnote">One log stream with submission IDs.</text>
+      <text x="240" y="40" text-anchor="middle" class="footnote">Switch providers with a one-line config change.</text>
+    </g>
+  </g>
+</svg>
