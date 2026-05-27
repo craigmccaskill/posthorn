@@ -11,22 +11,21 @@ You're running [Ghost](https://ghost.org) for self-hosted publishing. Ghost emit
 
 ## The shape
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│  Docker host                                                 │
-│                                                              │
-│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
-│  │  Ghost       │ ───internal────▶  │  Posthorn         │    │
-│  │  (Docker)    │   Docker network  │  - SMTP listener  │ ──▶ Postmark / Resend
-│  └──────┬───────┘   posthorn:2525   │    (auth=none)    │     Mailgun / SES
-│         │                           └───────────────────┘    │
-│         ▼ MySQL                                              │
-│  ┌──────────────┐                                            │
-│  │  ghost-db    │                                            │
-│  │  (MySQL 8)   │                                            │
-│  └──────────────┘                                            │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+```d2
+direction: right
+
+host: Docker host {
+  ghost: Ghost\n(Docker)
+  posthorn: "Posthorn\nSMTP listener (auth=none)"
+  db: "ghost-db\n(MySQL 8)"
+
+  ghost -> posthorn: "SMTP on posthorn:2525\n(internal Docker network)"
+  ghost -> db: MySQL
+}
+
+provider: "Postmark · Resend\nMailgun · SES"
+
+host.posthorn -> provider: HTTPS
 ```
 
 Ghost's web UI is reachable via your reverse proxy (loopback-bound). Ghost's outbound mail never leaves the `posthorn-internal` Docker network until Posthorn forwards it over HTTP. The host-level SMTP block is irrelevant because Posthorn talks HTTPS to the provider, not SMTP.

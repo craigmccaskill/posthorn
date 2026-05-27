@@ -31,21 +31,23 @@ Self-hosted Umami (verified against v3.1.0) does not ship a built-in SMTP client
 
 ## The shape
 
-```text
-┌─────────────────┐     GET /api/auth/login          ┌─────────────┐
-│  cron job       │ ───────────────────────────────▶ │  Umami      │
-│  (host or       │ ◀───  { "token": "..." }  ─────  │  (private)  │
-│   container)    │                                  └─────────────┘
-│                 │
-│                 │     GET /api/websites/{id}/stats
-│                 │ ───  Authorization: Bearer …  ─▶
-│                 │ ◀── { pageviews, visitors, … }
-│                 │
-│                 │     POST /api/weekly-digest      ┌─────────────┐
-│                 │ ───  Authorization: Bearer …  ─▶ │  Posthorn   │
-│                 │     Idempotency-Key: 2026-W22    │  (API mode) │ ──▶ Postmark / Resend
-│                 │ ◀── { "status": "ok", … } ─────  └─────────────┘     Mailgun / SES
-└─────────────────┘
+```d2
+shape: sequence_diagram
+
+cron: "Cron job\n(host or container)"
+umami: Umami
+posthorn: "Posthorn\n(API mode)"
+provider: "Postmark · Resend\nMailgun · SES"
+
+cron -> umami: "POST /api/auth/login"
+umami -> cron: "{ token }"
+
+cron -> umami: "GET /api/websites/{id}/stats\n(Authorization: Bearer)"
+umami -> cron: "{ pageviews, visitors, … }"
+
+cron -> posthorn: "POST /api/weekly-digest\nIdempotency-Key: 2026-W22"
+posthorn -> provider: HTTPS
+posthorn -> cron: "{ status: ok, submission_id }"
 ```
 
 The cron job runs on whatever schedule you want (Monday 8am is the conventional choice). Posthorn's API-mode endpoint authenticates the cron job's request via Bearer token, validates and templates the JSON body, then dispatches the email through whichever transport is configured.

@@ -14,5 +14,8 @@
     "@astrojs/starlight": "^0.39.2",
     "astro": "^6.3.3",
     "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "astro-d2": "^0.10.0"
   }
 }

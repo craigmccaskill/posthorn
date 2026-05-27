@@ -13,23 +13,22 @@ This is the recipe the maintainer uses on their own blog, so the walkthrough ref
 
 ## The shape
 
-```text
-┌─────────────────────┐
-│ Hugo static site    │            HTTP form POST
-│ (CDN / static host) │ ────────────────────────────┐
-└─────────────────────┘                              │
-                                                     ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Docker host                                                 │
-│                                                              │
-│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
-│  │  Comentario  │ ───internal────▶  │  Posthorn         │    │
-│  │  (Docker)    │   Docker network  │  - HTTP form ingress
-│  └──────────────┘   posthorn:2525   │  - SMTP listener  │ ──▶ Postmark
-│                                     │    (auth=none)    │
-│                                     └───────────────────┘    │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+```d2
+direction: right
+
+hugo: "Hugo static site\n(CDN / static host)"
+
+host: Docker host {
+  comentario: "Comentario\n(Docker)"
+  posthorn: "Posthorn\nHTTP form ingress\nSMTP listener (auth=none)"
+
+  comentario -> posthorn: "SMTP on posthorn:2525\n(internal Docker network)"
+}
+
+provider: Postmark
+
+hugo -> host.posthorn: HTTP form POST
+host.posthorn -> provider: HTTPS
 ```
 
 The Hugo site is static — it deploys to a CDN, Netlify, GitHub Pages, or your own static host. It doesn't run alongside Posthorn. Visitors' browsers POST the contact form across the public internet to Posthorn's HTTP endpoint (which sits behind your reverse proxy).

@@ -11,17 +11,18 @@ You're running [Gitea](https://about.gitea.com) for self-hosted Git. Gitea emits
 
 ## The shape
 
-```text
-┌──────────────────────────────────────────────────────────────┐
-│  Docker host                                                 │
-│                                                              │
-│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
-│  │  Gitea       │ ───internal────▶  │  Posthorn         │    │
-│  │  (Docker)    │   Docker network  │  - SMTP listener  │ ──▶ Postmark / Resend
-│  └──────────────┘   posthorn:2525   │    (auth=none)    │     Mailgun / SES
-│                                     └───────────────────┘    │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+```d2
+direction: right
+
+host: Docker host {
+  gitea: Gitea\n(Docker)
+  posthorn: "Posthorn\nSMTP listener (auth=none)"
+  gitea -> posthorn: "SMTP on posthorn:2525\n(internal Docker network)"
+}
+
+provider: "Postmark · Resend\nMailgun · SES"
+
+host.posthorn -> provider: HTTPS
 ```
 
 Gitea's web UI is reachable via your reverse proxy (loopback-bound). Gitea's outbound mail never leaves the `posthorn-internal` Docker network until Posthorn forwards it over HTTP. The host-level SMTP block is irrelevant because Posthorn talks HTTPS to the provider, not SMTP.

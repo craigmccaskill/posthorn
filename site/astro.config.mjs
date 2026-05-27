@@ -1,10 +1,18 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import d2 from 'astro-d2';
 
 export default defineConfig({
   site: 'https://posthorn.dev',
   integrations: [
+    d2({
+      experimental: { useD2js: true },
+      inline: true,
+      layout: 'elk',
+      theme: { default: '0', dark: '200' },
+      pad: 40,
+    }),
     starlight({
       title: 'Posthorn',
       description:

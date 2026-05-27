@@ -1,6 +1,9 @@
 # build output
 dist/
 
+# astro-d2 generated SVGs (rebuilt by the pipeline; not source of truth)
+public/d2/
+
 # generated types
 .astro/
 
