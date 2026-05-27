@@ -98,6 +98,8 @@ export default defineConfig({
             { label: 'Transactional email from a Cloudflare Worker', slug: 'recipes/cloudflare-worker' },
             { label: 'Internal SMTP relay (Docker Compose)', slug: 'recipes/internal-smtp-relay' },
             { label: 'Hugo blog + Comentario comments', slug: 'recipes/hugo-comentario' },
+            { label: 'Self-hosted Umami analytics', slug: 'recipes/umami' },
+            { label: 'Self-hosted Ghost', slug: 'recipes/ghost' },
           ],
         },
         {

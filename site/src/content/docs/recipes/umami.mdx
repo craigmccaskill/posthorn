@@ -1,0 +1,193 @@
+---
+title: Self-hosted Umami analytics via Posthorn
+description: Route Umami's weekly reports and alert notifications through Posthorn's SMTP listener. Sidesteps the cloud-VPS outbound-SMTP block, consolidates the credential and retry policy with the rest of your stack.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+You're running [Umami](https://umami.is) for self-hosted privacy-friendly analytics. Umami sends two kinds of mail: weekly report emails to anyone subscribed, and alert notifications when configured thresholds trip. On a cloud VPS (DigitalOcean, Lightsail, Linode, Vultr) that blocks outbound SMTP on ports 25, 465, and 587, Umami can't reach a mail provider directly. Posthorn's SMTP listener accepts Umami's connection on a private Docker network and relays outbound via HTTP to whichever transactional provider you've already chosen.
+
+**At the end:** Umami runs alongside its Postgres database and Posthorn on the same Docker host. Umami's SMTP config points at `posthorn:2525` over a private internal network (no TLS, no AUTH). Posthorn forwards via the configured HTTP transport to Postmark, Resend, Mailgun, or SES.
+
+## The shape
+
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  Docker host                                                 │
+│                                                              │
+│  ┌──────────────┐    SMTP on        ┌───────────────────┐    │
+│  │  Umami       │ ───internal────▶  │  Posthorn         │    │
+│  │  (Docker)    │   Docker network  │  - SMTP listener  │ ──▶ Postmark / Resend
+│  └──────┬───────┘   posthorn:2525   │    (auth=none)    │     Mailgun / SES
+│         │                           └───────────────────┘    │
+│         ▼ Postgres                                           │
+│  ┌──────────────┐                                            │
+│  │  umami-db    │                                            │
+│  │  (Postgres)  │                                            │
+│  └──────────────┘                                            │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Umami's web UI is reachable via your reverse proxy (loopback-bound, like Posthorn's HTTP). Umami's outbound mail never leaves the `posthorn-internal` Docker network until Posthorn forwards it over HTTP to your provider. The host-level outbound SMTP block on 25/465/587 is irrelevant: Posthorn talks HTTPS to the provider, not SMTP.
+
+## Prerequisites
+
+- A Docker host with `docker compose`
+- A transactional mail provider account (Postmark, Resend, Mailgun, or AWS SES) with a verified sending domain
+- A reverse proxy in front of the Docker host (Caddy, nginx, Traefik) for Umami's web UI
+
+## Walkthrough
+
+<Steps>
+
+1. **Set up the Docker Compose stack.**
+
+   Three services on a private Docker network: Umami, its Postgres database, and Posthorn. Umami's HTTP and Posthorn's HTTP are loopback-bound for reverse-proxy access. Posthorn's SMTP listener is NOT exposed via `ports:`; it's only reachable from inside `posthorn-internal`.
+
+   ```yaml
+   # docker-compose.yml
+   networks:
+     posthorn-internal:
+       internal: true   # no external connectivity
+
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:latest
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       networks:
+         - posthorn-internal
+       ports:
+         - "127.0.0.1:8080:8080"   # Posthorn HTTP, reverse-proxied
+       # SMTP listener (:2525) intentionally NOT exposed via ports.
+
+     umami-db:
+       image: postgres:16-alpine
+       restart: unless-stopped
+       environment:
+         POSTGRES_DB: umami
+         POSTGRES_USER: umami
+         POSTGRES_PASSWORD: ${UMAMI_DB_PASSWORD}
+       volumes:
+         - umami-db-data:/var/lib/postgresql/data
+       networks:
+         - posthorn-internal
+
+     umami:
+       image: ghcr.io/umami-software/umami:postgresql-latest
+       restart: unless-stopped
+       depends_on:
+         - umami-db
+         - posthorn
+       env_file: .env.umami
+       environment:
+         DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD}@umami-db:5432/umami
+         DATABASE_TYPE: postgresql
+       networks:
+         - posthorn-internal
+       ports:
+         - "127.0.0.1:3000:3000"   # Umami web UI, reverse-proxied
+
+   volumes:
+     umami-db-data:
+   ```
+
+   Umami binds to `127.0.0.1:3000`; your reverse proxy fronts it. Posthorn's SMTP listener has no `ports:` entry, so it's only reachable from Umami's container (or anything else on `posthorn-internal`).
+
+2. **Write `.env.umami`.**
+
+   Umami's mail settings live in environment variables. Point them at Posthorn:
+
+   ```bash
+   # .env.umami
+   APP_SECRET=your-long-random-string-here
+
+   # Mail config. Posthorn is the SMTP server.
+   SMTP_HOSTNAME=posthorn
+   SMTP_PORT=2525
+   SMTP_FROM="Umami <noreply@example.com>"
+   # SMTP_USERNAME and SMTP_PASSWORD intentionally omitted.
+   # SMTP_SECURE intentionally omitted (defaults to false / no TLS).
+   ```
+
+   Note Umami uses `SMTP_HOSTNAME`, not `SMTP_HOST`. The auth and TLS vars are left unset because the private Docker network is the trust boundary; Posthorn's listener accepts plaintext + no-auth on that network only.
+
+   `SMTP_FROM` must match one of the patterns in Posthorn's `allowed_senders` allowlist (configured in the next step). A wildcard like `*@example.com` covers any sender on your domain.
+
+3. **Write `posthorn.toml`.**
+
+   ```toml
+   # SMTP listener for Umami (and any other in-Docker app).
+   [smtp_listener]
+   listen          = ":2525"
+   auth_required   = "none"
+   require_tls     = false
+   allowed_senders = ["*@example.com"]
+   max_recipients_per_session = 10
+   max_message_size = "1MB"
+
+   [smtp_listener.transport]
+   type = "postmark"
+
+   [smtp_listener.transport.settings]
+   api_key = "${env.POSTMARK_API_KEY}"
+   ```
+
+   Add `POSTMARK_API_KEY=...` to your `.env` file alongside `UMAMI_DB_PASSWORD`. Switching to Resend, Mailgun, or SES is a TOML edit; see [Transports](/configuration/transports/) for the per-provider settings blocks.
+
+   `auth_required = "none"` is safe here because the listener has no `ports:` exposure (step 1). Open-relay prevention is handled by `allowed_senders` plus the recipient cap. See [Internal SMTP relay](/recipes/internal-smtp-relay/) for the longer reasoning.
+
+4. **Bring it up and trigger a test.**
+
+   ```bash
+   docker compose up -d
+   docker compose logs -f posthorn
+   ```
+
+   Posthorn should log the listener registered and listening:
+
+   ```json
+   {"msg":"smtp_listener registered","listen":":2525","transport":"postmark","smtp_users":0}
+   {"msg":"smtp ingress listening","addr":":2525"}
+   ```
+
+   To exercise the path, configure a report in Umami's UI (Settings, Reports) with your email address as a recipient, then either wait for the scheduled send or trigger it manually if your Umami version exposes a "Send now" or "Test" action. Watch Posthorn's logs for the SMTP session and the resulting `submission_sent` event.
+
+   ```bash
+   docker compose logs -f posthorn | grep -E 'smtp_|submission_'
+   ```
+
+   You should see `smtp_session_open`, `smtp_data_received`, then `submission_sent` with a `transport_message_id` matching the message ID in your provider's dashboard.
+
+</Steps>
+
+## Why this beats Umami's direct SMTP
+
+- **One credential.** The Postmark (or Resend / Mailgun / SES) API key lives in Posthorn's `.env`, not in Umami's environment. Rotating the credential is a single Posthorn restart; Umami doesn't know it changed.
+- **One log stream.** Every Umami report and alert flows through Posthorn's structured JSON logs, alongside any other app (Comentario, Ghost, Gitea) you've pointed at the same listener. Grep one log to debug all outbound mail.
+- **One retry policy.** Posthorn's bounded retry (one immediate, one on 429, hard 10s timeout) applies uniformly. Umami's built-in mailer has its own behavior on transient failures; routing through Posthorn replaces it with the same policy you use everywhere else.
+
+Plus the cloud-VPS angle: Umami talking SMTP to a container on a loopback Docker network never traverses the host's outbound network stack, so DigitalOcean / Lightsail / Linode / Vultr blocks on ports 25, 465, 587 don't apply. Posthorn's egress is HTTPS, which is allowed everywhere.
+
+## Gotchas
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Umami reports never arrive, no Posthorn log entry | Umami env var name mismatch (e.g., `SMTP_HOST` instead of `SMTP_HOSTNAME`) | Umami uses `SMTP_HOSTNAME`. Names have shifted between Umami major versions; pin to a version and verify against the [umami-software/umami](https://github.com/umami-software/umami) source for that tag |
+| Umami reports never arrive, Posthorn logs `auth required but missing` | `SMTP_USERNAME` accidentally set in Umami's env | Unset it. Posthorn's listener is in `auth_required = "none"` mode; passing a username triggers the AUTH path which then fails |
+| Umami sends but Posthorn rejects with `sender not allowed` | `SMTP_FROM` address isn't on `allowed_senders` | Add the sender (or use a `*@example.com` wildcard for the domain) |
+| `connection refused` from Umami to `posthorn:2525` | Services aren't on the same Docker network | Confirm both `umami` and `posthorn` list `posthorn-internal` under `networks:` in `docker-compose.yml` |
+| Umami sends but email lands in spam | DNS misconfiguration on your sending domain | See [DNS (SPF, DKIM, DMARC)](/security/dns/); first-time gotcha for almost every new sending domain |
+
+<Aside type="caution" title="Pin to a Umami version">
+Umami's email feature is fairly new (added in a 2.x point release) and the env var names have shifted between versions. The names in this recipe were valid as of writing; verify against the [umami-software/umami](https://github.com/umami-software/umami) source for the exact tag you're running, especially if you're upgrading from an older 2.x.
+</Aside>
+
+## See also
+
+- [Hugo blog + Comentario comments](/recipes/hugo-comentario/) for the equivalent recipe with a contact form plus a comments service
+- [Internal SMTP relay (Docker Compose)](/recipes/internal-smtp-relay/) for the generic pattern this recipe specializes
+- [SMTP ingress](/features/smtp-ingress/) for the full listener feature reference
