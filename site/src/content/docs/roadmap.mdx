@@ -41,6 +41,21 @@ What you can do today:
 
 [Get started →](/getting-started/quick-start/)
 
+## v1.1 — spam protection
+
+[Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/1)
+
+A focused minor release that stacks additive defenses on top of the v1.0 form-mode protections (honeypot, Origin/Referer fail-closed, rate limit, CSRF). Each item is independently shippable and backwards-compatible — existing configs keep working unchanged. No platform-shape changes, no storage layer required.
+
+- **Multiple honeypot fields** — `honeypot` accepts an array; any field being filled trips rejection. ([#31](https://github.com/craigmccaskill/posthorn/issues/31))
+- **CSRF minimum-age check** — extends the existing CSRF TTL with a floor; bots that POST within milliseconds of token issuance get rejected. ([#32](https://github.com/craigmccaskill/posthorn/issues/32))
+- **Cloudflare Turnstile verification** — optional per-endpoint captcha for high-spam targets; siteverify call before template rendering, byte-identical 200 response on failure. ([#33](https://github.com/craigmccaskill/posthorn/issues/33))
+- **Content-shape validation** — bounded primitives only: `max_links` URL cap and `min_message_length` per-field minimum. Operator-managed regex blocklists are explicitly NOT in scope (slippery slope into spam-filter territory). ([#34](https://github.com/craigmccaskill/posthorn/issues/34))
+- **Operator-provided email-domain blocklist** — points at a file path of disposable-provider domains. Posthorn doesn't bundle a default list (no curated content surface to maintain). ([#35](https://github.com/craigmccaskill/posthorn/issues/35))
+- **Per-day rate-limit cap** — stacks on the existing token bucket; bounds long-running low-rate abuse that paces under the burst limit. ([#36](https://github.com/craigmccaskill/posthorn/issues/36))
+
+Ordering is driven by adoption signal — items that get a second operator request bump up.
+
 ## v2 — platform maturity
 
 [Track on GitHub →](https://github.com/craigmccaskill/posthorn/milestone/3)
