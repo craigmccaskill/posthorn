@@ -24,15 +24,30 @@ These pin the shape of Posthorn across versions and override new feature request
 
 When a feature request or implementation proposal conflicts with one of these, the principle wins. Take it back to spec discussion before changing code.
 
-## Status (as of 2026-05-16, end of day)
+## Status (as of 2026-06-10)
 
-**Phase:** v1.0 release prep complete. All implementation landed. Tag pending two outstanding items: operator validation (External) and tag-day decision (Decision).
+**Phase:** v1.0.0 shipped. Tagged and released 2026-05-26 (GitHub Release + multi-arch GHCR image). Launch landed: 196 stars / 7 forks and the first external feature request ([#30](https://github.com/craigmccaskill/posthorn/issues/30)) as of 2026-06-10. Every commit since the tag is docs/site work. Next milestone: **v1.1 — Spam protection minor** (defined 2026-06-03; [milestone 1](https://github.com/craigmccaskill/posthorn/milestone/1), issues #31–36; no code started). The site's [roadmap page](./site/src/content/docs/roadmap.mdx) is the canonical public roadmap.
+
+**Pre-tag hardening (2026-05-17 → 2026-05-26), after the v1.0 scope freeze:**
+- `redirect_success` / `redirect_error` were configured-but-never-wired in the handler; fixed in `a470328` during the full site audit pass.
+- Pre-launch security pass (`edb6692`): body-size default, brute-force defense on api-mode auth failures, CODEOWNERS.
+- Strict TOML field validation — unknown config keys are now parse errors (`2f75b2e`; the planned v1.0.1 was folded into v1.0.0 pre-tag).
+- SMTP listener: `auth_required = "none"` for internal-network deployments (`4d85643`); STARTTLS default aligned with the marketing claim (`8bfe5bf`).
+- 413 response body now includes the configured limit (`708521b`).
+
+**Operator validation truth (was Story 12.3):** Postmark (2026-05-16) and Resend (2026-05-24, recorded in [docs/manual-test.md](docs/manual-test.md) with DKIM/SPF pass + NFR3 sentinel check) are validated against live accounts. **Mailgun, AWS SES, outbound-SMTP relay, and the SMTP listener shipped without recorded live validation.** Manual-test procedures exist for all of them; this is open operational debt, not closed.
+
+**Issue tracker (groomed, all milestoned):**
+- v1.1 spam minor: #31–36 (multiple honeypots, CSRF min-age, Turnstile, content-shape validation, domain blocklist, per-day rate cap)
+- QoL queue (v1.0.x or v1.1): #27 ephemeral self-signed TLS cert, #28 friendlier validation errors, #29 flatten Go module to repo root for `go install` (conflicts with ADR-2 — decide deliberately)
+- v2 platform: #4, #5, #8, #9, #21–25
+- **#30 (external, amit-tewari, 2026-05-28): sender-driven multi-tenant SMTP routing.** Challenges the roadmap's RCPT-driven framing and touches ADR-13. Treat as spec/roadmap conversation, not code.
 
 **Repo state:** Single Go module at `core/` with 14 packages plus `cmd/posthorn/`:
 - v1.0 originals: `config`, `gateway`, `transport`, `spam`, `ratelimit`, `validate`, `template`, `response`, `log`
 - Added 2026-05-16 (block B+C+D): `idempotency`, `csrf`, `metrics`, `ingress`, `smtp`
 
-Public docs site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight, deployed via GH Pages from `site/`); 41 pages.
+Public docs site at [posthorn.dev](https://posthorn.dev) (Astro + Starlight, deployed via GH Pages from `site/`); grew well past the launch 41 pages with post-launch recipes (Ghost, Gitea, Hugo+Comentario, Umami) and D2 diagrams.
 
 **Major scope expansion (2026-05-16): v1.1 + v1.2 + v1.3 all folded into v1.0.** Originally locked v1.0 scope was form ingress + Postmark transport (Epics 1-7). Through the day's session the scope rescoped twice:
 1. v1.1 amendment (API mode) added Epic 8: API-key auth, JSON ingress, idempotency, `to_override`. FR31-FR46, NFR19-NFR21, ADRs 8-11.
@@ -52,14 +67,7 @@ The "originally v1.x" labels are preserved as block A/B/C/D inside v1.0 for hist
 - ✅ Epic 9 (9.1-9.6) — Transport registry + Resend + Mailgun + SES (bespoke SigV4, ADR-14 tripwire fired and deviation accepted) + outbound-SMTP + per-transport docs pages
 - ✅ Epic 10 (10.1-10.5) — `/healthz` + `/metrics` (hand-rolled Prometheus exposition + Recorder), dry-run, CSRF, `trusted_proxies` presets (`cloudflare` shipped in full; aws-elb/gcp-lb/azure-front-door reserved empty slots), IP-stripping
 - ✅ Epic 11 (11.2-11.8) — `Ingress` interface + HTTPIngress wrapper, SMTP listener (TCP accept loop, full state machine, AUTH PLAIN + client-cert, STARTTLS, sender + recipient allowlists, MIME → `transport.Message` with NFR22 envelope-only invariant, binary integration, docs + manual-test extension)
-- ✅ Epic 12 (12.1-12.2) — doc rescope sweep across PRD/architecture/site/CHANGELOG, README rewrite
-
-**Outstanding (Epic 12 tail):**
-- ⏳ **Story 12.3 — Operator validation** [External]. Manual-test procedures exist for all paths (form mode + API mode + each non-Postmark transport + SMTP ingress) in [docs/manual-test.md](docs/manual-test.md). Needs real provider accounts:
-  - Postmark — already validated 2026-05-16 morning
-  - Resend, Mailgun (US or EU domain), AWS SES (out-of-sandbox), and an SMTP relay (Mailgun SMTP, Mailtrap, or a Postfix smarthost) — not yet validated
-  - SMTP listener validation needs a self-signed cert + `swaks` against a reachable address
-- ⏳ **Story 12.4 — Tag v1.0.0** [Decision]. Operator-owned timing.
+- ✅ Epic 12 (12.1-12.4) — doc rescope sweep, README rewrite, operator validation (partial — see "Operator validation truth" above), v1.0.0 tagged 2026-05-26. **All epics closed.**
 
 **Architecture deviations from original spec (cumulative):**
 - `core/http/` → `core/gateway/` to avoid shadowing stdlib `net/http`.
@@ -76,11 +84,9 @@ The "originally v1.x" labels are preserved as block A/B/C/D inside v1.0 for hist
 
 **Deps in module:** `github.com/BurntSushi/toml`, `github.com/google/uuid`, `github.com/hashicorp/golang-lru/v2`. Three external deps for the whole codebase. Every transport bespoke.
 
-**Launch artifacts in the vault (not in this repo):**
-- [`~/vaults/cmcc/Areas/Blog/Posthorn Launch.md`](~/vaults/cmcc/Areas/Blog/Posthorn Launch.md) — launch blog post, written 2026-05-15 in post-v1.3 tense. After the v1.0=everything-through-v1.3 rescope, this is now publishable as the v1.0 announcement (no rewrite needed; the prose was always describing the full surface).
-- [`~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md`](~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md) — HN Show post draft, awesome-self-hosted PR draft, Docker Hub README, blog cross-posting plan, Reddit, SEO, awesome-postmark check, pre-staged GitHub Release notes. Some pre-staged text was written assuming the v1.x ordering — the HN body in particular may need a pass before posting since it referenced v1.0 = form-only.
+**Launch artifacts in the vault (not in this repo):** launch happened 2026-05-26 around the v1.0.0 release. The blog post ([`~/vaults/cmcc/Areas/Blog/Posthorn Launch.md`](~/vaults/cmcc/Areas/Blog/Posthorn Launch.md)) and distribution playbook ([`~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md`](~/vaults/cmcc/Projects/Posthorn/Distribution playbook.md)) are historical at this point; check the vault for which channels actually fired before reusing any pre-staged text.
 
-**Test count check (as of 2026-05-16):** all packages pass `go vet ./... && go test -race -count=1 ./...` from `core/`. Site builds 41 pages. SMTP package added 21 tests; idempotency package 16 tests; metrics package 14 tests; csrf package 9 tests. Total project test count roughly doubled from morning.
+**Test health (verified 2026-06-10):** all 15 packages pass `go vet ./... && go test -race -count=1 ./...` from `core/`. The `ingress` package has no test files (interface-only, accepted).
 
 ## Read the spec before touching code
 
@@ -96,7 +102,7 @@ The PRD has the canonical FR/NFR list with "must"-level requirements; the archit
 
 These derive from the spec. Do not violate without an explicit conversation that updates the spec first.
 
-1. **Scope is v1.0** (where v1.0 = blocks A + B + C + D, the full scope of the consolidated 2026-05-16 release). Do not implement v2 features: SQLite storage, durable retry queue, suppression list, lifecycle webhooks, HTML body, file attachments, automatic unsubscribe injection, multi-tenant SMTP routing, multiple outputs per endpoint. v3 features (admin UI, proof-of-work, PGP) are even further out.
+1. **Sanctioned scope is shipped v1.0 plus the v1.1 spam-protection minor (issues #31–36) and the QoL queue (#27, #28).** Do not implement v2 features: SQLite storage, durable retry queue, suppression list, lifecycle webhooks, HTML body, file attachments, automatic unsubscribe injection, multi-tenant SMTP routing, multiple outputs per endpoint. v3 features (admin UI, proof-of-work, PGP) are even further out.
 
 2. **Header injection prevention is mandatory (NFR1, NFR2, NFR22).** Submitter-controlled fields **must never** be interpolated as raw strings into email headers, at any layer. Every transport must pass the header-injection test suite (CRLF in name/email/subject/recipients, `\r\nBcc:`, header smuggling). The SMTP listener's specific NFR22 invariant: outbound recipients come from the SMTP envelope (`RCPT TO`), never from inbound MIME `To`/`Cc`/`Bcc` headers. Non-negotiable.
 
