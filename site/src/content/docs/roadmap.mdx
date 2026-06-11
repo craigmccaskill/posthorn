@@ -47,14 +47,23 @@ What you can do today:
 
 A focused minor release that stacks additive defenses on top of the v1.0 form-mode protections (honeypot, Origin/Referer fail-closed, rate limit, CSRF). Each item is independently shippable and backwards-compatible — existing configs keep working unchanged. No platform-shape changes, no storage layer required.
 
-- **Multiple honeypot fields** — `honeypot` accepts an array; any field being filled trips rejection. ([#31](https://github.com/craigmccaskill/posthorn/issues/31))
-- **CSRF minimum-age check** — extends the existing CSRF TTL with a floor; bots that POST within milliseconds of token issuance get rejected. ([#32](https://github.com/craigmccaskill/posthorn/issues/32))
-- **Cloudflare Turnstile verification** — optional per-endpoint captcha for high-spam targets; siteverify call before template rendering, byte-identical 200 response on failure. ([#33](https://github.com/craigmccaskill/posthorn/issues/33))
-- **Content-shape validation** — bounded primitives only: `max_links` URL cap and `min_message_length` per-field minimum. Operator-managed regex blocklists are explicitly NOT in scope (slippery slope into spam-filter territory). ([#34](https://github.com/craigmccaskill/posthorn/issues/34))
-- **Operator-provided email-domain blocklist** — points at a file path of disposable-provider domains. Posthorn doesn't bundle a default list (no curated content surface to maintain). ([#35](https://github.com/craigmccaskill/posthorn/issues/35))
-- **Per-day rate-limit cap** — stacks on the existing token bucket; bounds long-running low-rate abuse that paces under the burst limit. ([#36](https://github.com/craigmccaskill/posthorn/issues/36))
+The order below reflects a concrete, validated workload: live contact-form spam against a production deployment with honeypot + Origin + rate-limit all correctly configured still lands, because form-blaster bots (Xrumer / GSA SER) render the page for a valid `Referer`, skip the empty honeypot, and trickle under the burst cap. The items that actually beat that pattern lead the release; the ones that the observed spam would have walked straight past are deprioritized.
 
-Ordering is driven by adoption signal — items that get a second operator request bump up.
+**Leads the release — beats the observed pattern:**
+
+- **Content-shape validation** — bounded primitives only: `max_links` URL cap and `min_message_length` per-field minimum. The single highest-value item: most form-blaster spam exists to deliver a link, so a URL cap cuts the one element the spam can't omit. (Single-link spam forces `max_links = 0`, which is a content policy, not a bot-blocker — hence the next two items.) Operator-managed regex blocklists are explicitly NOT in scope (slippery slope into spam-filter territory). ([#34](https://github.com/craigmccaskill/posthorn/issues/34))
+- **Reputation-based spam check** — optional StopForumSpam lookup on submitter IP/email before send; fail-open so an outage never blocks legitimate mail. Targets the adversary directly (Xrumer/GSA SER is exactly StopForumSpam's corpus) and, unlike content rules, stops the bot without restricting what humans may write. ([#44](https://github.com/craigmccaskill/posthorn/issues/44))
+- **Proof-of-browser token** — a JS-gated submit token that blocks form-blasters which POST directly without executing JavaScript. No third-party dependency, no UX friction; the cheap rung below Turnstile. ([#45](https://github.com/craigmccaskill/posthorn/issues/45))
+- **Cloudflare Turnstile verification** — optional per-endpoint captcha for high-spam targets; the durable backstop that stops even headless-browser bots. siteverify call before template rendering, byte-identical 200 response on failure. ([#33](https://github.com/craigmccaskill/posthorn/issues/33))
+- **CSRF minimum-age check** — extends the existing CSRF TTL with a floor; bots that POST within milliseconds of token issuance get rejected. ([#32](https://github.com/craigmccaskill/posthorn/issues/32))
+
+**Deprioritized — ships when a real deployment surfaces the matching pattern:**
+
+- **Multiple honeypot fields** — `honeypot` accepts an array; any field being filled trips rejection. Marginal against bots that skip hidden fields entirely. ([#31](https://github.com/craigmccaskill/posthorn/issues/31))
+- **Operator-provided email-domain blocklist** — disposable-provider domains from a file. Deprioritized: the observed spam came from mainstream providers (gmail, gmx, zoho), so a disposable-domain list scored zero against it. ([#35](https://github.com/craigmccaskill/posthorn/issues/35))
+- **Per-day rate-limit cap** — stacks on the existing token bucket for long-running low-rate abuse. Deprioritized: the observed spam is a distributed trickle from varied IPs, which a per-identity daily cap doesn't touch. ([#36](https://github.com/craigmccaskill/posthorn/issues/36))
+
+Ordering reflects validated workload over upvotes — an item that a real deployment proves it needs (or proves it doesn't) moves accordingly.
 
 ## v2 — platform maturity
 
