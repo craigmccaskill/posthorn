@@ -223,7 +223,7 @@ go build -o /tmp/posthorn ./cmd/posthorn
 
 ## Ecosystem
 
-Community-built clients and tools are listed in [docs/ecosystem.md](./docs/ecosystem.md). They are third-party and not endorsed by Posthorn; the HTTP API is a single authenticated JSON POST and needs no client library.
+Posthorn ships no official client SDK; the HTTP API is the supported integration surface and needs no client library. Community-built clients and tools are listed in [docs/ecosystem.md](./docs/ecosystem.md) and are third-party, not endorsed by Posthorn.
 
 ## Contributing
 
