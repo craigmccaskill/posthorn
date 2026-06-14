@@ -68,6 +68,20 @@ This codebase handles untrusted input from public form submissions, server-to-se
 
 For vulnerability reporting, see [SECURITY.md](./SECURITY.md). **Do not open public GitHub issues for security vulnerabilities.**
 
+## Community projects
+
+Third-party clients, libraries, and tools are listed on the [ecosystem page](./docs/ecosystem.md). Listing is a convenience for users, **not an endorsement**. Posthorn does not maintain, continuously review, or vouch for third-party code, and a listed project can ship new versions at any time without review.
+
+To propose a project, open a pull request adding a row to [`docs/ecosystem.md`](./docs/ecosystem.md). To be listed, a project must:
+
+- have a public source repository (the listing links the repository, not a package registry)
+- be released under an [OSI-approved license](https://opensource.org/licenses)
+- work against the current Posthorn release
+- show signs of being maintained (a versioned release and recent activity)
+- use a name that does not imply official status
+
+Clients that handle API keys or other credentials get extra scrutiny, and the listing records the specific version last reviewed.
+
 ## Questions
 
 Open a GitHub issue or start a discussion. For implementation questions, [`spec/03-architecture.md`](./spec/03-architecture.md) is the source of truth; for scoping questions, [`spec/01-project-brief.md`](./spec/01-project-brief.md).
