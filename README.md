@@ -128,6 +128,8 @@ curl -X POST https://posthorn.yourdomain.com/api/transactional \
   }'
 ```
 
+Calling from Python or JavaScript with no dependencies: [docs/calling-posthorn.md](./docs/calling-posthorn.md).
+
 Full walkthrough: [posthorn.dev/recipes/cloudflare-worker](https://posthorn.dev/recipes/cloudflare-worker/).
 
 ## SMTP listener (Ghost / Gitea / Mastodon / Authentik)

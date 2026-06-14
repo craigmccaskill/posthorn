@@ -6,7 +6,7 @@ convenience only. Review the source yourself before using any of them,
 especially since a client handles your API key, and pin a specific version.
 
 Posthorn's HTTP API is a single authenticated JSON POST. You do not need a
-client library to use it (see the API example in the [README](../README.md)).
+client library to use it (see [Calling Posthorn from your app](./calling-posthorn.md)).
 The tools below are conveniences, not requirements.
 
 To propose a project for this list, see the listing criteria in
