@@ -15,6 +15,4 @@ To propose a project for this list, see the listing criteria in
 
 ## Client libraries
 
-| Language | Project | Source | Notes |
-|---|---|---|---|
-| Python | python-posthorn | [monperrus/python-posthorn](https://github.com/monperrus/python-posthorn) | Zero-dependency client for HTTP API mode. Third-party. Last reviewed: v0.5.0 (PyPI). |
+No community client libraries are listed yet. See [CONTRIBUTING](../CONTRIBUTING.md#community-projects) to propose one.
