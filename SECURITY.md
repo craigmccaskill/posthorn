@@ -82,6 +82,7 @@ These are real concerns but they aren't Posthorn vulnerabilities:
 - **Layer 4/7 DDoS**: that's the CDN/reverse-proxy layer's responsibility, not Posthorn's
 - **Spam from many low-rate distributed IPs**: per-IP rate limiting doesn't catch this; coordinated mitigation lands in v3 (proof-of-work / captcha)
 - **Issues in deprecated pre-v1.0 builds**: those aren't supported
+- **Third-party clients and ecosystem tools**: community-built clients, libraries, and tools (listed on the [ecosystem page](./docs/ecosystem.md)) are not maintained or reviewed by Posthorn. Vulnerabilities in them are not Posthorn vulnerabilities; report those to the project's own maintainer. Because such a client typically handles your API key, review its source and pin a specific version before use.
 
 ## Security guarantees Posthorn enforces in code
 
