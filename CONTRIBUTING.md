@@ -82,6 +82,10 @@ To propose a project, open a pull request adding a row to [`docs/ecosystem.md`](
 
 Clients that handle API keys or other credentials get extra scrutiny, and the listing records the specific version last reviewed.
 
+## Naming
+
+"Posthorn" refers to this project. Community packages are welcome to reference it in their names (for example `posthorn-rb` or `go-posthorn`), but please do not name or describe a project in a way that implies it is official or endorsed (for example "Posthorn Official Client", or presenting the project's branding as your own). This keeps it clear to users which code the project maintains and which it does not.
+
 ## Questions
 
 Open a GitHub issue or start a discussion. For implementation questions, [`spec/03-architecture.md`](./spec/03-architecture.md) is the source of truth; for scoping questions, [`spec/01-project-brief.md`](./spec/01-project-brief.md).
