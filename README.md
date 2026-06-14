@@ -219,6 +219,10 @@ go build -o /tmp/posthorn ./cmd/posthorn
 /tmp/posthorn version
 ```
 
+## Ecosystem
+
+Community-built clients and tools are listed in [docs/ecosystem.md](./docs/ecosystem.md). They are third-party and not endorsed by Posthorn; the HTTP API is a single authenticated JSON POST and needs no client library.
+
 ## Contributing
 
 The v1.0 specification is in [`spec/`](./spec/) (brief, PRD, architecture). The architecture doc at [`spec/03-architecture.md`](./spec/03-architecture.md) is the source of truth for design questions.
