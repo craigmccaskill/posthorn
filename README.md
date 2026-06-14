@@ -219,6 +219,10 @@ go build -o /tmp/posthorn ./cmd/posthorn
 /tmp/posthorn version
 ```
 
+## Client libraries
+
+- Python: [python-posthorn](https://pypi.org/project/python-posthorn/) — zero-dependency client for the HTTP API mode
+
 ## Contributing
 
 The v1.0 specification is in [`spec/`](./spec/) (brief, PRD, architecture). The architecture doc at [`spec/03-architecture.md`](./spec/03-architecture.md) is the source of truth for design questions.
