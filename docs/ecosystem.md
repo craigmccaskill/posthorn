@@ -15,4 +15,8 @@ To propose a project for this list, see the listing criteria in
 
 ## Client libraries
 
-No community client libraries are listed yet. See [CONTRIBUTING](../CONTRIBUTING.md#community-projects) to propose one.
+| Project | Language | License | Description |
+| --- | --- | --- | --- |
+| [python-posthorn](https://github.com/monperrus/python-posthorn) | Python | MIT | Zero-dependency client for Posthorn's HTTP API. |
+
+See [CONTRIBUTING](../CONTRIBUTING.md#community-projects) to propose another.
