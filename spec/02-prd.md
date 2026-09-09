@@ -218,7 +218,7 @@ Block C adds the multi-transport surface and operational features that take Post
 
 **FR49.** Posthorn **must** ship an AWS SES HTTP API transport (`type = "ses"`). AWS SigV4 authentication; JSON request body to the SESv2 `SendEmail` endpoint. Required config: `access_key_id`, `secret_access_key`, `region`. Same `ErrorClass` + `MessageID` contract as FR47.
 
-**FR50.** Posthorn **must** ship an outbound-SMTP transport (`type = "smtp"`). STARTTLS-enabled (`require_tls = true` default); SMTP AUTH PLAIN or LOGIN. Required config: `host`, `port`, `username`, `password`. The transport's `SendResult.MessageID` is the SMTP server's response to the final `.` (e.g., `250 OK queued as <id>`); when the upstream doesn't return a parsable ID, MessageID stays empty.
+**FR50.** Posthorn **must** ship an outbound-SMTP transport (`type = "smtp"`). STARTTLS-enabled (`require_tls = true` default); SMTP AUTH PLAIN or LOGIN. Required config: `host`, `port`, `username`, `password`. Optional `hello_hostname` config controls the hostname announced in EHLO/HELO and defaults to `localhost`. The transport's `SendResult.MessageID` is the SMTP server's response to the final `.` (e.g., `250 OK queued as <id>`); when the upstream doesn't return a parsable ID, MessageID stays empty.
 
 **FR51.** Every transport added in v1.2 **must** honor the existing `Transport` contract — `Send` returns `(SendResult, error)`, populates `MessageID` where the provider exposes one, and classifies errors as `*TransportError` with the correct `ErrorClass`.
 
@@ -505,7 +505,7 @@ Original definition of done was a Caddy v2 adapter module wrapping the core hand
 - **Story 9.4:** AWS SES transport. New `core/transport/awssigv4.go` (SigV4 signing implementation) + `core/transport/ses.go` (SESv2 `SendEmail` request shape). Required config: `access_key_id`, `secret_access_key`, `region`.
   - Acceptance: SigV4 round-trip test against AWS's published signing examples (the canonical pre-baked request/signature pairs in their docs). Same transport tests as 9.2. **Tripwire:** if total LOC (sigv4 + ses + tests) exceeds 500, stop and surface — ADR-14 trigger for SDK reconsideration.
 
-- **Story 9.5:** Outbound-SMTP transport. New `core/transport/smtpout.go` using stdlib `net/smtp` (ADR-17). STARTTLS-required by default; SMTP AUTH PLAIN/LOGIN. Required config: `host`, `port`, `username`, `password`.
+- **Story 9.5:** Outbound-SMTP transport. New `core/transport/smtpout.go` using stdlib `net/smtp` (ADR-17). STARTTLS-required by default; SMTP AUTH PLAIN/LOGIN. Required config: `host`, `port`, `username`, `password`; optional `hello_hostname` controls the EHLO/HELO hostname.
   - Acceptance: Test against a local `smtpd` (e.g., `mailpit` in CI; real Mailtrap or local relay for manual-test). Connection failure → ErrTransient. Auth failure → ErrTerminal. 421/450 (greylisting) → ErrTransient. STARTTLS downgrade attempts → ErrTerminal.
 
 - **Story 9.6:** Per-transport reference pages on the docs site. New pages under `configuration/transports/`: `resend.mdx`, `mailgun.mdx`, `ses.mdx`, `smtp.mdx`. Each documents required + optional config, common gotchas, manual-test invocation. Update the TOML reference's transport table.

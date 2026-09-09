@@ -224,6 +224,9 @@ func TestSMTPOut_Success_NoTLS(t *testing.T) {
 		t.Fatalf("sessions = %d, want 1", len(srv.Sessions))
 	}
 	sess := srv.Sessions[0]
+	if sess.EHLOArg != "localhost" {
+		t.Errorf("EHLO argument = %q, want %q", sess.EHLOArg, "localhost")
+	}
 	if !sess.QuitSeen {
 		t.Error("QUIT not seen")
 	}
@@ -241,6 +244,20 @@ func TestSMTPOut_Success_NoTLS(t *testing.T) {
 	}
 	if !bytes.Contains(sess.Data, []byte("Body text.")) {
 		t.Errorf("DATA missing body text: %s", sess.Data)
+	}
+}
+
+func TestSMTPOut_CustomHelloHostname(t *testing.T) {
+	srv := startFakeSMTPServer(t)
+	tp := newSMTPTestTransport(t, srv, false)
+	tp.HelloHostname = "mail.example.com"
+
+	if _, err := tp.Send(context.Background(), goodSMTPMessage()); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	if got := srv.Sessions[0].EHLOArg; got != "mail.example.com" {
+		t.Errorf("EHLO argument = %q, want %q", got, "mail.example.com")
 	}
 }
 
@@ -638,8 +655,14 @@ func TestSMTPOut_RegisteredAtPackageLoad(t *testing.T) {
 		{"missing_username", map[string]any{"host": "h", "port": 587, "password": "p"}, true},
 		{"missing_password", map[string]any{"host": "h", "port": 587, "username": "u"}, true},
 		{"port_out_of_range", map[string]any{"host": "h", "port": 99999, "username": "u", "password": "p"}, true},
+		{"empty_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": ""}, true},
+		{"non_string_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": 123}, true},
+		{"crlf_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": "mail.example.com\r\nX-INJECTED"}, true},
+		{"trailing_space_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": "mail.example.com "}, true},
+		{"internal_space_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": "mail example.com"}, true},
 		{"valid_int_port", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p"}, false},
 		{"valid_int64_port", map[string]any{"host": "h", "port": int64(587), "username": "u", "password": "p"}, false},
+		{"valid_hello_hostname", map[string]any{"host": "h", "port": 587, "username": "u", "password": "p", "hello_hostname": "mail.example.com"}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -684,5 +707,19 @@ func TestSMTPOut_Build_OptionalRequireTLS(t *testing.T) {
 	}
 	if tp2.(*SMTPOutTransport).RequireTLS {
 		t.Error("explicit require_tls=false should be respected")
+	}
+}
+
+func TestSMTPOut_Build_OptionalHelloHostname(t *testing.T) {
+	reg, _ := Lookup("smtp")
+	tp, err := reg.Build(map[string]any{
+		"host": "h", "port": 587, "username": "u", "password": "p",
+		"hello_hostname": "mail.example.com",
+	})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := tp.(*SMTPOutTransport).HelloHostname; got != "mail.example.com" {
+		t.Errorf("HelloHostname = %q, want %q", got, "mail.example.com")
 	}
 }

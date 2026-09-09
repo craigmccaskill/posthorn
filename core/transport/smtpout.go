@@ -55,6 +55,10 @@ type SMTPOutTransport struct {
 	Username string
 	Password string
 
+	// HelloHostname is announced in EHLO/HELO. Some relays require it to
+	// identify the client; the default is localhost for compatibility.
+	HelloHostname string
+
 	// RequireTLS gates whether STARTTLS is mandatory. Default true. When
 	// true and the server doesn't advertise STARTTLS, Send fails with
 	// ErrTerminal — a misconfiguration the operator must fix.
@@ -144,10 +148,14 @@ func (s *SMTPOutTransport) Send(ctx context.Context, msg Message) (SendResult, e
 	}
 	defer func() { _ = c.Close() }()
 
-	// EHLO/HELO — required before any other command. The hostname we
-	// announce is informational; "localhost" is conventional for
-	// outbound-relay clients.
-	if err := c.Hello("localhost"); err != nil {
+	// EHLO/HELO — required before any other command. Some relays use the
+	// announced hostname for client authorization; localhost remains the
+	// compatibility default when no hostname is configured.
+	helloHostname := s.HelloHostname
+	if helloHostname == "" {
+		helloHostname = "localhost"
+	}
+	if err := c.Hello(helloHostname); err != nil {
 		return SendResult{}, classifySMTPError(err, "smtp: EHLO failed")
 	}
 
@@ -468,6 +476,12 @@ func validateSMTPOutSettings(settings map[string]any) error {
 	if password, ok := settings["password"].(string); !ok || password == "" {
 		return fmt.Errorf("smtp transport requires settings.password")
 	}
+	if helloHostnameRaw, exists := settings["hello_hostname"]; exists {
+		helloHostname, ok := helloHostnameRaw.(string)
+		if !ok || helloHostname == "" || strings.ContainsAny(helloHostname, " \t\r\n\v\f") {
+			return fmt.Errorf("smtp transport settings.hello_hostname must be a non-empty string with no whitespace")
+		}
+	}
 	return nil
 }
 
@@ -476,6 +490,7 @@ func buildSMTPOutFromSettings(settings map[string]any) (Transport, error) {
 	port, _ := coerceInt(settings["port"])
 	username, _ := settings["username"].(string)
 	password, _ := settings["password"].(string)
+	helloHostname, _ := settings["hello_hostname"].(string)
 	requireTLS := true
 	if v, ok := settings["require_tls"].(bool); ok {
 		requireTLS = v
@@ -488,6 +503,7 @@ func buildSMTPOutFromSettings(settings map[string]any) (Transport, error) {
 		return nil, fmt.Errorf("smtp: host, port, username, password all required")
 	}
 	tp := NewSMTPOutTransport(host, port, username, password, requireTLS)
+	tp.HelloHostname = helloHostname
 	tp.TLSInsecureSkipVerify = insecureSkipVerify
 	return tp, nil
 }

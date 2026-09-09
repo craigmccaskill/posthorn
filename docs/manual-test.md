@@ -353,6 +353,8 @@ port        = 587
 username    = "${env.SMTP_USERNAME}"
 password    = "${env.SMTP_PASSWORD}"
 require_tls = true
+# Optional: set when the relay rejects EHLO/HELO with localhost.
+hello_hostname = "mail.yourdomain.com"
 ```
 
 Expected `transport_message_id`: **empty** — stdlib `net/smtp` doesn't expose the upstream's `queued as <id>` response. Correlate by submission_id timestamp + recipient against the relay's own logs.

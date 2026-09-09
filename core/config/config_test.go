@@ -66,6 +66,34 @@ func TestLoad_Success_MinimalConfig(t *testing.T) {
 	}
 }
 
+func TestLoad_Success_SMTPHelloHostname(t *testing.T) {
+	c := `
+[[endpoints]]
+path = "/api/contact"
+to = ["craig@example.com"]
+from = "noreply@example.com"
+subject = "Contact"
+body = "Body"
+
+[endpoints.transport]
+type = "smtp"
+
+[endpoints.transport.settings]
+host = "smtp-relay.gmail.com"
+port = 587
+username = "user@example.com"
+password = "test-password"
+hello_hostname = "mail.example.com"
+`
+	cfg, err := loadString(t, c)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.Endpoints[0].Transport.Settings["hello_hostname"]; got != "mail.example.com" {
+		t.Errorf("hello_hostname = %q, want %q", got, "mail.example.com")
+	}
+}
+
 func TestLoad_Success_FullConfig(t *testing.T) {
 	full := `
 [[endpoints]]

@@ -14,6 +14,8 @@ host     = "smtp.mailgun.org"
 port     = 587
 username = "postmaster@mg.yourdomain.com"
 password = "${env.SMTP_PASSWORD}"
+# Set this when the relay requires a public domain in EHLO/HELO.
+hello_hostname = "mail.yourdomain.com"
 ```
 
 ## Settings
@@ -24,6 +26,7 @@ password = "${env.SMTP_PASSWORD}"
 | `port` | yes | — | SMTP server port. Typically `587` (STARTTLS) or `2525` (alternative STARTTLS port). Port `25` is blocked outbound on most cloud providers. |
 | `username` | yes | — | SMTP AUTH PLAIN username. |
 | `password` | yes | — | SMTP AUTH PLAIN password. **Never logged** in any code path. |
+| `hello_hostname` | no | `"localhost"` | Hostname announced in EHLO/HELO. Set this to a domain your relay recognizes when it rejects `localhost` clients. |
 | `require_tls` | no | `true` | Require STARTTLS before sending credentials. Setting to `false` is **not recommended** outside of local testing. |
 | `tls_insecure_skip_verify` | no | `false` | Skip TLS certificate validation. **Test-only escape hatch** for self-signed certs in local dev. |
 
@@ -32,6 +35,7 @@ password = "${env.SMTP_PASSWORD}"
 | Aspect | Behavior |
 |---|---|
 | Protocol flow | EHLO → STARTTLS → AUTH PLAIN → MAIL FROM → RCPT TO → DATA → QUIT |
+| EHLO/HELO hostname | `hello_hostname` when configured; `localhost` otherwise |
 | Per-request timeout | 30s (longer than HTTP transports because SMTP has slower greeting + DATA round trips) |
 | Connection reuse | None — one TCP connection per Send. (Connection pooling is a v2 optimization.) |
 | Message body | Hand-constructed RFC 5322 message (From/To/Subject/Reply-To headers + plain-text body, UTF-8) |
@@ -78,6 +82,7 @@ Additionally:
 |---|---|---|
 | `smtp: server does not advertise STARTTLS but require_tls=true` | Server's EHLO response omits STARTTLS (rare for legitimate relays) | Verify server hostname/port; if intentional (local-network plaintext), set `require_tls = false` explicitly |
 | `535 5.7.8 Authentication failed` | Wrong username or password, or AUTH PLAIN not supported by server | Check creds; some servers require username to be the literal email address, not a username |
+| Relay rejects `EHLO localhost` / `HELO localhost` | Relay policy requires an identifiable client hostname | Set `hello_hostname` to a domain accepted by the relay |
 | Connection times out on connect | Cloud provider blocking outbound port 25 (and sometimes 587) | Use port 2525 if your provider blocks 587, or switch to an HTTP-API transport |
 | `450 4.7.1` errors retry but then succeed | Greylisting — server delays first-time-from-this-sender mail | Working as intended; Posthorn's retry policy handles this |
 | Mail accepted but never delivered | The SMTP relay accepted but failed downstream — Posthorn has no visibility | Check the relay's own logs and bounce notifications |

@@ -20,6 +20,7 @@ The v2.0 work — the stateful shift, recut 2026-08-02 against the integration-s
 
 ### Fixed
 
+- Outbound SMTP can now announce an operator-configured hostname in EHLO/HELO via `hello_hostname`, allowing relays that reject the default `localhost` identity.
 - Multipart form **fields** were silently dropped in v1.x — `multipart/form-data` submissions never delivered their values to validation, spam checks, or templates. Form parsing is now content-type-aware.
 
 ### Security
