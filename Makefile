@@ -13,7 +13,7 @@
 #
 # No third-party key is ever required to run `make test`.
 
-.PHONY: test test-live lint fmt vet cover build site help
+.PHONY: test test-live validate-lifecycle lint fmt vet cover build site help
 .DEFAULT_GOAL := help
 
 test: ## Hermetic test suite with the race detector (default PR gate)
@@ -21,6 +21,9 @@ test: ## Hermetic test suite with the race detector (default PR gate)
 
 test-live: ## Live tier (-tags integration): real APIs, non-delivering targets
 	cd core && go test -tags integration -race -count=1 -timeout=5m ./providertest/...
+
+validate-lifecycle: ## Story 18.3: live lifecycle validation (real Postmark + quick tunnel; needs POSTMARK_SERVER_TOKEN, POSTHORN_TEST_FROM/TO, cloudflared)
+	cd core && go test -tags lifecyclelive -count=1 -v -timeout=15m -run TestLifecycleLive ./providertest/
 
 lint: ## golangci-lint
 	cd core && golangci-lint run
