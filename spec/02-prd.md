@@ -640,6 +640,7 @@ Original definition of done was a Caddy v2 adapter module wrapping the core hand
 - **Story 18.1:** Data-at-rest operator page (NFR31); deployment-shape note for lifecycle.
 - **Story 18.2:** Capability matrix, CHANGELOG, README refresh, roadmap page.
 - **Story 18.3:** Live validation pass (Postmark events end-to-end; provider battery re-run), tag `v2.0.0`.
+  - *Amended 2026-09-09:* the Postmark end-to-end leg is scripted, not manual — `make validate-lifecycle` runs the built binary locally, exposes it via an anonymous cloudflared quick tunnel, registers the webhook through the Postmark API, and asserts delivery + hard-bounce + suppression (FR82–FR87). Deliberately runnable by anyone with a Postmark server token and independent of any specific deployment: release validation is a project property, not an operator's-infrastructure property. Procedure in [docs/manual-test.md](../docs/manual-test.md); CI trigger on `v*-rc*` tags via `lifecycle-live.yml`.
 
 ## Out of scope (re-stated for clarity)
 

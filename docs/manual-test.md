@@ -481,3 +481,82 @@ A malicious DATA blob with a `Bcc:` header in the MIME body must NOT result in a
 - Recipient cap (set low; test with N+1 RCPT TO) → 452 4.5.3
 - MIME `Bcc:` header smuggled in DATA does NOT cause delivery to the smuggled address
 - `smtp_submission_sent` log line carries `submission_id` + `transport_message_id` (when upstream provides one)
+
+## v2.0 lifecycle live validation (Story 18.3)
+
+The v2.0 lifecycle loop (Postmark events in → normalize → forward signed →
+auto-suppress, FR82–FR87) is the first surface a third party POSTs into, so
+its release validation runs against **live Postmark webhook senders** — the
+hermetic suite fakes Postmark's side and cannot prove reachability, auth,
+or real event timing.
+
+The validation is fully scripted and needs **no standing infrastructure**:
+it builds the posthorn binary, runs it locally against a generated
+config (storage + lifecycle enabled), exposes it through an anonymous
+cloudflared quick tunnel (no Cloudflare account; ephemeral
+`trycloudflare.com` URL), registers a webhook on your Postmark server via
+the Postmark API, and asserts the full loop. One command:
+
+```bash
+POSTMARK_SERVER_TOKEN=$(pass show posthorn/validation-server-token) \
+  make validate-lifecycle
+```
+
+### What one run proves
+
+1. A real send through the built binary reaches Postmark (delivery leg).
+2. Postmark's **Delivery** webhook lands on `/events/postmark` through the
+   tunnel, passes basic auth (FR82), correlates by message ID (FR83), and
+   arrives at the endpoint's `webhook_url` with a valid
+   `X-Posthorn-Signature` HMAC, verified independently (FR84).
+3. A send to `hardbounce@bounce-testing.postmarkapp.com` — Postmark's
+   documented blackhole, which bounces for real without touching sender
+   reputation — produces a **hard_bounce** event end-to-end the same way.
+4. The bounce auto-inserts a suppression row (FR85); a follow-up send
+   answers `200 {"status":"suppressed"}` with reason `hard_bounce` (FR86).
+5. `posthorn suppressions list` shows the row (FR87).
+
+### Prerequisites
+
+| What | Where to get it |
+|---|---|
+| `POSTMARK_SERVER_TOKEN` (env) | Postmark dashboard → Servers → API Tokens. **Recommended:** create a dedicated server named `posthorn-validation` first, so validation traffic and its deliberate bounces stay out of production activity. Sender signatures are account-wide; no re-verification needed. |
+| `POSTHORN_TEST_FROM` (env) | A verified sender signature on that Postmark account (dashboard → Sender Signatures). |
+| `POSTHORN_TEST_TO` (env) | A real mailbox you control that accepts mail — the Delivery event only fires after the receiving server accepts. |
+| `cloudflared` on PATH | <https://github.com/cloudflare/cloudflared/releases> (single static binary; `apt`/`brew` also carry it). No account, no login — quick tunnels are anonymous. |
+
+Postmark-side suppression of the blackhole address (which Postmark adds
+after each fake bounce) is cleared automatically at the start of every
+run, as are webhook registrations leaked by crashed prior runs (any
+registration pointing at a `trycloudflare.com` URL is dead by definition).
+
+### In CI
+
+[`lifecycle-live.yml`](../.github/workflows/lifecycle-live.yml) runs the
+same command on manual dispatch and on every `v*-rc*` tag push, behind the
+protected `live-providers` Environment (same fencing as the provider
+battery: never on pull requests). Add `POSTMARK_SERVER_TOKEN` as an
+environment secret there; `POSTHORN_TEST_FROM`/`POSTHORN_TEST_TO` are the
+existing repo variables. **If the secret is absent the test skips and the
+job still goes green** — read the log, not just the badge, when using a
+run as release evidence.
+
+### Pass criteria
+
+- `delivered` and `hard_bounce` events both arrive at the receiver with
+  valid HMAC signatures and the correct originating endpoint
+- Follow-up send to the bounced address returns `status: "suppressed"`
+  with reason `hard_bounce`
+- `posthorn suppressions list` includes the blackhole address
+- Teardown deletes the Postmark webhook registration (verify in the
+  dashboard if the run was interrupted; the next run also self-heals)
+
+### Known limits
+
+- The quick tunnel has no SLA (it is Cloudflare's dev/test tier); a
+  tunnel-establishment failure is an environment problem, not a Posthorn
+  regression — re-run, or run from a network that allows outbound QUIC
+  (7844) or HTTPS fallback.
+- The validation exercises Postmark only, matching the ADR-22 v2.0 slice.
+  Provider battery coverage for the other transports remains
+  `make test-live` (see "Live-provider validation" in CONTRIBUTING.md).
