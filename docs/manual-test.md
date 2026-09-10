@@ -537,9 +537,11 @@ same command on manual dispatch and on every `v*-rc*` tag push, behind the
 protected `live-providers` Environment (same fencing as the provider
 battery: never on pull requests). Add `POSTMARK_SERVER_TOKEN` as an
 environment secret there; `POSTHORN_TEST_FROM`/`POSTHORN_TEST_TO` are the
-existing repo variables. **If the secret is absent the test skips and the
-job still goes green** — read the log, not just the badge, when using a
-run as release evidence.
+existing repo variables. Missing-secret behavior differs by trigger: on
+**manual dispatch** the test skips (green job, nothing validated — read
+the log), but on an **rc tag** the job fails outright, because a tag's
+run is release evidence and a skipped gate must never read as a green
+one.
 
 ### Pass criteria
 
