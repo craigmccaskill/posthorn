@@ -614,6 +614,119 @@ func TestParseMIMEToMessage_RFC2047EncodedSubject(t *testing.T) {
 	}
 }
 
+func TestParseMIMEToMessage_QuotedPrintableSinglePartHTML(t *testing.T) {
+	// "café =" quoted-printable encoded, with a soft line break splitting
+	// the word "café" mid-content.
+	data := []byte(
+		"From: a@example.com\r\n" +
+			"Subject: QP\r\n" +
+			"Content-Type: text/html; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: quoted-printable\r\n" +
+			"\r\n" +
+			"<p>caf=\r\n=C3=A9 =3D equals</p>\r\n")
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(msg.BodyHTML, "<p>café = equals</p>") {
+		t.Errorf("BodyHTML not quoted-printable decoded: %q", msg.BodyHTML)
+	}
+	if strings.Contains(msg.BodyHTML, "=C3") || strings.Contains(msg.BodyHTML, "=3D") {
+		t.Errorf("BodyHTML leaked raw quoted-printable encoding: %q", msg.BodyHTML)
+	}
+}
+
+func TestParseMIMEToMessage_QuotedPrintableMultipart(t *testing.T) {
+	// Matches listmonk's actual output shape: multipart/alternative with
+	// both parts quoted-printable encoded.
+	boundary := "BOUNDARY"
+	data := []byte(
+		"From: a@example.com\r\n" +
+			"Subject: Multi QP\r\n" +
+			"Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n" +
+			"\r\n" +
+			"--" + boundary + "\r\n" +
+			"Content-Type: text/plain; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: quoted-printable\r\n" +
+			"\r\n" +
+			"plain caf=C3=A9\r\n" +
+			"--" + boundary + "\r\n" +
+			"Content-Type: text/html; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: quoted-printable\r\n" +
+			"\r\n" +
+			"<p>html caf=C3=A9</p>\r\n" +
+			"--" + boundary + "--\r\n")
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(msg.BodyText, "plain café") {
+		t.Errorf("BodyText not quoted-printable decoded: %q", msg.BodyText)
+	}
+	if !strings.Contains(msg.BodyHTML, "<p>html café</p>") {
+		t.Errorf("BodyHTML not quoted-printable decoded: %q", msg.BodyHTML)
+	}
+	if strings.Contains(msg.BodyText, "=C3") || strings.Contains(msg.BodyHTML, "=C3") {
+		t.Errorf("raw quoted-printable leaked through: text=%q html=%q", msg.BodyText, msg.BodyHTML)
+	}
+}
+
+func TestParseMIMEToMessage_Base64SinglePart(t *testing.T) {
+	// base64 of "<p>base64 café</p>"
+	encoded := base64.StdEncoding.EncodeToString([]byte("<p>base64 café</p>"))
+	data := []byte(
+		"From: a@example.com\r\n" +
+			"Subject: B64\r\n" +
+			"Content-Type: text/html; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: base64\r\n" +
+			"\r\n" +
+			encoded + "\r\n")
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !strings.Contains(msg.BodyHTML, "<p>base64 café</p>") {
+		t.Errorf("BodyHTML not base64 decoded: %q", msg.BodyHTML)
+	}
+	if strings.Contains(msg.BodyHTML, encoded) {
+		t.Errorf("BodyHTML leaked raw base64: %q", msg.BodyHTML)
+	}
+}
+
+func TestParseMIMEToMessage_SevenBitAndAbsentEncodingUnchanged(t *testing.T) {
+	// 7bit and an absent Content-Transfer-Encoding must decode identically
+	// (no wrapping applied).
+	data7bit := []byte(
+		"From: a@example.com\r\n" +
+			"Subject: Plain\r\n" +
+			"Content-Type: text/plain; charset=utf-8\r\n" +
+			"Content-Transfer-Encoding: 7bit\r\n" +
+			"\r\n" +
+			"plain ascii body\r\n")
+	msg7bit, err := parseMIMEToMessage(data7bit, "a@example.com", []string{"r@example.com"})
+	if err != nil {
+		t.Fatalf("parse (7bit): %v", err)
+	}
+
+	dataAbsent := []byte(
+		"From: a@example.com\r\n" +
+			"Subject: Plain\r\n" +
+			"Content-Type: text/plain; charset=utf-8\r\n" +
+			"\r\n" +
+			"plain ascii body\r\n")
+	msgAbsent, err := parseMIMEToMessage(dataAbsent, "a@example.com", []string{"r@example.com"})
+	if err != nil {
+		t.Fatalf("parse (absent): %v", err)
+	}
+
+	if msg7bit.BodyText != msgAbsent.BodyText {
+		t.Errorf("7bit and absent-encoding bodies differ: %q vs %q", msg7bit.BodyText, msgAbsent.BodyText)
+	}
+	if !strings.Contains(msg7bit.BodyText, "plain ascii body") {
+		t.Errorf("BodyText = %q", msg7bit.BodyText)
+	}
+}
+
 // --- Allowlist matching tests ---
 
 func TestMatchesAllowlist(t *testing.T) {

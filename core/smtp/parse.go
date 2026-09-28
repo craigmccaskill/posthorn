@@ -2,10 +2,12 @@ package smtp
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/mail"
 	"strings"
 
@@ -87,6 +89,21 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 	}, nil
 }
 
+// decodeTransferEncoding wraps r so reads yield decoded content, based on
+// the part's Content-Transfer-Encoding header. quoted-printable and base64
+// are decoded; 7bit/8bit/binary and an absent header pass through
+// unwrapped, matching RFC 2045 default (7bit).
+func decodeTransferEncoding(cte string, r io.Reader) io.Reader {
+	switch strings.ToLower(strings.TrimSpace(cte)) {
+	case "quoted-printable":
+		return quotedprintable.NewReader(r)
+	case "base64":
+		return base64.NewDecoder(base64.StdEncoding, r)
+	default:
+		return r
+	}
+}
+
 // extractBody returns the text/plain and text/html content of a parsed
 // MIME message (FR75). For multipart messages, the first part of each
 // type wins. Single-part text/plain fills only text; single-part
@@ -106,13 +123,13 @@ func extractBody(m *mail.Message) (text, html string, err error) {
 
 	switch {
 	case mediaType == "" || strings.HasPrefix(mediaType, "text/plain"):
-		buf, rerr := io.ReadAll(m.Body)
+		buf, rerr := io.ReadAll(decodeTransferEncoding(m.Header.Get("Content-Transfer-Encoding"), m.Body))
 		if rerr != nil {
 			return "", "", fmt.Errorf("read body: %w", rerr)
 		}
 		return string(buf), "", nil
 	case strings.HasPrefix(mediaType, "text/html"):
-		buf, rerr := io.ReadAll(m.Body)
+		buf, rerr := io.ReadAll(decodeTransferEncoding(m.Header.Get("Content-Transfer-Encoding"), m.Body))
 		if rerr != nil {
 			return "", "", fmt.Errorf("read body: %w", rerr)
 		}
@@ -148,14 +165,14 @@ func readPartsFromMultipart(body io.Reader, boundary string) (text, html string,
 		mediaType, _, _ := mime.ParseMediaType(ct)
 		switch {
 		case (mediaType == "" || strings.HasPrefix(mediaType, "text/plain")) && text == "":
-			buf, rerr := io.ReadAll(part)
+			buf, rerr := io.ReadAll(decodeTransferEncoding(part.Header.Get("Content-Transfer-Encoding"), part))
 			if rerr != nil {
 				_ = part.Close()
 				return "", "", fmt.Errorf("read text/plain part: %w", rerr)
 			}
 			text = string(buf)
 		case strings.HasPrefix(mediaType, "text/html") && html == "":
-			buf, rerr := io.ReadAll(part)
+			buf, rerr := io.ReadAll(decodeTransferEncoding(part.Header.Get("Content-Transfer-Encoding"), part))
 			if rerr != nil {
 				_ = part.Close()
 				return "", "", fmt.Errorf("read text/html part: %w", rerr)
