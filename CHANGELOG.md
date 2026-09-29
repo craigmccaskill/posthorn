@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-29
+
 The v2.0 work — the stateful shift, recut 2026-08-02 against the integration-seam USP (unsubscribe injection and fan-out moved out behind demand gates; see the roadmap). Everything below is opt-in: a config without the new blocks behaves identically to v1.2.
 
 ### Added
@@ -22,6 +24,7 @@ The v2.0 work — the stateful shift, recut 2026-08-02 against the integration-s
 
 - Outbound SMTP can now announce an operator-configured hostname in EHLO/HELO via `hello_hostname`, allowing relays that reject the default `localhost` identity.
 - Multipart form **fields** were silently dropped in v1.x — `multipart/form-data` submissions never delivered their values to validation, spam checks, or templates. Form parsing is now content-type-aware.
+- SMTP listener metrics are now recorded before the DATA reply is written, so a `/metrics` scrape taken on the client's acknowledgement reflects the send. Previously the counter could lag the reply by a few microseconds. ([#119](https://github.com/craigmccaskill/posthorn/pull/119))
 - The SMTP listener now decodes `Content-Transfer-Encoding` (quoted-printable and base64) before mapping `text/plain` and `text/html` parts, so mail from senders that encode their bodies (listmonk, most MUAs) no longer arrives with raw `=3D` escapes or base64 blobs. ([#113](https://github.com/craigmccaskill/posthorn/pull/113))
 
 ### Security
