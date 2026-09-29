@@ -200,11 +200,11 @@ The full operator checklist is on [posthorn.dev](https://posthorn.dev).
 | **Logging** | Structured JSON; UUIDv4 submission IDs and SMTP session IDs; `transport_message_id` in `submission_sent` |
 | **Deployment** | Single Go binary, multi-arch distroless Docker image at `ghcr.io/craigmccaskill/posthorn` |
 
-Four external Go dependencies in the whole module: TOML parser, UUID library, LRU cache, and a pure-Go SQLite driver that is only linked into the optional storage package. Every transport is bespoke — no vendor SDK in transport code.
+Four external Go dependencies in the whole module: TOML parser, UUID library, LRU cache, and a pure-Go SQLite driver used only by the optional storage layer. Every transport is bespoke — no vendor SDK in transport code.
 
 ## Roadmap
 
-**v2.0 — gateway reliability.** In release-candidate validation. Optional SQLite storage spine (submission log, sync-first retry queue that survives restarts, durable idempotency), HTML bodies with an auto-derived text part, Postmark lifecycle events forwarded to callers as HMAC-signed webhooks, a minimal suppression list that fills automatically on hard bounces and spam complaints, a webhook transport, and opt-in file attachments. Everything is opt-in: a config without the new blocks behaves exactly like v1.2. Unsubscribe-link injection and multiple outputs per endpoint were moved out behind demand gates in the 2026-08-02 recut; multi-tenant SMTP routing is under design discussion ([#30](https://github.com/craigmccaskill/posthorn/issues/30)).
+**v2.0 — gateway reliability.** Release candidate. Optional SQLite storage: a submission log, a retry queue that survives restarts, and idempotency keys that survive restarts. HTML bodies with a generated plain-text part. Postmark delivery and bounce events forwarded to your app as signed webhooks. A suppression list that fills itself from hard bounces and spam complaints. A webhook transport. Opt-in file attachments. All of it is opt-in; a config without the new blocks behaves exactly like v1.2. Unsubscribe-link injection and fan-out to several outputs are on hold until someone needs them. Multi-tenant SMTP routing is planned as multiple listeners ([#120](https://github.com/craigmccaskill/posthorn/issues/120)).
 
 **v3 — speculative.** Admin UI, proof-of-work spam challenge, PGP encryption. Depends on community traction.
 
