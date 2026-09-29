@@ -192,7 +192,7 @@ The full operator checklist is on [posthorn.dev](https://posthorn.dev).
 | Block | Detail |
 |---|---|
 | **Form ingress** | Form-encoded + multipart bodies; honeypot, Origin/Referer fail-closed, rate limit, optional CSRF tokens |
-| **API mode** | `auth = "api-key"` with Bearer tokens (constant-time compare); JSON content type; idempotency keys (24h, in-memory LRU); per-request `to_override` |
+| **API mode** | `auth = "api-key"` with Bearer tokens (constant-time compare); JSON content type; idempotency keys (24h, in-memory LRU; durable with `[storage]`); per-request `to_override` |
 | **Transports** | Postmark, Resend, Mailgun, AWS SES (bespoke SigV4), outbound-SMTP relay |
 | **SMTP listener** | TCP listener with AUTH PLAIN / client-cert, STARTTLS-required, sender + recipient allowlists, size cap, MIME → `transport.Message` |
 | **Operations** | `/healthz`, `/metrics` (Prometheus exposition), dry-run mode, IP-stripping, named `trusted_proxies` presets (Cloudflare) |
@@ -200,11 +200,11 @@ The full operator checklist is on [posthorn.dev](https://posthorn.dev).
 | **Logging** | Structured JSON; UUIDv4 submission IDs and SMTP session IDs; `transport_message_id` in `submission_sent` |
 | **Deployment** | Single Go binary, multi-arch distroless Docker image at `ghcr.io/craigmccaskill/posthorn` |
 
-Three external Go dependencies in the whole module: TOML parser, UUID library, LRU cache. Every transport is bespoke — no vendor SDK in transport code.
+Four external Go dependencies in the whole module: TOML parser, UUID library, LRU cache, and a pure-Go SQLite driver that is only linked into the optional storage package. Every transport is bespoke — no vendor SDK in transport code.
 
 ## Roadmap
 
-**v2 — platform maturity.** SQLite submission log, retry queue across restarts, suppression list (auto on hard bounces), durable idempotency, lifecycle event callbacks via HMAC-signed webhook, RFC 8058 one-click unsubscribe, file attachments, HTML body, multiple outputs per endpoint (email + webhook + log fan-out), multi-tenant SMTP routing.
+**v2.0 — gateway reliability.** In release-candidate validation. Optional SQLite storage spine (submission log, sync-first retry queue that survives restarts, durable idempotency), HTML bodies with an auto-derived text part, Postmark lifecycle events forwarded to callers as HMAC-signed webhooks, a minimal suppression list that fills automatically on hard bounces and spam complaints, a webhook transport, and opt-in file attachments. Everything is opt-in: a config without the new blocks behaves exactly like v1.2. Unsubscribe-link injection and multiple outputs per endpoint were moved out behind demand gates in the 2026-08-02 recut; multi-tenant SMTP routing is under design discussion ([#30](https://github.com/craigmccaskill/posthorn/issues/30)).
 
 **v3 — speculative.** Admin UI, proof-of-work spam challenge, PGP encryption. Depends on community traction.
 
