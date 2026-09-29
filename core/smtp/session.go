@@ -439,14 +439,14 @@ func (s *session) handleDATA() {
 			if qerr := s.l.gate.Store().Enqueue(submissionID, time.Now()); qerr != nil {
 				s.l.gate.ReportError(qerr)
 			} else {
-				_ = s.writeReply(250, "2.0.0 OK accepted for retry as "+submissionID)
+				if s.l.recorder != nil {
+					s.l.recorder.Queued(smtpEndpointLabel, s.l.cfg.Transport.Type)
+				}
 				s.logger.Warn("smtp_submission_queued",
 					slog.String("submission_id", submissionID),
 					slog.String("error", sendErr.Error()),
 				)
-				if s.l.recorder != nil {
-					s.l.recorder.Queued(smtpEndpointLabel, s.l.cfg.Transport.Type)
-				}
+				_ = s.writeReply(250, "2.0.0 OK accepted for retry as "+submissionID)
 				s.resetTransaction()
 				return
 			}
@@ -456,12 +456,12 @@ func (s *session) handleDATA() {
 				s.l.gate.ReportError(serr)
 			}
 		}
-		_ = s.writeReply(451, "4.0.0 Upstream transport failed")
+		s.recordSendFailed(sendErr)
 		s.logger.Error("smtp_submission_failed",
 			slog.String("submission_id", submissionID),
 			slog.String("error", sendErr.Error()),
 		)
-		s.recordSendFailed(sendErr)
+		_ = s.writeReply(451, "4.0.0 Upstream transport failed")
 		s.resetTransaction()
 		return
 	}
@@ -470,13 +470,18 @@ func (s *session) handleDATA() {
 			s.l.gate.ReportError(serr)
 		}
 	}
-	_ = s.writeReply(250, "2.0.0 OK queued as "+submissionID)
+	// Record the outcome before acknowledging it. Once the client holds
+	// the reply, the send must already be visible on /metrics and in the
+	// log; replying first left a window where a scrape taken on the 250
+	// showed nothing (the TestSMTP_RecorderWired flake, #43). The queued
+	// and failed paths above follow the same order.
+	s.recordSendOk(time.Since(sendStart))
 	s.logger.Info("smtp_submission_sent",
 		slog.String("submission_id", submissionID),
 		slog.String("transport_message_id", result.MessageID),
 		slog.Int64("size_bytes", n),
 	)
-	s.recordSendOk(time.Since(sendStart))
+	_ = s.writeReply(250, "2.0.0 OK queued as "+submissionID)
 	s.resetTransaction()
 }
 
