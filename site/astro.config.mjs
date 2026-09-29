@@ -112,6 +112,7 @@ export default defineConfig({
             { label: 'Self-hosted Authentik', slug: 'recipes/authentik' },
             { label: 'Self-hosted Mastodon', slug: 'recipes/mastodon' },
             { label: 'Self-hosted Vaultwarden', slug: 'recipes/vaultwarden' },
+            { label: 'listmonk on Railway (SMTP-blocked PaaS)', slug: 'recipes/listmonk' },
             { label: 'Weekly Umami digest (API mode)', slug: 'recipes/umami' },
           ],
         },
