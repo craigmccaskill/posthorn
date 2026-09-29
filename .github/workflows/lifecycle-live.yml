@@ -1,0 +1,88 @@
+name: Lifecycle (live)
+
+# Story 18.3: the live lifecycle validation — real Postmark webhook
+# senders POSTing into a really-running posthorn binary, reachable via an
+# anonymous cloudflared quick tunnel (no Cloudflare account; the tunnel
+# URL is single-run ephemera). See docs/manual-test.md §"v2.0 lifecycle
+# live validation" for the full procedure and the local-run equivalent
+# (`make validate-lifecycle`).
+#
+# Same trust fencing as integration-live.yml — this touches a real
+# provider credential, so it never runs on pull_request and sits behind
+# the protected `live-providers` Environment:
+#   - POSTMARK_SERVER_TOKEN (environment secret): a real server token,
+#     ideally for a dedicated `posthorn-validation` Postmark server so
+#     validation traffic and its deliberate blackhole bounces stay out of
+#     production activity. Absent on MANUAL DISPATCH → the test skips
+#     (the workflow can be exercised before secrets exist). Absent on an
+#     RC TAG → the job FAILS: a tag's validation run is release
+#     evidence, and a skipped gate must never read as a green one.
+#   - POSTHORN_TEST_FROM / POSTHORN_TEST_TO (repo variables, shared with
+#     integration-live.yml): a verified sender signature and a real
+#     receiving mailbox.
+#
+# Triggers: manual dispatch, and rc tags — cutting a release candidate
+# runs the release-gate validation for it automatically.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*-rc*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lifecycle-live
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    # Never run on forks — they have neither the secrets nor the trust.
+    if: github.repository == 'craigmccaskill/posthorn'
+    runs-on: ubuntu-latest
+    environment: live-providers
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: core/go.mod
+
+      # Pinned by version AND sha256, matching the repo's digest-pinning
+      # discipline (#39/#56). Update both together; the digest is listed
+      # on the cloudflared release page.
+      - name: Install cloudflared (pinned)
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -fsSL -o cloudflared \
+            https://github.com/cloudflare/cloudflared/releases/download/2026.9.0/cloudflared-linux-amd64
+          echo "53b7a7a5420d188758d24341294acb0d1bca54296548ac05e38811a694ac6134  cloudflared" | sha256sum -c -
+          chmod +x cloudflared
+          echo "${{ runner.temp }}" >> "$GITHUB_PATH"
+
+      # Rc tags are the release gate; without the secret the test would
+      # skip and the badge would still show green. Refuse instead.
+      - name: Refuse to skip the release gate (rc tags only)
+        if: github.ref_type == 'tag'
+        env:
+          POSTMARK_SERVER_TOKEN: ${{ secrets.POSTMARK_SERVER_TOKEN }}
+        run: |
+          if [ -z "$POSTMARK_SERVER_TOKEN" ]; then
+            echo "::error::POSTMARK_SERVER_TOKEN is not set in the live-providers environment. An rc tag's validation run is release evidence; refusing to pass on a skip."
+            exit 1
+          fi
+
+      - name: Live lifecycle validation
+        env:
+          POSTMARK_SERVER_TOKEN: ${{ secrets.POSTMARK_SERVER_TOKEN }}
+          POSTHORN_TEST_FROM: ${{ vars.POSTHORN_TEST_FROM }}
+          POSTHORN_TEST_TO: ${{ vars.POSTHORN_TEST_TO }}
+        run: go test -tags lifecyclelive -count=1 -v -timeout=15m -run TestLifecycleLive ./providertest/
