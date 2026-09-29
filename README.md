@@ -204,7 +204,7 @@ Four external Go dependencies in the whole module: TOML parser, UUID library, LR
 
 ## Roadmap
 
-**v2.0 — gateway reliability.** Release candidate. Optional SQLite storage: a submission log, a retry queue that survives restarts, and idempotency keys that survive restarts. HTML bodies with a generated plain-text part. Postmark delivery and bounce events forwarded to your app as signed webhooks. A suppression list that fills itself from hard bounces and spam complaints. A webhook transport. Opt-in file attachments. All of it is opt-in; a config without the new blocks behaves exactly like v1.2. Unsubscribe-link injection and fan-out to several outputs are on hold until someone needs them. Multi-tenant SMTP routing is planned as multiple listeners ([#120](https://github.com/craigmccaskill/posthorn/issues/120)).
+**v2.0 — gateway reliability.** Released 2026-09-29. Optional SQLite storage: a submission log, a retry queue that survives restarts, and idempotency keys that survive restarts. HTML bodies with a generated plain-text part. Postmark delivery and bounce events forwarded to your app as signed webhooks. A suppression list that fills itself from hard bounces and spam complaints. A webhook transport. Opt-in file attachments. All of it is opt-in; a config without the new blocks behaves exactly like v1.2. Unsubscribe-link injection and fan-out to several outputs are on hold until someone needs them. Multi-tenant SMTP routing is planned as multiple listeners ([#120](https://github.com/craigmccaskill/posthorn/issues/120)).
 
 **v3 — speculative.** Admin UI, proof-of-work spam challenge, PGP encryption. Depends on community traction.
 

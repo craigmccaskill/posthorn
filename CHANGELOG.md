@@ -30,6 +30,7 @@ The v2.0 work — the stateful shift, recut 2026-08-02 against the integration-s
 ### Security
 
 - Doctrine, spec-level (NFR25): security-relevant features are opt-in, never default-on. The lifecycle event endpoint cannot run unauthenticated; attachments require an explicit type allowlist; storage requires an explicit block.
+- Release images are built with Go 1.26.8. The `v2.0.0-rc.3` image failed the release Trivy gate on eight HIGH Go standard-library CVEs in the previous builder pin (Go 1.26.5; fixed upstream in 1.26.6). The builder was bumped and `v2.0.0` is cut from `v2.0.0-rc.4`.
 
 ## [1.2.0] — 2026-07-04
 
