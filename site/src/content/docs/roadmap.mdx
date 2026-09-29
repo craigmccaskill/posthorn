@@ -96,9 +96,16 @@ The stateful shift, recut on 2026-08-02 against the project's first principles: 
 
 A data-at-rest documentation page ships with the release: what the SQLite file contains, retention, sizing, and the backup/permissions posture it deserves.
 
-**Under design discussion, not yet committed:** multi-tenant SMTP routing — sender-driven transport selection so one listener serves multiple tenants. See [issue #30](https://github.com/craigmccaskill/posthorn/issues/30).
-
 The `Transport.Send` interface stays the synchronous primitive; the queue wraps it. v1.x deployments keep working unchanged.
+
+## v2.1 — listener minor
+
+Spec'd 2026-09-29, not started. Two changes to the SMTP listener, each because someone asked with a real deployment behind it:
+
+- **Multiple listeners.** `[[smtp_listeners]]` blocks, one per port, each with its own transport and allowlists. One process serves several tenants, and the firewall or network policy is the tenant boundary. Existing single-listener configs keep working. ([#120](https://github.com/craigmccaskill/posthorn/issues/120))
+- **List-header passthrough.** Opt-in per listener: `List-Unsubscribe` and `List-Unsubscribe-Post` set by an app like listmonk are carried to the provider instead of dropped. Fixed allowlist, values checked for header injection at the door. ([#115](https://github.com/craigmccaskill/posthorn/issues/115))
+
+Per-sender routing on a shared listener stays deferred until a deployment turns up that can't split ports.
 
 ## Smaller items on the queue
 

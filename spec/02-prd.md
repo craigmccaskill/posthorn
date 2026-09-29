@@ -372,6 +372,34 @@ The brief commits to test coverage for header injection (NFR2) and to a 30-day p
 | Security | Explicit table tests against known injection payloads; assertions on outbound mail structure (mock-captured) |
 | CI | GitHub Actions: `go vet ./...` and `go test -race -count=1 ./...` on push to main and on PRs |
 
+## Functional requirements — block F: v2.1 listener minor (added 2026-09-29)
+
+Block F is the first minor after v2.0, scoped to the SMTP listener by two named users rather than a milestone: per-tenant listeners (#30 → #120) and list-header passthrough (#113 → #115). No storage-shape change; everything is opt-in (NFR25).
+
+### Multiple listeners
+
+**FR93.** Posthorn **must** accept `[[smtp_listeners]]` (array of tables) with the same schema as `[smtp_listener]`. The single-table form remains valid and is treated as a one-element array. Declaring both forms is a config parse error naming both.
+
+**FR94.** When more than one listener is declared, each **must** carry a `name` (non-empty, unique, `[A-Za-z0-9_-]+`); a single listener defaults to `smtp_listener`. `listen` addresses **must** be distinct. Every per-listener check that exists today (FR63–FR67, the #41 public-bind refusal and `trusted_network`) applies to each listener independently.
+
+**FR95.** The listener's `name` **must** be the `endpoint` label value on the SMTP metrics, replacing the fixed `smtp_listener` value, and **must** appear in `posthorn validate` output and the listener's log lines. Label values remain operator-configured only (NFR24).
+
+**FR96.** `cmd/posthorn serve` **must** start every declared listener, and shutdown **must** drain all of them. Lifecycle ingestion, suppression, storage, and the retry queue are process-wide and shared; each listener's sends record that listener's transport type. One listener has exactly one transport (ADR-26).
+
+### Header passthrough
+
+**FR97.** A listener **may** declare `passthrough_headers = [...]`. Names **must** come from the fixed allowlist `List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`; any other name is a config parse error. Absent the key, behavior is byte-identical to v2.0 (headers dropped).
+
+**FR98.** For each configured name present on an inbound message, the SMTP ingress **must** copy the value onto `Message.Headers` after rejecting any value containing CR or LF (`554 5.6.0 Invalid header value`, logged). No RFC 2047 decoding is applied. `To`, `Cc`, `Bcc` are excluded by construction (NFR22 unchanged). HTTP ingresses leave `Headers` nil.
+
+**FR99.** Mail transports **must** emit `Message.Headers` structurally through the provider's custom-header mechanism (Postmark `Headers`, Resend `headers`, Mailgun `h:` prefix, outbound SMTP as header lines). A transport that cannot carry custom headers **must** fail config validation when `passthrough_headers` is configured against it, never drop them silently. The webhook transport ignores the field. The header-injection suite (NFR2) extends to passthrough values on every transport.
+
+## Non-functional requirements — block F (added 2026-09-29)
+
+**NFR32.** Passthrough header values are the first submitter-adjacent data that becomes a header by design. NFR1/NFR2 apply at both layers: the ingress rejects CR/LF before the value crosses the boundary, and every transport's injection test includes a passthrough value with an embedded CRLF proving it never reaches the wire.
+
+**NFR33.** Listener `name` is operator-configured and is the only new metric label value; nothing derived from a session (client IP, sender, recipient) enters the label space (NFR24 restated for block F).
+
 ## Epic and story breakdown
 
 Seven epics, sized for implementation in sequence. Each story is intended to be completable in a single 1-2 hour session with passing tests at the end.
@@ -642,6 +670,23 @@ Original definition of done was a Caddy v2 adapter module wrapping the core hand
 - **Story 18.3:** Live validation pass (Postmark events end-to-end; provider battery re-run), tag `v2.0.0`.
   - *Amended 2026-09-09:* the Postmark end-to-end leg is scripted, not manual — `make validate-lifecycle` runs the built binary locally, exposes it via an anonymous cloudflared quick tunnel, registers the webhook through the Postmark API, and asserts delivery + hard-bounce + suppression (FR82–FR87). Deliberately runnable by anyone with a Postmark server token and independent of any specific deployment: release validation is a project property, not an operator's-infrastructure property. Procedure in [docs/manual-test.md](../docs/manual-test.md); CI trigger on `v*-rc*` tags via `lifecycle-live.yml`.
 
+### Epic 19: Multiple SMTP listeners (block F) [M, Exec + Decision]
+
+**Definition of done:** two listeners on different ports relay through their own transports; single-table configs load byte-identically; per-listener metrics label; docs and a multi-tenant recipe live; ADR-26 recorded.
+
+- **Story 19.1:** Config schema: `[[smtp_listeners]]` + single-table compatibility, `name`, distinct-`listen` validation, both-forms parse error; per-listener #41 check. (FR93, FR94)
+- **Story 19.2:** Metrics label, `validate` output, and log lines carry `name`. (FR95, NFR33)
+- **Story 19.3:** `cmd/posthorn` starts and drains N listeners; shared storage/lifecycle/suppression wiring; end-to-end test with two listeners. (FR96)
+- **Story 19.4:** Docs: SMTP ingress page, multi-tenant recipe (one port per tenant, network policy as boundary), roadmap; close #120, reply on #30.
+
+### Epic 20: List-header passthrough (block F) [S, Exec]
+
+**Definition of done:** `List-Unsubscribe` and `List-Unsubscribe-Post` from an inbound listmonk message reach Resend, Postmark, Mailgun, and outbound SMTP; CRLF values rejected at ingress with a test; SES behavior decided and documented; ADR-27 recorded.
+
+- **Story 20.1:** `Message.Headers`, allowlist + `passthrough_headers` validation, ingress copy with CRLF rejection. (FR97, FR98, NFR32)
+- **Story 20.2:** Transport mapping for Postmark/Resend/Mailgun/SMTP-out; SES decision (carry, or fail validation); injection-suite extension. (FR99, NFR32)
+- **Story 20.3:** Docs: listener page + listmonk recipe update; close #115.
+
 ## Out of scope (re-stated for clarity)
 
 Defer to [the project brief](./01-project-brief.md) §"MVP Scope > Out of scope" for the full list. After the 2026-05-16 rescope folded v1.1 / v1.2 / v1.3 into v1.0, the deferred line is now between v1.0 (everything currently spec'd) and v2 (the stateful-platform boundary). Key v1.0 exclusions:
@@ -694,3 +739,4 @@ Every FR and NFR maps back to a brief commitment. Quick reference:
 | Post-MVP > v1.0 block C (operational features) | FR54–FR59, NFR24, Epic 10 |
 | Post-MVP > v1.0 block D (SMTP ingress) | FR60–FR68, NFR22, NFR23, Epic 11 |
 | Post-MVP > v2.0 (recut 2026-08-02) | FR71–FR92, NFR25–NFR31, Epics 13–18, ADRs 19–25 |
+| Post-MVP > v2.1 listener minor (2026-09-29) | FR93–FR99, NFR32–NFR33, Epics 19–20, ADRs 26–27 |
