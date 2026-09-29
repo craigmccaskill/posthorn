@@ -525,6 +525,24 @@ func (d *Duration) UnmarshalText(text []byte) error {
 // Std returns the underlying time.Duration.
 func (d Duration) Std() time.Duration { return time.Duration(d) }
 
+// isTransportSettingKey reports whether an undecoded key lives under a
+// transport's free-form `settings` map (endpoints.transport.settings or
+// smtp_listener.transport.settings). That map decodes into
+// map[string]any, and the TOML decoder marks only its top-level keys as
+// decoded: a nested table such as the webhook transport's `headers`
+// (FR88) is reported undecoded even though the map holds it (#123).
+// Each transport validates its own settings, so keys beneath `settings`
+// are the transport's to accept or reject; the strict unknown-field
+// check still covers every other path.
+func isTransportSettingKey(k toml.Key) bool {
+	for i := 0; i+1 < len(k); i++ {
+		if k[i] == "transport" && k[i+1] == "settings" {
+			return true
+		}
+	}
+	return false
+}
+
 // Load reads a TOML config file from path, resolves ${env.VAR} placeholders,
 // parses the TOML, and runs validation. Returns the validated Config or an
 // error describing the first problem encountered.
@@ -553,9 +571,14 @@ func Load(path string) (*Config, error) {
 	if undecoded := md.Undecoded(); len(undecoded) > 0 {
 		keys := make([]string, 0, len(undecoded))
 		for _, k := range undecoded {
+			if isTransportSettingKey(k) {
+				continue
+			}
 			keys = append(keys, k.String())
 		}
-		return nil, fmt.Errorf("config: unknown field(s) — likely a typo or stale config: %s", strings.Join(keys, ", "))
+		if len(keys) > 0 {
+			return nil, fmt.Errorf("config: unknown field(s) — likely a typo or stale config: %s", strings.Join(keys, ", "))
+		}
 	}
 
 	if err := cfg.Validate(); err != nil {

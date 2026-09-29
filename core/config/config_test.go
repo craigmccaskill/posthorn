@@ -1031,3 +1031,94 @@ func TestValidate_Captcha_Block(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_TransportSettings_NestedTable_Accepted covers #123: the
+// webhook transport's documented `headers` table (FR88) was rejected by
+// the strict unknown-field check because the TOML decoder doesn't mark
+// keys inside a nested table under map[string]any as decoded.
+func TestLoad_TransportSettings_NestedTable_Accepted(t *testing.T) {
+	const webhookTOML = `
+[[endpoints]]
+path = "/api/contact"
+to = ["ops@example.com"]
+from = "Contact <noreply@example.com>"
+subject = "Contact from {{.name}}"
+body = "{{.message}}"
+
+[endpoints.transport]
+type = "webhook"
+
+[endpoints.transport.settings]
+url    = "https://hooks.internal.example/contact-form"
+secret = "0123456789abcdef0123"
+`
+	t.Run("nested table form", func(t *testing.T) {
+		cfg, err := loadString(t, webhookTOML+`
+[endpoints.transport.settings.headers]
+X-Team = "infra"
+`)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		assertHeader(t, cfg, "X-Team", "infra")
+	})
+	t.Run("inline table form", func(t *testing.T) {
+		cfg, err := loadString(t, webhookTOML+`headers = { X-Team = "infra" }
+`)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		assertHeader(t, cfg, "X-Team", "infra")
+	})
+	t.Run("smtp_listener transport settings too", func(t *testing.T) {
+		cfg, err := loadString(t, `
+[smtp_listener]
+listen = "127.0.0.1:2525"
+auth_required = "none"
+allowed_senders = ["*@example.com"]
+
+[smtp_listener.transport]
+type = "webhook"
+
+[smtp_listener.transport.settings]
+url    = "https://hooks.internal.example/relay"
+secret = "0123456789abcdef0123"
+
+[smtp_listener.transport.settings.headers]
+X-Team = "infra"
+`)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		h, _ := cfg.SMTPListener.Transport.Settings["headers"].(map[string]any)
+		if h["X-Team"] != "infra" {
+			t.Errorf("smtp_listener settings.headers = %#v, want X-Team=infra", cfg.SMTPListener.Transport.Settings["headers"])
+		}
+	})
+	t.Run("nested typo outside settings is still rejected", func(t *testing.T) {
+		_, err := loadString(t, webhookTOML+`
+[endpoints.transport.extras]
+X-Team = "infra"
+`)
+		if err == nil {
+			t.Fatal("expected unknown-field error for a nested table that is not under settings")
+		}
+		if !strings.Contains(err.Error(), "endpoints.transport.extras") {
+			t.Errorf("error should name the offending path: %v", err)
+		}
+	})
+}
+
+func assertHeader(t *testing.T, cfg *config.Config, name, want string) {
+	t.Helper()
+	if len(cfg.Endpoints) != 1 {
+		t.Fatalf("endpoints = %d, want 1", len(cfg.Endpoints))
+	}
+	h, ok := cfg.Endpoints[0].Transport.Settings["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("settings.headers = %#v, want map", cfg.Endpoints[0].Transport.Settings["headers"])
+	}
+	if h[name] != want {
+		t.Errorf("settings.headers[%q] = %#v, want %q", name, h[name], want)
+	}
+}
