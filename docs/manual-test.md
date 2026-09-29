@@ -292,6 +292,21 @@ The procedure above uses the Postmark transport. The other four transports (Rese
 
 Each requires its own provider account, API credentials, and DNS setup. The sentinel-key NFR3 invariant applies to every transport: a failed-auth path must not surface the configured key value in captured logs.
 
+### What has actually been validated
+
+The record, as of 2026-09-29. The weekly CI live tier (`integration-live.yml`, since v1.1.0) runs every provider test whose credentials exist in the `live-providers` Environment; only Postmark's public test token has ever been present, so the other three provider tests have skipped on every run. A green weekly run is evidence for Postmark alone.
+
+| Transport | Live validation on record | Where |
+|---|---|---|
+| Postmark | Manual, 2026-05-16. Weekly CI since v1.1.0 (public test token, non-delivering). Lifecycle end-to-end on a real server, 2026-09-29: send, Delivery and hard-bounce webhooks, suppression | This procedure; `make test-live`; `make validate-lifecycle` and the rc-tag gate |
+| Resend | Manual, 2026-05-24 (below). CI test skips: no `RESEND_API_KEY` configured | This section |
+| Mailgun | None. CI test skips: no `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` | Procedure below, unrun |
+| AWS SES | None. CI test skips: no `AWS_ROLE_ARN` | Procedure below, unrun |
+| Outbound SMTP | None | Procedure below, unrun |
+| SMTP listener | No recorded validation run. In production use by an outside operator since 2026-09 (listmonk relaying to Resend, #113) | SMTP ingress procedure below |
+
+Adding a provider's credentials to the `live-providers` Environment turns its row into "weekly CI". Update this table when that happens or when a manual run is recorded.
+
 ### Resend
 
 ```toml
