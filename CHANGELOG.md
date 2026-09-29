@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-09-29
+
+### Fixed
+
+- The webhook transport's documented `headers` table was rejected at config load with "unknown field(s)". The strict unknown-field check didn't look inside nested tables under a transport's free-form `settings`, so a documented, supported setting failed to parse. Keys under `transport.settings` are now left to the transport's own validation; typos anywhere else are still rejected. ([#123](https://github.com/craigmccaskill/posthorn/issues/123))
+
 ## [2.0.0] — 2026-09-29
 
 The v2.0 work — the stateful shift, recut 2026-08-02 against the integration-seam USP (unsubscribe injection and fan-out moved out behind demand gates; see the roadmap). Everything below is opt-in: a config without the new blocks behaves identically to v1.2.
