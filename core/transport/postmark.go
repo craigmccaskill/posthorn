@@ -131,7 +131,7 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) (SendResult, 
 		HtmlBody: msg.BodyHTML,
 	}
 	for _, h := range msg.Headers {
-		body.Headers = append(body.Headers, postmarkHeader{Name: h.Name, Value: h.Value})
+		body.Headers = append(body.Headers, postmarkHeader(h))
 	}
 	for _, a := range msg.Attachments {
 		body.Attachments = append(body.Attachments, postmarkAttachment{

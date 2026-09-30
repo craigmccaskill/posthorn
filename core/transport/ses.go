@@ -159,7 +159,7 @@ func (s *SESTransport) Send(ctx context.Context, msg Message) (SendResult, error
 		payload.Content.Simple.Body.Html = &sesContentField{Data: msg.BodyHTML}
 	}
 	for _, h := range msg.Headers {
-		payload.Content.Simple.Headers = append(payload.Content.Simple.Headers, sesHeader{Name: h.Name, Value: h.Value})
+		payload.Content.Simple.Headers = append(payload.Content.Simple.Headers, sesHeader(h))
 	}
 	for _, a := range msg.Attachments {
 		payload.Content.Simple.Attachments = append(payload.Content.Simple.Attachments, sesAttachment{
