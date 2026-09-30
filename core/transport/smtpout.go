@@ -252,6 +252,17 @@ func validateNoHeaderCRLF(msg Message) error {
 			return fmt.Errorf("to[%d] contains CR or LF", i)
 		}
 	}
+	// Passthrough headers become literal header lines here (FR99), so
+	// the NFR1 check applies to both halves. The ingress already refused
+	// CR/LF values; this is the layer that must not trust that (NFR32).
+	for i, h := range msg.Headers {
+		if strings.ContainsAny(h.Name, "\r\n:") || h.Name == "" {
+			return fmt.Errorf("headers[%d] name %q is not a valid header name", i, h.Name)
+		}
+		if strings.ContainsAny(h.Value, "\r\n") {
+			return fmt.Errorf("headers[%d] (%s) value contains CR or LF", i, h.Name)
+		}
+	}
 	return nil
 }
 
@@ -289,6 +300,9 @@ func (s *SMTPOutTransport) buildRFC5322(msg Message) []byte {
 		writeHeader(&buf, "Reply-To", msg.ReplyTo)
 	}
 	writeHeader(&buf, "Subject", encodeMIMESubject(msg.Subject))
+	for _, h := range msg.Headers {
+		writeHeader(&buf, h.Name, h.Value) // validated CR/LF-free in validateNoHeaderCRLF
+	}
 	writeHeader(&buf, "Date", s.now().UTC().Format(time.RFC1123Z))
 	writeHeader(&buf, "MIME-Version", "1.0")
 

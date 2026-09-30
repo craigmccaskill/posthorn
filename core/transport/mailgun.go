@@ -127,6 +127,14 @@ func (m *MailgunTransport) Send(ctx context.Context, msg Message) (SendResult, e
 			return SendResult{}, &TransportError{Class: ErrTerminal, Cause: err, Message: "encode mailgun html"}
 		}
 	}
+	// Passthrough headers ride as `h:<Name>` fields (ADR-27, FR99): the
+	// name comes from the allowlist and the value is a structured form
+	// value, so neither can open a new header line.
+	for _, h := range msg.Headers {
+		if err := mw.WriteField("h:"+h.Name, h.Value); err != nil {
+			return SendResult{}, &TransportError{Class: ErrTerminal, Cause: err, Message: "encode mailgun passthrough header"}
+		}
+	}
 	// Attachments ride as repeated `attachment` file parts (FR92). The
 	// part header is built via mime.FormatMediaType — parameter values
 	// (the submitter-influenced filename) are quoted/encoded

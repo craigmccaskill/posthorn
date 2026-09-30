@@ -87,6 +87,14 @@ type postmarkRequest struct {
 	TextBody    string               `json:"TextBody"`
 	HtmlBody    string               `json:"HtmlBody,omitempty"`
 	Attachments []postmarkAttachment `json:"Attachments,omitempty"`
+	// Headers is the allowlisted passthrough (ADR-27, FR99): structured
+	// Name/Value pairs, so a value can never become a second header line.
+	Headers []postmarkHeader `json:"Headers,omitempty"`
+}
+
+type postmarkHeader struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
 }
 
 type postmarkAttachment struct {
@@ -121,6 +129,9 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) (SendResult, 
 		Subject:  msg.Subject,
 		TextBody: msg.BodyText,
 		HtmlBody: msg.BodyHTML,
+	}
+	for _, h := range msg.Headers {
+		body.Headers = append(body.Headers, postmarkHeader{Name: h.Name, Value: h.Value})
 	}
 	for _, a := range msg.Attachments {
 		body.Attachments = append(body.Attachments, postmarkAttachment{

@@ -75,6 +75,10 @@ type resendRequest struct {
 	HTML    string   `json:"html,omitempty"`
 
 	Attachments []resendAttachment `json:"attachments,omitempty"`
+	// Headers is the allowlisted passthrough (ADR-27, FR99). Resend takes
+	// a name→value object; a repeated name is joined with ", ", which is
+	// the RFC 2369 list form for the headers on the allowlist.
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type resendAttachment struct {
@@ -114,6 +118,16 @@ func (r *ResendTransport) Send(ctx context.Context, msg Message) (SendResult, er
 		Subject: msg.Subject,
 		Text:    msg.BodyText,
 		HTML:    msg.BodyHTML,
+	}
+	for _, h := range msg.Headers {
+		if body.Headers == nil {
+			body.Headers = map[string]string{}
+		}
+		if prev, ok := body.Headers[h.Name]; ok {
+			body.Headers[h.Name] = prev + ", " + h.Value
+		} else {
+			body.Headers[h.Name] = h.Value
+		}
 	}
 	for _, a := range msg.Attachments {
 		body.Attachments = append(body.Attachments, resendAttachment{

@@ -91,6 +91,15 @@ type sesSimple struct {
 	Subject     sesContentField `json:"Subject"`
 	Body        sesBody         `json:"Body"`
 	Attachments []sesAttachment `json:"Attachments,omitempty"`
+	// Headers is the allowlisted passthrough (ADR-27, FR99): SESv2 Simple
+	// content takes up to 15 structured Name/Value headers (verified
+	// against the SESv2 API reference, Story 20.2).
+	Headers []sesHeader `json:"Headers,omitempty"`
+}
+
+type sesHeader struct {
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
 }
 
 // sesAttachment is the SESv2 Simple-content attachment shape (added by
@@ -148,6 +157,9 @@ func (s *SESTransport) Send(ctx context.Context, msg Message) (SendResult, error
 	}
 	if msg.BodyHTML != "" {
 		payload.Content.Simple.Body.Html = &sesContentField{Data: msg.BodyHTML}
+	}
+	for _, h := range msg.Headers {
+		payload.Content.Simple.Headers = append(payload.Content.Simple.Headers, sesHeader{Name: h.Name, Value: h.Value})
 	}
 	for _, a := range msg.Attachments {
 		payload.Content.Simple.Attachments = append(payload.Content.Simple.Attachments, sesAttachment{
