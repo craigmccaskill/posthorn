@@ -1,0 +1,169 @@
+---
+title: listmonk on Railway via Posthorn
+description: Run listmonk on a host that disables outbound SMTP (Railway's Free, Trial, and Hobby plans) by relaying through Posthorn's SMTP listener to Resend. No volume, no throwaway containers.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+You're running [listmonk](https://listmonk.app) for newsletters. listmonk only sends mail over SMTP. Railway's docs say it plainly: on the Free, Trial, and Hobby plans, "SMTP is disabled on these plans to prevent spam and abuse", and they point you at providers with HTTPS APIs instead. Posthorn is the bridge: it runs as a second service in the same Railway project, listmonk hands it mail over SMTP on the private network, and Posthorn sends it on to Resend over HTTPS, which isn't blocked.
+
+Railway is the worked example. The shape is the same on any host that blocks ports 25, 465, and 587.
+
+**At the end:** listmonk's SMTP settings point at `posthorn.railway.internal:2525` with a username and password. Posthorn forwards to Resend. Posthorn's config is baked into a two-line image you build from a tiny repo, so there's no volume to seed and nothing to do on the first deploy.
+
+## The shape
+
+```d2
+direction: right
+
+railway: Railway project (private network) {
+  listmonk: listmonk
+  posthorn: "Posthorn\nSMTP listener (AUTH PLAIN)"
+
+  listmonk -> posthorn: "SMTP on\nposthorn.railway.internal:2525"
+}
+
+resend: Resend
+
+railway.posthorn -> resend: HTTPS
+```
+
+Railway encrypts service-to-service traffic on the private network with WireGuard, so the SMTP hop runs without TLS and stays private anyway. Posthorn's outbound leg is HTTPS to Resend, which Railway allows on every plan.
+
+## Prerequisites
+
+- A Railway project with listmonk already running
+- A [Resend](https://resend.com) account with a verified sending domain. Postmark, Mailgun, or SES work the same way; swap the transport block
+- A Git repository for two files, `Dockerfile` and `posthorn.toml`. Private is fine; Railway builds from it
+- listmonk's default from address on the verified domain
+
+## Walkthrough
+
+<Steps>
+
+1. **Create the config repo.**
+
+   Two files at the root. Railway only picks up a Dockerfile named exactly `Dockerfile`.
+
+   ```dockerfile
+   # Dockerfile
+   FROM ghcr.io/craigmccaskill/posthorn:2
+   COPY posthorn.toml /etc/posthorn/config.toml
+   ```
+
+   The image's entrypoint already runs `posthorn serve --config /etc/posthorn/config.toml`, so copying the file to that path is the whole build. Secrets are not in the file; the `${env.VAR}` placeholders are filled from Railway variables at start.
+
+   ```toml
+   # posthorn.toml
+   [smtp_listener]
+   listen          = ":2525"
+   auth_required   = "smtp-auth"
+   require_tls     = false            # the hop never leaves Railway's private network, which is already encrypted
+   allowed_senders = ["*@example.com"]
+   max_recipients_per_session = 50    # newsletter sends batch recipients per session
+   max_message_size = "10MB"          # newsletters embed images
+
+   [[smtp_listener.smtp_users]]
+   username = "listmonk"
+   password = "${env.LISTMONK_SMTP_PASSWORD}"
+
+   [smtp_listener.transport]
+   type = "resend"
+
+   [smtp_listener.transport.settings]
+   api_key = "${env.RESEND_API_KEY}"
+   ```
+
+   `listen = ":2525"` binds both IPv4 and IPv6, which matters on Railway: environments created before 2025-10-16 have an IPv6-only private network. Nothing to change either way.
+
+   Check the file before you push it. Placeholder values are fine for the env vars; validation only needs them to exist.
+
+   ```bash
+   docker run --rm --entrypoint /usr/local/bin/posthorn \
+     -v "$PWD/posthorn.toml:/etc/posthorn/config.toml:ro" \
+     -e RESEND_API_KEY=x -e LISTMONK_SMTP_PASSWORD=x \
+     ghcr.io/craigmccaskill/posthorn:2 validate --config /etc/posthorn/config.toml
+   ```
+
+2. **Add the Posthorn service in Railway.**
+
+   In the project, add a new service from the GitHub repo you just made. The build log should say it detected the Dockerfile. Name the service `posthorn`; the name becomes its private hostname, `posthorn.railway.internal`.
+
+   Under the service's **Variables**, add `RESEND_API_KEY` and `LISTMONK_SMTP_PASSWORD` (any long random string). Seal both so the values never show in the UI again.
+
+   Don't add a public domain to this service. Nothing outside the project needs to reach it. Railway's private networking needs no port configuration.
+
+   <Aside type="note">
+   Deploying the public image directly instead of building the repo also works on Railway, but then there's no way to get `posthorn.toml` into the container without a volume, and a fresh volume is empty on the first deploy, so the container exits before anything can write to it. Building from the two-file repo avoids the whole problem.
+   </Aside>
+
+3. **Point listmonk at Posthorn.**
+
+   In listmonk's admin UI, **Settings**, **SMTP**:
+
+   | Setting | Value | Why |
+   |---|---|---|
+   | Host | `posthorn.railway.internal` | The Posthorn service's private hostname |
+   | Port | `2525` | Matches `listen` |
+   | Auth protocol | `plain` | listmonk defaults to CRAM-MD5. Posthorn accepts AUTH PLAIN only |
+   | Username / Password | `listmonk` / the `LISTMONK_SMTP_PASSWORD` value | Matches `smtp_users` |
+   | TLS | `Off` | listmonk defaults to STARTTLS. The listener doesn't offer it with `require_tls = false` |
+   | Max connections | `4` | Well under Posthorn's per-client cap of 16 |
+   | Retries | `2` | listmonk's default; fine |
+
+   **Settings**, **General**: the default from email must be on a domain in `allowed_senders`.
+
+   **Settings**, **Performance**: set **Concurrency** to `2` and **Message rate** to `4`. listmonk applies the rate per worker, so that's about eight messages a second. Resend allows ten API requests a second per team by default and answers `429` above that. Posthorn retries a `429` once after five seconds, then returns `451` to listmonk, which retries on its own schedule. Staying under the cap avoids the dance entirely. listmonk's defaults (10 workers, 10 per second, 10 connections) would blow through it on any real send.
+
+4. **Send a test.**
+
+   Save the settings, then send a campaign to a list containing only your own address. Watch the Posthorn service's logs in Railway:
+
+   ```json
+   {"msg":"smtp_listener registered","listen":":2525","transport":"resend","smtp_users":1}
+   {"msg":"smtp_session_open", ...}
+   {"msg":"submission_sent","transport_message_id":"...", ...}
+   ```
+
+   The `transport_message_id` matches the message in Resend's dashboard. The received mail should be the HTML version; listmonk sends `multipart/alternative` with quoted-printable encoding, and Posthorn v2.0.0 and later decode it correctly.
+
+</Steps>
+
+## Upgrade: retries that survive a restart
+
+Without storage, a Resend outage that outlasts Posthorn's inline retry hands the message back to listmonk as a `451`, and listmonk's own retry setting takes over. That is fine for most newsletters. If you want Posthorn to own the retry across restarts, add the [storage](/features/storage/) block and a volume:
+
+```toml
+[storage]
+path = "/data/posthorn.db"
+```
+
+Two things to know on Railway before you do. Each service gets one volume, so mount it at `/data`. And Railway's docs note that images running as a non-root user "will have permissions issues when performing operations within an attached volume"; their fix is setting `RAILWAY_RUN_UID=0`, which runs the container as root. Posthorn's image runs as `nonroot` on purpose, so this trade is yours to make. The baseline recipe stays stateless to avoid it.
+
+## Why this beats wiring listmonk to a provider's SMTP
+
+- **It works on the plans where SMTP is switched off.** listmonk keeps speaking SMTP; the blocked ports are never used.
+- **One credential.** The Resend key lives in Posthorn's variables, not listmonk's database. Rotate it by redeploying Posthorn.
+- **Provider swap is a TOML edit.** Move to Postmark or Mailgun by changing the transport block. listmonk doesn't change.
+- **One log stream.** Anything else in the project that sends mail can use the same listener with its own `smtp_users` entry.
+
+## Gotchas
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| listmonk reports an auth failure or unsupported mechanism | Auth protocol left on CRAM-MD5 | Set it to `plain` |
+| Connection hangs or a TLS error | TLS left on STARTTLS | Set TLS to `Off` |
+| `no such host: posthorn.railway.internal` | Services in different projects or environments, or the service isn't named `posthorn` | Same project and environment; match the hostname to the service name |
+| `421` on many connections | listmonk's max connections above Posthorn's `max_connections_per_ip` | Lower listmonk's max connections |
+| `451 Upstream transport failed` during a send | Resend `429` from too much concurrency | Lower concurrency and message rate |
+| `550` sender not allowed | From address not in `allowed_senders` | Add the domain, or fix listmonk's from address |
+| HTML arrives as plain text, or with `=3D` in it | Posthorn older than v2.0.0 | Use the `:2` image tag |
+| `List-Unsubscribe` headers missing at Resend | The listener doesn't pass them through yet ([#115](https://github.com/craigmccaskill/posthorn/issues/115)) | Body unsubscribe links still work; track the issue |
+| Container exits at start with a config error | Deployed the public image instead of building the repo, or the Dockerfile isn't named `Dockerfile` | Build from the two-file repo |
+
+## See also
+
+- [Self-hosted Ghost via Posthorn](/recipes/ghost/) for the same pattern on a Docker host
+- [Internal SMTP relay (Docker Compose)](/recipes/internal-smtp-relay/) for the generic version
+- [SMTP ingress](/features/smtp-ingress/) for the full listener reference
+- [Resend transport](/configuration/transports/resend/)
