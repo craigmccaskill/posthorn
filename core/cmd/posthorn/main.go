@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -185,26 +186,15 @@ func runServe(args []string) error {
 		ingress.NewHTTPIngress(server, logger),
 	}
 
-	// v1.0 block D: optional SMTP listener (FR62). Built only when the
-	// operator's TOML includes [smtp_listener].
-	if cfg.SMTPListener != nil {
-		smtpIng, smtpTransport, err := buildSMTPIngress(cfg.SMTPListener, logger, recorder)
-		if err != nil {
-			return fmt.Errorf("build smtp_listener: %w", err)
-		}
-		if gate != nil {
-			if l, ok := smtpIng.(*smtp.Listener); ok {
-				l.AttachStorage(gate)
-			}
-		}
-		ingresses = append(ingresses, smtpIng)
-		transports[smtpListenerEndpoint] = smtpTransport
-		logger.Info("smtp_listener registered",
-			slog.String("listen", cfg.SMTPListener.Listen),
-			slog.String("transport", cfg.SMTPListener.Transport.Type),
-			slog.Int("smtp_users", len(cfg.SMTPListener.SMTPUsers)),
-		)
+	// v1.0 block D / v2.1 block F: SMTP listeners (FR62, FR96). One per
+	// [smtp_listener] table or [[smtp_listeners]] entry, each with its
+	// own transport, registered under the listener's name so queued
+	// replays find it.
+	smtpIngs, err := buildSMTPIngresses(cfg, logger, recorder, gate, transports)
+	if err != nil {
+		return err
 	}
+	ingresses = append(ingresses, smtpIngs...)
 
 	// v2.0: background retry worker + storage maintenance (FR78-FR80).
 	// Both stop when the ingresses shut down.
@@ -255,10 +245,6 @@ func runServe(args []string) error {
 	return runIngressesUntilSignal(ingresses, logger)
 }
 
-// smtpListenerEndpoint is the submission-log endpoint label for mail
-// accepted by the SMTP listener (it has no HTTP path).
-const smtpListenerEndpoint = "smtp_listener"
-
 // queuedSendFunc resolves a queued submission's endpoint back to its
 // transport. An endpoint that no longer exists in the config (edited
 // between restarts) yields a terminal error, which dead-letters the
@@ -296,6 +282,7 @@ func buildSMTPIngress(c *config.SMTPListenerConfig, logger *slog.Logger, recorde
 		return nil, nil, fmt.Errorf("max_message_size: %w", err)
 	}
 	listenerCfg := smtp.ListenerConfig{
+		Name:                    c.EffectiveName(),
 		Listen:                  c.Listen,
 		RequireTLS:              c.EffectiveRequireTLS(),
 		TLSCert:                 c.TLSCert,
@@ -323,6 +310,47 @@ func buildSMTPIngress(c *config.SMTPListenerConfig, logger *slog.Logger, recorde
 		return nil, nil, err
 	}
 	return ing, tp, nil
+}
+
+// buildSMTPIngresses builds one ingress per configured listener (FR96):
+// the single [smtp_listener] table or every [[smtp_listeners]] entry.
+// Storage is attached when present, and each listener's transport is
+// registered under the listener's name, which is also the endpoint
+// label the submission log carries, so a queued replay resolves back to
+// the transport that accepted it.
+func buildSMTPIngresses(cfg *config.Config, logger *slog.Logger, recorder *metrics.Recorder, gate *storage.Gate, transports map[string]transport.Transport) ([]ingress.Ingress, error) {
+	var out []ingress.Ingress
+	for i, lc := range cfg.Listeners() {
+		name := lc.EffectiveName()
+		ing, tp, err := buildSMTPIngress(lc, logger, recorder)
+		if err != nil {
+			return nil, fmt.Errorf("build %s: %w", listenerLabel(cfg, i), err)
+		}
+		if gate != nil {
+			if l, ok := ing.(*smtp.Listener); ok {
+				l.AttachStorage(gate)
+			}
+		}
+		out = append(out, ing)
+		transports[name] = tp
+		logger.Info("smtp_listener registered",
+			slog.String("listener", name),
+			slog.String("listen", lc.Listen),
+			slog.String("transport", lc.Transport.Type),
+			slog.Int("smtp_users", len(lc.SMTPUsers)),
+		)
+	}
+	return out, nil
+}
+
+// listenerLabel names the i-th listener the way the operator wrote it:
+// "smtp_listener" for the single-table form, "smtp_listeners[i] (name)"
+// for the array form. Used in errors and validate output.
+func listenerLabel(cfg *config.Config, i int) string {
+	if cfg.SMTPListener != nil {
+		return "smtp_listener"
+	}
+	return fmt.Sprintf("smtp_listeners[%d] (%s)", i, cfg.SMTPListeners[i].EffectiveName())
 }
 
 // runIngressesUntilSignal starts each ingress in its own goroutine,
@@ -411,15 +439,23 @@ func runValidate(args []string) error {
 	// required, TLS cert/key readable, client-cert CA parseable) live in
 	// buildSMTPIngress, not config.Load — so without this a listener-only
 	// config that passes `validate` could still fail at `serve`.
-	if cfg.SMTPListener != nil {
-		if _, _, err := buildSMTPIngress(cfg.SMTPListener, buildLogger(cfg.Logging), nil); err != nil {
-			return fmt.Errorf("smtp_listener: %w", err)
+	listeners := cfg.Listeners()
+	for i, lc := range listeners {
+		if _, _, err := buildSMTPIngress(lc, buildLogger(cfg.Logging), nil); err != nil {
+			return fmt.Errorf("%s: %w", listenerLabel(cfg, i), err)
 		}
 	}
 
 	summary := fmt.Sprintf("%d endpoint(s)", len(cfg.Endpoints))
-	if cfg.SMTPListener != nil {
-		summary += " + smtp_listener"
+	switch {
+	case cfg.SMTPListener != nil:
+		summary += " + " + cfg.SMTPListener.EffectiveName()
+	case len(listeners) > 0:
+		parts := make([]string, len(listeners))
+		for i, lc := range listeners {
+			parts[i] = fmt.Sprintf("%s (%s)", lc.EffectiveName(), lc.Listen)
+		}
+		summary += fmt.Sprintf(" + %d smtp listener(s): %s", len(listeners), strings.Join(parts, ", "))
 	}
 	fmt.Printf("config OK: %s\n", summary)
 	return nil
