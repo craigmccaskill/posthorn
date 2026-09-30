@@ -28,8 +28,15 @@ type Config struct {
 	Endpoints    []EndpointConfig    `toml:"endpoints"`
 	Logging      LoggingConfig       `toml:"logging"`
 	SMTPListener *SMTPListenerConfig `toml:"smtp_listener"`
-	Storage      *StorageConfig      `toml:"storage"`
-	Lifecycle    *LifecycleConfig    `toml:"lifecycle"`
+
+	// SMTPListeners is the array form (FR93, ADR-26): several listeners,
+	// each with its own port, auth, allowlists, and transport. The
+	// single-table SMTPListener above is shorthand for a one-element
+	// array; declaring both is a parse error. Consumers should read
+	// Listeners(), which returns whichever form was used.
+	SMTPListeners []SMTPListenerConfig `toml:"smtp_listeners"`
+	Storage       *StorageConfig       `toml:"storage"`
+	Lifecycle     *LifecycleConfig     `toml:"lifecycle"`
 }
 
 // LifecycleConfig is the optional top-level [lifecycle] block (FR82,
@@ -118,6 +125,12 @@ func (s *StorageConfig) Validate() error {
 // smtp circular dependency; the smtp package converts it to its
 // internal ListenerConfig shape.
 type SMTPListenerConfig struct {
+	// Name identifies the listener in metrics (the `endpoint` label),
+	// `posthorn validate` output, and log lines (FR94, FR95). Required
+	// when more than one listener is declared; a lone listener defaults
+	// to DefaultSMTPListenerName so existing dashboards keep working.
+	Name string `toml:"name"`
+
 	Listen string `toml:"listen"`
 
 	// RequireTLS forces STARTTLS upgrade before AUTH / MAIL / RCPT.
@@ -625,8 +638,14 @@ func (c *Config) Validate() error {
 	// Ghost/Gitea recipes run exactly this); the HTTP mux still serves
 	// /healthz and /metrics with zero endpoints. Require at least one
 	// ingress of either kind.
-	if len(c.Endpoints) == 0 && c.SMTPListener == nil {
-		return errors.New("at least one ingress required: define [[endpoints]] or [smtp_listener]")
+	if len(c.Endpoints) == 0 && c.SMTPListener == nil && len(c.SMTPListeners) == 0 {
+		return errors.New("at least one ingress required: define [[endpoints]], [smtp_listener], or [[smtp_listeners]]")
+	}
+	// FR93: one form or the other. The single table is shorthand for a
+	// one-element array; mixing them would leave the operator guessing
+	// which one is live.
+	if c.SMTPListener != nil && len(c.SMTPListeners) > 0 {
+		return errors.New("[smtp_listener] and [[smtp_listeners]] are both declared; use one form (the single table is shorthand for a one-element array)")
 	}
 
 	seenPaths := map[string]bool{}
@@ -655,6 +674,30 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("smtp_listener: %w", err)
 		}
 	}
+	if n := len(c.SMTPListeners); n > 0 {
+		seenName := map[string]int{}
+		seenListen := map[string]string{}
+		for i := range c.SMTPListeners {
+			l := &c.SMTPListeners[i]
+			// FR94: names are what tell two listeners apart in metrics
+			// and logs, so they are mandatory once there are two.
+			if l.Name == "" && n > 1 {
+				return fmt.Errorf("smtp_listeners[%d]: name is required when more than one listener is declared", i)
+			}
+			name := l.EffectiveName()
+			if j, dup := seenName[name]; dup {
+				return fmt.Errorf("smtp_listeners[%d]: duplicate name %q (also smtp_listeners[%d])", i, name, j)
+			}
+			seenName[name] = i
+			if err := l.Validate(); err != nil {
+				return fmt.Errorf("smtp_listeners[%d] (%s): %w", i, name, err)
+			}
+			if other, dup := seenListen[l.Listen]; dup {
+				return fmt.Errorf("smtp_listeners[%d] (%s): listen %q is already used by listener %q", i, name, l.Listen, other)
+			}
+			seenListen[l.Listen] = name
+		}
+	}
 
 	if c.Storage != nil {
 		if err := c.Storage.Validate(); err != nil {
@@ -681,6 +724,42 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// DefaultSMTPListenerName is the name a lone listener gets when the
+// operator doesn't set one (FR94). It matches the metrics label that
+// v1.x and v2.0 emitted, so single-listener dashboards are unchanged.
+const DefaultSMTPListenerName = "smtp_listener"
+
+// smtpListenerNameRe bounds listener names to what is safe in a metric
+// label and a log field (FR94, NFR33).
+var smtpListenerNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// Listeners returns the effective listener list regardless of which
+// config form was used: the single [smtp_listener] table as a
+// one-element list, or every [[smtp_listeners]] entry in declaration
+// order. Pointers alias the Config's own storage. Nil when no listener
+// is configured.
+func (c *Config) Listeners() []*SMTPListenerConfig {
+	if c.SMTPListener != nil {
+		return []*SMTPListenerConfig{c.SMTPListener}
+	}
+	if len(c.SMTPListeners) == 0 {
+		return nil
+	}
+	out := make([]*SMTPListenerConfig, len(c.SMTPListeners))
+	for i := range c.SMTPListeners {
+		out[i] = &c.SMTPListeners[i]
+	}
+	return out
+}
+
+// EffectiveName resolves Name to DefaultSMTPListenerName when unset.
+func (s *SMTPListenerConfig) EffectiveName() string {
+	if s.Name == "" {
+		return DefaultSMTPListenerName
+	}
+	return s.Name
+}
+
 // Validate runs structural checks on the SMTP listener block. The
 // detailed semantic checks (auth/cert combinations) live in the smtp
 // package's own Validate; here we just confirm required fields are
@@ -688,6 +767,9 @@ func (c *Config) Validate() error {
 func (s *SMTPListenerConfig) Validate() error {
 	if s.Listen == "" {
 		return errors.New("listen is required (e.g., \":2525\")")
+	}
+	if s.Name != "" && !smtpListenerNameRe.MatchString(s.Name) {
+		return fmt.Errorf("name %q: must match [A-Za-z0-9_-]+ (it becomes a metrics label and a log field)", s.Name)
 	}
 	if len(s.AllowedSenders) == 0 {
 		return errors.New("allowed_senders: at least one entry required")

@@ -1122,3 +1122,188 @@ func assertHeader(t *testing.T, cfg *config.Config, name, want string) {
 		t.Errorf("settings.headers[%q] = %#v, want %q", name, h[name], want)
 	}
 }
+
+// --- Block F, Story 19.1: multiple listeners (FR93, FR94) ---
+
+// listenerBlock renders one listener block in either the single-table
+// form ("[smtp_listener]") or the array form ("[[smtp_listeners]]").
+// extra is appended verbatim inside the block (before the sub-tables).
+func listenerBlock(header, name, listen, extra string) string {
+	prefix := "smtp_listener"
+	if header == "[[smtp_listeners]]" {
+		prefix = "smtp_listeners"
+	}
+	nameLine := ""
+	if name != "" {
+		nameLine = "name = \"" + name + "\"\n"
+	}
+	return "\n" + header + "\n" + nameLine +
+		"listen = \"" + listen + "\"\n" +
+		"auth_required = \"smtp-auth\"\n" +
+		"allowed_senders = [\"*@example.com\"]\n" +
+		extra + "\n" +
+		"[[" + prefix + ".smtp_users]]\nusername = \"u\"\npassword = \"p\"\n\n" +
+		"[" + prefix + ".transport]\ntype = \"postmark\"\n\n" +
+		"[" + prefix + ".transport.settings]\napi_key = \"k\"\n"
+}
+
+func TestLoad_MultipleListeners_ArrayForm(t *testing.T) {
+	cfg, err := loadString(t, minimalTOML+
+		listenerBlock("[[smtp_listeners]]", "tenant-a", ":2525", "")+
+		listenerBlock("[[smtp_listeners]]", "tenant-b", ":2526", ""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SMTPListener != nil {
+		t.Errorf("single-table field should be nil in array form, got %+v", cfg.SMTPListener)
+	}
+	ls := cfg.Listeners()
+	if len(ls) != 2 {
+		t.Fatalf("Listeners() = %d, want 2", len(ls))
+	}
+	if ls[0].EffectiveName() != "tenant-a" || ls[1].EffectiveName() != "tenant-b" {
+		t.Errorf("names = %q, %q", ls[0].EffectiveName(), ls[1].EffectiveName())
+	}
+	if ls[0].Listen != ":2525" || ls[1].Listen != ":2526" {
+		t.Errorf("listen = %q, %q", ls[0].Listen, ls[1].Listen)
+	}
+}
+
+func TestLoad_MultipleListeners_ArrayOnlyNoEndpoints(t *testing.T) {
+	// FR93 + the listener-only deployment shape (#37) together.
+	cfg, err := loadString(t, listenerBlock("[[smtp_listeners]]", "a", ":2525", "")+
+		listenerBlock("[[smtp_listeners]]", "b", ":2526", ""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Endpoints) != 0 || len(cfg.Listeners()) != 2 {
+		t.Fatalf("shape: endpoints=%d listeners=%d", len(cfg.Endpoints), len(cfg.Listeners()))
+	}
+}
+
+func TestLoad_SingleListener_Unchanged(t *testing.T) {
+	// Existing single-table configs keep the same field and get the
+	// default name (FR93, FR94).
+	cfg, err := loadString(t, minimalTOML+listenerBlock("[smtp_listener]", "", ":2525", ""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.SMTPListener == nil {
+		t.Fatal("single-table field should be populated")
+	}
+	ls := cfg.Listeners()
+	if len(ls) != 1 || ls[0] != cfg.SMTPListener {
+		t.Fatalf("Listeners() should return the single listener, got %d", len(ls))
+	}
+	if got := ls[0].EffectiveName(); got != config.DefaultSMTPListenerName {
+		t.Errorf("EffectiveName = %q, want %q", got, config.DefaultSMTPListenerName)
+	}
+}
+
+func TestLoad_SingleArrayElement_DefaultsName(t *testing.T) {
+	cfg, err := loadString(t, minimalTOML+listenerBlock("[[smtp_listeners]]", "", ":2525", ""))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Listeners()[0].EffectiveName(); got != config.DefaultSMTPListenerName {
+		t.Errorf("EffectiveName = %q, want %q", got, config.DefaultSMTPListenerName)
+	}
+}
+
+func TestLoad_BothListenerForms_Rejected(t *testing.T) {
+	_, err := loadString(t, minimalTOML+
+		listenerBlock("[smtp_listener]", "", ":2525", "")+
+		listenerBlock("[[smtp_listeners]]", "b", ":2526", ""))
+	if err == nil {
+		t.Fatal("expected error when both forms are declared")
+	}
+	for _, want := range []string{"smtp_listener", "smtp_listeners"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %q: %v", want, err)
+		}
+	}
+}
+
+func TestLoad_MultipleListeners_NameRules(t *testing.T) {
+	cases := []struct {
+		name   string
+		toml   string
+		wantIn []string
+	}{
+		{
+			name: "missing name with two listeners",
+			toml: minimalTOML + listenerBlock("[[smtp_listeners]]", "a", ":2525", "") +
+				listenerBlock("[[smtp_listeners]]", "", ":2526", ""),
+			wantIn: []string{"smtp_listeners[1]", "name is required"},
+		},
+		{
+			name: "duplicate names",
+			toml: minimalTOML + listenerBlock("[[smtp_listeners]]", "same", ":2525", "") +
+				listenerBlock("[[smtp_listeners]]", "same", ":2526", ""),
+			wantIn: []string{"smtp_listeners[1]", "duplicate name", "same"},
+		},
+		{
+			name:   "invalid characters",
+			toml:   minimalTOML + listenerBlock("[[smtp_listeners]]", "tenant a", ":2525", ""),
+			wantIn: []string{"name", "tenant a"},
+		},
+		{
+			name:   "invalid characters in single form",
+			toml:   minimalTOML + listenerBlock("[smtp_listener]", "no/slash", ":2525", ""),
+			wantIn: []string{"name", "no/slash"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadString(t, tc.toml)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, w := range tc.wantIn {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error should contain %q: %v", w, err)
+				}
+			}
+		})
+	}
+}
+
+func TestLoad_MultipleListeners_DistinctListen(t *testing.T) {
+	_, err := loadString(t, minimalTOML+
+		listenerBlock("[[smtp_listeners]]", "a", ":2525", "")+
+		listenerBlock("[[smtp_listeners]]", "b", ":2525", ""))
+	if err == nil {
+		t.Fatal("expected error for duplicate listen address")
+	}
+	for _, w := range []string{"smtp_listeners[1]", ":2525", "\"a\""} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error should contain %q: %v", w, err)
+		}
+	}
+}
+
+func TestLoad_MultipleListeners_PerListenerBindCheck(t *testing.T) {
+	// #41 applies to each listener independently (FR94): the second one
+	// is auth "none" on an all-interfaces bind without trusted_network.
+	_, err := loadString(t, minimalTOML+
+		listenerBlock("[[smtp_listeners]]", "a", ":2525", "")+
+		"\n[[smtp_listeners]]\nname = \"b\"\nlisten = \":2526\"\nauth_required = \"none\"\nallowed_senders = [\"*@example.com\"]\n\n[smtp_listeners.transport]\ntype = \"postmark\"\n\n[smtp_listeners.transport.settings]\napi_key = \"k\"\n")
+	if err == nil {
+		t.Fatal("expected #41 error for the second listener")
+	}
+	for _, w := range []string{"smtp_listeners[1] (b)", "trusted_network"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error should contain %q: %v", w, err)
+		}
+	}
+}
+
+func TestLoad_MultipleListeners_UnknownFieldRejected(t *testing.T) {
+	_, err := loadString(t, minimalTOML+listenerBlock("[[smtp_listeners]]", "a", ":2525", "starttls = true\n"))
+	if err == nil {
+		t.Fatal("expected unknown-field error inside an array element")
+	}
+	if !strings.Contains(err.Error(), "smtp_listeners.starttls") {
+		t.Errorf("error should name the offending key: %v", err)
+	}
+}
