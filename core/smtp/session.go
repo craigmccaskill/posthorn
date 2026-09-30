@@ -388,9 +388,14 @@ func (s *session) handleDATA() {
 		return
 	}
 
-	msg, err := parseMIMEToMessage(buf.Bytes(), s.mailFrom, s.rcptTo)
+	msg, err := parseMIMEToMessageWith(buf.Bytes(), s.mailFrom, s.rcptTo, s.l.cfg.PassthroughHeaders)
 	if err != nil {
-		_ = s.writeReply(550, "5.6.0 Malformed message: "+err.Error())
+		if errors.Is(err, errPassthroughCRLF) {
+			// FR98: a passthrough value that would break a header line.
+			_ = s.writeReply(554, "5.6.0 Invalid header value")
+		} else {
+			_ = s.writeReply(550, "5.6.0 Malformed message: "+err.Error())
+		}
 		s.resetTransaction()
 		return
 	}

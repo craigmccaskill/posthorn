@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -1220,5 +1221,112 @@ func TestSMTP_NamedListener_MetricsLabel(t *testing.T) {
 				t.Errorf("missing %q in metrics", want)
 			}
 		})
+	}
+}
+
+// --- Block F, Story 20.1: passthrough headers at the ingress (FR97, FR98) ---
+
+func TestParseMIMEToMessage_PassthroughHeaders(t *testing.T) {
+	data := []byte("From: a@example.com\r\n" +
+		"Subject: News\r\n" +
+		"List-Unsubscribe: <https://lists.example/u/abc>, <mailto:u@lists.example>\r\n" +
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n" +
+		"List-Id: Weekly <weekly.lists.example>\r\n" +
+		"X-Team: infra\r\n" +
+		"Bcc: victim@example.net\r\n" +
+		"\r\nbody\r\n")
+
+	t.Run("configured names copied in configuration order, as received", func(t *testing.T) {
+		msg, err := parseMIMEToMessageWith(data, "a@example.com", []string{"r@example.com"},
+			[]string{"List-Unsubscribe-Post", "list-unsubscribe"})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		want := []transport.Header{
+			{Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click"},
+			{Name: "List-Unsubscribe", Value: "<https://lists.example/u/abc>, <mailto:u@lists.example>"},
+		}
+		if len(msg.Headers) != len(want) {
+			t.Fatalf("Headers = %+v, want %+v", msg.Headers, want)
+		}
+		for i := range want {
+			if msg.Headers[i] != want[i] {
+				t.Errorf("Headers[%d] = %+v, want %+v", i, msg.Headers[i], want[i])
+			}
+		}
+	})
+	t.Run("nothing configured, nothing copied", func(t *testing.T) {
+		msg, err := parseMIMEToMessageWith(data, "a@example.com", []string{"r@example.com"}, nil)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if msg.Headers != nil {
+			t.Errorf("Headers should be nil, got %+v", msg.Headers)
+		}
+	})
+	t.Run("names off the allowlist are skipped even if asked for", func(t *testing.T) {
+		// Config validation refuses these first; the parser is the second lock (NFR22).
+		msg, err := parseMIMEToMessageWith(data, "a@example.com", []string{"r@example.com"},
+			[]string{"Bcc", "X-Team", "List-Id"})
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(msg.Headers) != 1 || msg.Headers[0].Name != "List-Id" {
+			t.Errorf("Headers = %+v, want only List-Id", msg.Headers)
+		}
+		if len(msg.To) != 1 || msg.To[0] != "r@example.com" {
+			t.Errorf("recipients must stay envelope-only, got %v", msg.To)
+		}
+	})
+	t.Run("CR inside a value fails the message", func(t *testing.T) {
+		bad := []byte("From: a@example.com\r\nSubject: x\r\nList-Id: a\rBcc: victim@example.net\r\n\r\nbody\r\n")
+		_, err := parseMIMEToMessageWith(bad, "a@example.com", []string{"r@example.com"}, []string{"List-Id"})
+		if !errors.Is(err, errPassthroughCRLF) {
+			t.Fatalf("want errPassthroughCRLF, got %v", err)
+		}
+	})
+}
+
+func TestSMTP_PassthroughHeaders_ReachTransportOr554(t *testing.T) {
+	cfg := baseTestConfig()
+	cfg.PassthroughHeaders = []string{"List-Unsubscribe"}
+	f := startListener(t, cfg)
+
+	send := func(t *testing.T, headerLine string) int {
+		t.Helper()
+		tp := f.dial()
+		_ = tp.PrintfLine("EHLO client.test")
+		expectMultiline(t, tp, 250)
+		_ = tp.PrintfLine("AUTH PLAIN %s", authPlainCreds("user", "pass"))
+		expect(t, tp, 235)
+		_ = tp.PrintfLine("MAIL FROM:<noreply@example.com>")
+		expect(t, tp, 250)
+		_ = tp.PrintfLine("RCPT TO:<alice@somewhere.com>")
+		expect(t, tp, 250)
+		_ = tp.PrintfLine("DATA")
+		expect(t, tp, 354)
+		_ = tp.PrintfLine("%s", "Subject: Hi\r\n"+headerLine+"\r\n\r\nBody.\r\n.")
+		code, _, err := tp.ReadResponse(0)
+		if err != nil && code == 0 {
+			t.Fatalf("read reply: %v", err)
+		}
+		_ = tp.PrintfLine("QUIT")
+		return code
+	}
+
+	if code := send(t, "List-Unsubscribe: <mailto:u@example.com>"); code != 250 {
+		t.Fatalf("clean header: reply %d, want 250", code)
+	}
+	waitForSend(t, f.mt, 1, 2*time.Second)
+	got := f.mt.Sent()[0].Headers
+	if len(got) != 1 || got[0].Name != "List-Unsubscribe" || got[0].Value != "<mailto:u@example.com>" {
+		t.Errorf("transport received Headers = %+v", got)
+	}
+
+	if code := send(t, "List-Unsubscribe: <mailto:u@example.com>\rBcc: victim@example.net"); code != 554 {
+		t.Errorf("CR in passthrough value: reply %d, want 554", code)
+	}
+	if n := len(f.mt.Sent()); n != 1 {
+		t.Errorf("rejected message must not reach the transport; sent = %d", n)
 	}
 }

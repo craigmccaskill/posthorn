@@ -1307,3 +1307,51 @@ func TestLoad_MultipleListeners_UnknownFieldRejected(t *testing.T) {
 		t.Errorf("error should name the offending key: %v", err)
 	}
 }
+
+// --- Block F, Story 20.1: passthrough_headers (FR97) ---
+
+func TestLoad_PassthroughHeaders(t *testing.T) {
+	t.Run("allowlisted names canonicalized, single form", func(t *testing.T) {
+		cfg, err := loadString(t, minimalTOML+listenerBlock("[smtp_listener]", "", ":2525",
+			"passthrough_headers = [\"list-unsubscribe\", \"List-Unsubscribe-Post\"]\n"))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		got := cfg.Listeners()[0].PassthroughHeaders
+		want := []string{"List-Unsubscribe", "List-Unsubscribe-Post"}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("passthrough_headers = %v, want %v", got, want)
+		}
+	})
+	t.Run("array form, per listener", func(t *testing.T) {
+		cfg, err := loadString(t, minimalTOML+
+			listenerBlock("[[smtp_listeners]]", "a", ":2525", "passthrough_headers = [\"List-Id\"]\n")+
+			listenerBlock("[[smtp_listeners]]", "b", ":2526", ""))
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		ls := cfg.Listeners()
+		if len(ls[0].PassthroughHeaders) != 1 || ls[0].PassthroughHeaders[0] != "List-Id" {
+			t.Errorf("listener a = %v", ls[0].PassthroughHeaders)
+		}
+		if len(ls[1].PassthroughHeaders) != 0 {
+			t.Errorf("listener b should have none, got %v", ls[1].PassthroughHeaders)
+		}
+	})
+	for _, tc := range []struct{ name, list, wantIn string }{
+		{"unknown name", `["X-Team"]`, `"X-Team": not on the allowlist`},
+		{"recipient header refused", `["Bcc"]`, `"Bcc": not on the allowlist`},
+		{"duplicate", `["List-Id", "list-id"]`, `duplicate`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := loadString(t, minimalTOML+listenerBlock("[smtp_listener]", "", ":2525",
+				"passthrough_headers = "+tc.list+"\n"))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Errorf("error should contain %q: %v", tc.wantIn, err)
+			}
+		})
+	}
+}

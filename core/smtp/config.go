@@ -93,6 +93,11 @@ type ListenerConfig struct {
 	// must be set to a meaningful bound.
 	AllowedRecipients []string `toml:"allowed_recipients"`
 
+	// PassthroughHeaders is the canonicalized, allowlisted list of inbound
+	// headers to copy onto the outbound Message (FR97, FR98). Validated by
+	// the config package; the parser re-checks the allowlist anyway.
+	PassthroughHeaders []string `toml:"passthrough_headers"`
+
 	// MaxRecipientsPerSession is the open-relay-prevention cap on
 	// RCPT TO commands per session (FR65). Default 10 when unset and
 	// AllowedRecipients is empty.

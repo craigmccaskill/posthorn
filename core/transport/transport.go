@@ -3,6 +3,8 @@ package transport
 import (
 	"context"
 	"fmt"
+	"net/textproto"
+	"strings"
 )
 
 // Message is the canonical form of an email passed to a Transport.
@@ -44,6 +46,40 @@ type Message struct {
 	// Filenames are structured API/MIME parameter values only, never
 	// header-line material (NFR1).
 	Attachments []Attachment
+
+	// Headers carries allowlisted list-management headers from the SMTP
+	// ingress (ADR-27, FR97-FR99). Only names on
+	// PassthroughHeaderAllowlist ever appear; values are CR/LF-free by the
+	// time they cross (the ingress rejects the message otherwise); mail
+	// transports emit them through the provider's structured custom-header
+	// mechanism and, where they build header lines themselves, re-check
+	// for CR/LF (NFR1, NFR32). The webhook transport ignores them. HTTP
+	// ingresses leave this nil.
+	Headers []Header
+}
+
+// Header is one passthrough header (see Message.Headers).
+type Header struct {
+	Name  string
+	Value string
+}
+
+// PassthroughHeaderAllowlist is the fixed set of headers a listener may
+// carry through (FR97): list-management headers only. None of them names
+// a recipient or a sender, so NFR22 is untouched by construction.
+var PassthroughHeaderAllowlist = []string{"List-Unsubscribe", "List-Unsubscribe-Post", "List-Id"}
+
+// PassthroughHeader canonicalizes name and reports whether it is on the
+// allowlist. Config validation and the ingress both use it, so a name
+// that isn't allowed can neither be configured nor slip through.
+func PassthroughHeader(name string) (string, bool) {
+	canon := textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(name))
+	for _, allowed := range PassthroughHeaderAllowlist {
+		if allowed == canon {
+			return canon, true
+		}
+	}
+	return canon, false
 }
 
 // Attachment is one file crossing to a transport.

@@ -165,6 +165,13 @@ type SMTPListenerConfig struct {
 	// 0 = defaults (100 / 16). Excess connections get 421 and close.
 	MaxConnections      int `toml:"max_connections"`
 	MaxConnectionsPerIP int `toml:"max_connections_per_ip"`
+
+	// PassthroughHeaders names inbound headers this listener carries to
+	// its transport (FR97, ADR-27). Only names on
+	// transport.PassthroughHeaderAllowlist are accepted; anything else is
+	// a parse error. Empty keeps the v2.0 behavior: everything but
+	// Subject, From, and Reply-To is dropped. Canonicalized in Validate.
+	PassthroughHeaders []string `toml:"passthrough_headers"`
 }
 
 // SMTPUser is a single AUTH PLAIN credential pair.
@@ -788,6 +795,21 @@ func (s *SMTPListenerConfig) Validate() error {
 	}
 	if s.MaxConnectionsPerIP < 0 {
 		return fmt.Errorf("max_connections_per_ip: must be non-negative, got %d", s.MaxConnectionsPerIP)
+	}
+	// FR97: passthrough names come from a fixed allowlist; an unknown
+	// name is refused rather than silently skipped, and To/Cc/Bcc can
+	// never be on it (NFR22).
+	seenHdr := map[string]bool{}
+	for i, name := range s.PassthroughHeaders {
+		canon, ok := transport.PassthroughHeader(name)
+		if !ok {
+			return fmt.Errorf("passthrough_headers[%d] %q: not on the allowlist (%s)", i, name, strings.Join(transport.PassthroughHeaderAllowlist, ", "))
+		}
+		if seenHdr[canon] {
+			return fmt.Errorf("passthrough_headers[%d] %q: duplicate", i, name)
+		}
+		seenHdr[canon] = true
+		s.PassthroughHeaders[i] = canon
 	}
 	// #41: with auth_required = "none" the sender allowlist is the only
 	// gate, so refuse a bind address we can't verify as private unless

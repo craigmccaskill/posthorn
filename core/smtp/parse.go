@@ -3,6 +3,7 @@ package smtp
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -37,7 +38,19 @@ import (
 //     messages — previously rejected 554 in v1.x — are accepted, with
 //     BodyText auto-derived from the HTML so the outbound mail always
 //     carries a readable text part (FR72 reuse).
+//
+// errPassthroughCRLF marks a passthrough header value carrying CR or LF.
+// The session answers it with 554 5.6.0 (FR98) rather than the generic
+// malformed-message 550.
+var errPassthroughCRLF = errors.New("passthrough header value contains CR or LF")
+
 func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string) (transport.Message, error) {
+	return parseMIMEToMessageWith(data, envelopeFrom, envelopeRcpts, nil)
+}
+
+// parseMIMEToMessageWith is parseMIMEToMessage plus the listener's
+// passthrough header list (FR97, FR98, ADR-27).
+func parseMIMEToMessageWith(data []byte, envelopeFrom string, envelopeRcpts []string, passthrough []string) (transport.Message, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		return transport.Message{}, fmt.Errorf("parse MIME headers: %w", err)
@@ -79,6 +92,11 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 		bodyText = template.HTMLToText(bodyHTML)
 	}
 
+	headers, err := passthroughHeaders(m.Header, passthrough)
+	if err != nil {
+		return transport.Message{}, err
+	}
+
 	return transport.Message{
 		From:     fromHdr,
 		To:       append([]string(nil), envelopeRcpts...), // FR68/NFR22: envelope only
@@ -86,7 +104,33 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 		Subject:  subject,
 		BodyText: bodyText,
 		BodyHTML: bodyHTML,
+		Headers:  headers,
 	}, nil
+}
+
+// passthroughHeaders copies the configured, allowlisted headers off the
+// inbound message in configuration order, every occurrence of each, as
+// received (no RFC 2047 decoding). A value with CR or LF fails the whole
+// message: it could only get here through something the header parser
+// didn't normalize, and a header line is exactly where NFR1 bites.
+// Names not on the allowlist are skipped even if configured; config
+// validation refuses them first, this is the second lock (NFR22 for
+// To/Cc/Bcc by construction).
+func passthroughHeaders(h mail.Header, names []string) ([]transport.Header, error) {
+	var out []transport.Header
+	for _, name := range names {
+		canon, ok := transport.PassthroughHeader(name)
+		if !ok {
+			continue
+		}
+		for _, v := range h[canon] {
+			if strings.ContainsAny(v, "\r\n") {
+				return nil, fmt.Errorf("%w: %s", errPassthroughCRLF, canon)
+			}
+			out = append(out, transport.Header{Name: canon, Value: v})
+		}
+	}
+	return out, nil
 }
 
 // decodeTransferEncoding wraps r so reads yield decoded content, based on
