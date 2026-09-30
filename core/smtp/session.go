@@ -411,7 +411,7 @@ func (s *session) handleDATA() {
 	var suppressedCount int
 	msg.To, suppressedCount = s.filterSuppressed(msg.To)
 	if suppressedCount > 0 && s.l.recorder != nil {
-		s.l.recorder.Suppressed(smtpEndpointLabel, suppressedCount)
+		s.l.recorder.Suppressed(s.l.cfg.EffectiveName(), suppressedCount)
 	}
 	if len(msg.To) == 0 {
 		s.recordSuppressed(submissionID, msg)
@@ -440,7 +440,7 @@ func (s *session) handleDATA() {
 				s.l.gate.ReportError(qerr)
 			} else {
 				if s.l.recorder != nil {
-					s.l.recorder.Queued(smtpEndpointLabel, s.l.cfg.Transport.Type)
+					s.l.recorder.Queued(s.l.cfg.EffectiveName(), s.l.cfg.Transport.Type)
 				}
 				s.logger.Warn("smtp_submission_queued",
 					slog.String("submission_id", submissionID),
@@ -499,7 +499,7 @@ func (s *session) recordSubmission(id string, msg transport.Message) (persisted,
 	}
 	sub := storage.Submission{
 		ID:        id,
-		Endpoint:  smtpEndpointLabel,
+		Endpoint:  s.l.cfg.EffectiveName(),
 		Transport: s.l.cfg.Transport.Type,
 		From:      msg.From,
 		ToAddrs:   msg.To,
@@ -517,11 +517,6 @@ func (s *session) recordSubmission(id string, msg transport.Message) (persisted,
 	}
 	return true, true
 }
-
-// smtpEndpointLabel is the endpoint label for metrics and the
-// submission log — the SMTP listener has no HTTP path. Matches the
-// constant in cmd/posthorn's worker transport map.
-const smtpEndpointLabel = "smtp_listener"
 
 // filterSuppressed drops suppressed recipients (FR86). Without storage
 // (or degraded) everything passes — v1.x untouched; lookup errors fail
@@ -556,7 +551,7 @@ func (s *session) recordSuppressed(id string, msg transport.Message) {
 	}
 	err := g.Store().RecordSubmission(storage.Submission{
 		ID:        id,
-		Endpoint:  smtpEndpointLabel,
+		Endpoint:  s.l.cfg.EffectiveName(),
 		Transport: s.l.cfg.Transport.Type,
 		From:      msg.From,
 		Subject:   msg.Subject,
@@ -574,7 +569,7 @@ func (s *session) recordSendOk(latency time.Duration) {
 	}
 	// The "smtp_listener" endpoint label lets operators split
 	// inbound-via-HTTP from inbound-via-SMTP in metrics.
-	s.l.recorder.Sent(smtpEndpointLabel, s.l.cfg.Transport.Type, latency)
+	s.l.recorder.Sent(s.l.cfg.EffectiveName(), s.l.cfg.Transport.Type, latency)
 }
 
 func (s *session) recordSendFailed(err error) {

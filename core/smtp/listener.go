@@ -70,6 +70,9 @@ func New(cfg ListenerConfig, tp transport.Transport, maxBodySize int64, logger *
 	if logger == nil {
 		logger = log.Discard()
 	}
+	// FR95: every line this listener logs names it, so two listeners in
+	// one process can be told apart.
+	logger = logger.With(slog.String("listener", cfg.EffectiveName()))
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
 		return nil, err

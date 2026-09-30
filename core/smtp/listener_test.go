@@ -1184,3 +1184,41 @@ func TestSMTP_AuthNone_SenderAllowlist_StillEnforced(t *testing.T) {
 		t.Errorf("AuthNone with disallowed sender got %d, want 550 (allowlist still enforced)", code)
 	}
 }
+
+// TestSMTP_NamedListener_MetricsLabel covers FR95 (Story 19.2): a named
+// listener records under its own name, and an unnamed one keeps the
+// label single-listener deployments have always had.
+func TestSMTP_NamedListener_MetricsLabel(t *testing.T) {
+	for _, tc := range []struct{ name, wantLabel string }{
+		{"tenant-a", "tenant-a"},
+		{"", DefaultListenerName},
+	} {
+		t.Run("name="+tc.name, func(t *testing.T) {
+			reg := metrics.New()
+			cfg := baseTestConfig()
+			cfg.Name = tc.name
+			f := startListener(t, cfg, metrics.NewRecorder(reg))
+			tp := f.dial()
+			_ = tp.PrintfLine("EHLO client.test")
+			expectMultiline(t, tp, 250)
+			_ = tp.PrintfLine("AUTH PLAIN %s", authPlainCreds("user", "pass"))
+			expect(t, tp, 235)
+			_ = tp.PrintfLine("MAIL FROM:<noreply@example.com>")
+			expect(t, tp, 250)
+			_ = tp.PrintfLine("RCPT TO:<alice@somewhere.com>")
+			expect(t, tp, 250)
+			_ = tp.PrintfLine("DATA")
+			expect(t, tp, 354)
+			_ = tp.PrintfLine("Subject: Hi\r\n\r\nBody.\r\n.")
+			expectCode(t, tp)
+			waitForSend(t, f.mt, 1, 2*time.Second)
+
+			scrape := httptest.NewRecorder()
+			reg.Handler().ServeHTTP(scrape, httptest.NewRequest("GET", "/metrics", nil))
+			want := `posthorn_submissions_sent_total{endpoint="` + tc.wantLabel + `",transport="postmark"} 1`
+			if !strings.Contains(scrape.Body.String(), want) {
+				t.Errorf("missing %q in metrics", want)
+			}
+		})
+	}
+}

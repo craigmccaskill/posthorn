@@ -52,6 +52,11 @@ type User struct {
 // operator's TOML includes this block, cmd/posthorn starts an SMTP
 // ingress alongside the HTTP one.
 type ListenerConfig struct {
+	// Name identifies this listener in the metrics `endpoint` label, the
+	// submission log, and every log line it emits (FR95). Empty means
+	// DefaultListenerName, which is the label v1.x and v2.0 emitted.
+	Name string `toml:"name"`
+
 	// Listen is the TCP address (e.g. ":2525"). Required.
 	Listen string `toml:"listen"`
 
@@ -114,6 +119,19 @@ type ListenerConfig struct {
 
 // EffectiveMaxConnections resolves the global concurrent-connection cap
 // (default 100).
+// DefaultListenerName is the name of a listener that has none: the
+// metrics label and submission-log endpoint that single-listener
+// deployments have always emitted.
+const DefaultListenerName = "smtp_listener"
+
+// EffectiveName resolves Name to DefaultListenerName when unset.
+func (c *ListenerConfig) EffectiveName() string {
+	if c.Name == "" {
+		return DefaultListenerName
+	}
+	return c.Name
+}
+
 func (c *ListenerConfig) EffectiveMaxConnections() int {
 	if c.MaxConnections <= 0 {
 		return 100
