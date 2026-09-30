@@ -92,6 +92,24 @@ The name is how you tell listeners apart afterwards. It is the `endpoint` label 
 
 One thing the config can't do for you: on a plain Docker network, a container attached to several networks is reachable on all of its ports from every one of them, so "one port per tenant" is only a real boundary if each listener binds an address that only that tenant's network can reach, or if the tenants sit behind a firewall or Kubernetes NetworkPolicy that allows one port each. Per-listener credentials and `allowed_senders` are the boundary that holds regardless. The [per-tenant listeners recipe](/recipes/multi-tenant-smtp/) walks through both.
 
+## Passing list headers through
+
+By default the listener keeps three headers from an inbound message, `Subject`, `From`, and `Reply-To`, and drops everything else. Apps that send lists, listmonk for one, set `List-Unsubscribe` and `List-Unsubscribe-Post` on every message so mailbox providers can offer one-click unsubscribe (RFC 8058); Gmail and Yahoo expect those from high-volume senders. To carry them to the provider, name them on the listener:
+
+```toml
+[smtp_listener]
+# ...
+passthrough_headers = ["List-Unsubscribe", "List-Unsubscribe-Post"]
+```
+
+How it behaves:
+
+- Only three names are allowed: `List-Unsubscribe`, `List-Unsubscribe-Post`, and `List-Id`. Anything else, including `To`, `Cc`, and `Bcc`, is a config error, so recipients still come from the SMTP envelope only.
+- Values are copied as received, in the order you listed the names, every occurrence of each. No decoding is applied.
+- A value containing a carriage return or line feed fails the message with `554 5.6.0 Invalid header value`. That is the header-injection check at the door; the transports that build header lines themselves check again.
+- Every mail transport carries them through the provider's own custom-header field: Postmark, Resend, Mailgun, SES, and outbound SMTP. The webhook transport ignores them.
+- With `passthrough_headers` unset, nothing changes from v2.0.
+
 ## Open-relay prevention
 
 Posthorn refuses to relay arbitrary mail. Every accepted message must clear all of:

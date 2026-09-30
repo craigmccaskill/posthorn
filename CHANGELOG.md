@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Multiple SMTP listeners ([#120](https://github.com/craigmccaskill/posthorn/issues/120), ADR-26).** `[[smtp_listeners]]` runs several listeners in one process, each on its own port with its own transport, credentials, and allowlists. Each carries a `name` that becomes the metrics `endpoint` label, the submission-log endpoint, a `listener` field on its log lines, and the entry in `posthorn validate` output. The single `[smtp_listener]` table keeps working unchanged and its label stays `smtp_listener`. Names must be unique and `listen` addresses distinct; every per-listener check, including the `trusted_network` rule, applies to each listener on its own.
+- **List-header passthrough ([#115](https://github.com/craigmccaskill/posthorn/issues/115), ADR-27).** Per-listener `passthrough_headers` carries `List-Unsubscribe`, `List-Unsubscribe-Post`, and `List-Id` from inbound mail to the provider, so apps like listmonk keep their one-click unsubscribe headers. Fixed allowlist (recipient headers can never be named), values copied as received, CR/LF values refused with `554`, and every mail transport emits them through its structured custom-header field; the webhook transport ignores them. Off unless configured.
 
 ## [2.0.1] — 2026-09-29
 
