@@ -167,3 +167,30 @@ func (s *Store) QueueDepth() (int, error) {
 	}
 	return n, nil
 }
+
+// QueuedByEndpoint counts retry-queue entries per endpoint. cmd reads
+// it once at startup to notice queued mail whose endpoint the new
+// config no longer has.
+func (s *Store) QueuedByEndpoint() (map[string]int, error) {
+	rows, err := s.db.Query(`
+		SELECT sub.endpoint, COUNT(*)
+		FROM retry_queue q JOIN submissions sub ON sub.id = q.submission_id
+		GROUP BY sub.endpoint`)
+	if err != nil {
+		return nil, fmt.Errorf("storage: queued by endpoint: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var endpoint string
+		var n int
+		if err := rows.Scan(&endpoint, &n); err != nil {
+			return nil, fmt.Errorf("storage: queued by endpoint: %w", err)
+		}
+		out[endpoint] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: queued by endpoint: %w", err)
+	}
+	return out, nil
+}

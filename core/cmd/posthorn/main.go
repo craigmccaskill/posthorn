@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -24,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -196,6 +198,12 @@ func runServe(args []string) error {
 	}
 	ingresses = append(ingresses, smtpIngs...)
 
+	if gate != nil {
+		if err := checkUnnamedListenerQueue(cfg, gate.Store(), transports, logger); err != nil {
+			return err
+		}
+	}
+
 	// v2.0: background retry worker + storage maintenance (FR78-FR80).
 	// Both stop when the ingresses shut down.
 	if gate != nil {
@@ -262,6 +270,44 @@ func queuedSendFunc(transports map[string]transport.Transport) storage.SendFunc 
 	}
 }
 
+// checkUnnamedListenerQueue refuses to start when mail accepted on the
+// unnamed [smtp_listener] is still in the retry queue and no listener
+// answers to that name any more.
+//
+// Queued rows find their transport by the listener's name. Adding a
+// second listener forces a name onto the first (FR94), so the rows a
+// v2.0 process queued under "smtp_listener" would resolve to nothing
+// and queuedSendFunc would dead-letter mail the client already got a
+// 250 for (ADR-21: a 2xx means the send is Posthorn's to finish).
+// Keeping name = "smtp_listener" on the original listener until the
+// queue drains avoids that, and the error says so.
+//
+// Deliberately narrow. An endpoint or listener the operator removed or
+// renamed by choice keeps the existing behavior: its rows dead-letter.
+// A storage read error is logged and ignored; the disk never blocks
+// startup (NFR27).
+func checkUnnamedListenerQueue(cfg *config.Config, store *storage.Store, transports map[string]transport.Transport, logger *slog.Logger) error {
+	const name = config.DefaultSMTPListenerName
+	if len(cfg.Listeners()) == 0 {
+		return nil
+	}
+	if _, ok := transports[name]; ok {
+		return nil
+	}
+	queued, err := store.QueuedByEndpoint()
+	if err != nil {
+		logger.Warn("queue_endpoint_check_failed", slog.String("error", err.Error()))
+		return nil
+	}
+	n := queued[name]
+	if n == 0 {
+		return nil
+	}
+	return fmt.Errorf("%d queued submission(s) were accepted by the unnamed [smtp_listener] and are still waiting to be retried, "+
+		"but no listener is named %q now, so they would be dropped. Set name = %q on the listener that should deliver them, "+
+		"restart, and rename it once posthorn_retry_queue_depth reaches 0", n, name, name)
+}
+
 // buildSMTPIngress converts the config-package SMTPListenerConfig into
 // the smtp-package ListenerConfig, constructs the outbound transport
 // via the same registry the HTTP endpoints use, and returns the
@@ -324,7 +370,7 @@ func buildSMTPIngresses(cfg *config.Config, logger *slog.Logger, recorder *metri
 		name := lc.EffectiveName()
 		ing, tp, err := buildSMTPIngress(lc, logger, recorder)
 		if err != nil {
-			return nil, fmt.Errorf("build %s: %w", listenerLabel(cfg, i), err)
+			return nil, fmt.Errorf("build %s: %w", cfg.ListenerLabel(i), err)
 		}
 		if gate != nil {
 			if l, ok := ing.(*smtp.Listener); ok {
@@ -343,21 +389,11 @@ func buildSMTPIngresses(cfg *config.Config, logger *slog.Logger, recorder *metri
 	return out, nil
 }
 
-// listenerLabel names the i-th listener the way the operator wrote it:
-// "smtp_listener" for the single-table form, "smtp_listeners[i] (name)"
-// for the array form. Used in errors and validate output.
-func listenerLabel(cfg *config.Config, i int) string {
-	if cfg.SMTPListener != nil {
-		return "smtp_listener"
-	}
-	return fmt.Sprintf("smtp_listeners[%d] (%s)", i, cfg.SMTPListeners[i].EffectiveName())
-}
-
 // runIngressesUntilSignal starts each ingress in its own goroutine,
-// waits for SIGTERM/SIGINT, then drains in-flight work via Stop on
-// each ingress with a 15s deadline (longer than the per-request 10s
-// hard timeout from FR22 so in-flight retries can complete
-// gracefully). A second signal forces immediate exit.
+// waits for SIGTERM/SIGINT, then drains in-flight work by stopping
+// every ingress at once under one 15s deadline (longer than the
+// per-request 10s hard timeout from FR22 so in-flight retries can
+// complete gracefully). A second signal forces immediate exit.
 func runIngressesUntilSignal(ingresses []ingress.Ingress, logger *slog.Logger) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -398,14 +434,30 @@ func runIngressesUntilSignal(ingresses []ingress.Ingress, logger *slog.Logger) e
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer shutdownCancel()
-	var firstErr error
-	for _, ing := range ingresses {
-		if err := ing.Stop(shutdownCtx); err != nil && firstErr == nil {
-			firstErr = fmt.Errorf("%s ingress graceful shutdown: %w", ing.Name(), err)
-		}
-	}
+	err := stopIngresses(shutdownCtx, ingresses)
 	logger.Info("posthorn stopped")
-	return firstErr
+	return err
+}
+
+// stopIngresses stops every ingress concurrently and waits for all of
+// them (FR96). Each Stop closes its listening socket before it waits,
+// so no ingress keeps accepting work while another drains, and each one
+// gets the whole deadline instead of what the ones before it left. The
+// returned error joins every failure, each naming its ingress.
+func stopIngresses(ctx context.Context, ingresses []ingress.Ingress) error {
+	errs := make([]error, len(ingresses))
+	var wg sync.WaitGroup
+	for i, ing := range ingresses {
+		wg.Add(1)
+		go func(i int, ing ingress.Ingress) {
+			defer wg.Done()
+			if err := ing.Stop(ctx); err != nil {
+				errs[i] = fmt.Errorf("%s ingress graceful shutdown: %w", ing.Name(), err)
+			}
+		}(i, ing)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // --- validate ---
@@ -442,7 +494,7 @@ func runValidate(args []string) error {
 	listeners := cfg.Listeners()
 	for i, lc := range listeners {
 		if _, _, err := buildSMTPIngress(lc, buildLogger(cfg.Logging), nil); err != nil {
-			return fmt.Errorf("%s: %w", listenerLabel(cfg, i), err)
+			return fmt.Errorf("%s: %w", cfg.ListenerLabel(i), err)
 		}
 	}
 

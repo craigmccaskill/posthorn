@@ -384,7 +384,7 @@ Block F is the first minor after v2.0, scoped to the SMTP listener by two named 
 
 **FR95.** The listener's `name` **must** be the `endpoint` label value on the SMTP metrics, replacing the fixed `smtp_listener` value, and **must** appear in `posthorn validate` output and the listener's log lines. Label values remain operator-configured only (NFR24).
 
-**FR96.** `cmd/posthorn serve` **must** start every declared listener, and shutdown **must** drain all of them. Lifecycle ingestion, suppression, storage, and the retry queue are process-wide and shared; each listener's sends record that listener's transport type. One listener has exactly one transport (ADR-26).
+**FR96.** `cmd/posthorn serve` **must** start every declared listener, and shutdown **must** drain all of them: every ingress is stopped at once under one shared deadline, so none keeps accepting work while another drains. A queued submission resolves its transport by the listener's name. Because adding a second listener forces a name onto a previously unnamed one, `serve` **must** refuse to start while submissions queued under `smtp_listener` exist and no listener carries that name; the operator keeps `name = "smtp_listener"` on the original listener until the queue drains. Lifecycle ingestion, suppression, storage, and the retry queue are process-wide and shared; each listener's sends record that listener's transport type. One listener has exactly one transport (ADR-26).
 
 ### Header passthrough
 
