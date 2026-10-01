@@ -273,6 +273,7 @@ Optional inbound SMTP ingress. When this block is present, `posthorn serve` star
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
+| `name` | string | see description | `smtp_listener` | Identifies the listener in metrics (`endpoint` label), the submission log, log lines, and `posthorn validate`. Optional for a single listener; required for each entry of `[[smtp_listeners]]` when there is more than one. `[A-Za-z0-9_-]+`, unique. |
 | `listen` | string | yes | — | TCP listen address. Example: `":2525"`. |
 | `require_tls` | bool | no | `true` | When `true` (default), AUTH / MAIL / RCPT are rejected until the client has issued `STARTTLS`. Set explicitly to `false` only for local development on a loopback listener. |
 | `tls_cert` | string | conditional | — | Path to PEM cert. Required when `require_tls = true` or when `auth_required` involves client certs. |
@@ -322,6 +323,19 @@ api_key = "${env.POSTMARK_API_KEY}"
 ```
 
 Same shape as `[endpoints.transport]`. The listener forwards every accepted submission through this single transport — one listener has one outbound transport; per-recipient routing is a future feature.
+
+## `[[smtp_listeners]]`
+
+Array form of `[smtp_listener]` for several listeners in one process, each on its own port with its own transport (v2.1, ADR-26). Every key above applies per entry. Additional rules, all enforced at config load:
+
+| Rule | Error when violated |
+|---|---|
+| Use one form or the other | `[smtp_listener]` and `[[smtp_listeners]]` both declared |
+| `name` required when more than one entry | `smtp_listeners[i]: name is required when more than one listener is declared` |
+| Names unique and `[A-Za-z0-9_-]+` | `duplicate name`, or `name "...": must match ...` |
+| `listen` addresses must not overlap (same port on the same host, or either host unspecified) | `listen ":2525" overlaps listener "..."` |
+
+A single-entry array without a `name` behaves exactly like `[smtp_listener]`. See [Multiple listeners](/features/smtp-ingress/#multiple-listeners).
 
 ## Complete annotated example
 

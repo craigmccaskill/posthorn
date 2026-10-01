@@ -95,6 +95,13 @@ config OK: 2 endpoint(s)
 
 Exit 0.
 
+SMTP listeners are built and checked too, and listed by name and address:
+
+```text
+$ posthorn validate --config posthorn.toml
+config OK: 2 endpoint(s) + 2 smtp listener(s): tenant-a (:2525), tenant-b (:2526)
+```
+
 On failure, the first error is printed to stderr and exit is non-zero. Errors are surfaced one at a time — fix the reported error and re-run to see the next, if any:
 
 ```text

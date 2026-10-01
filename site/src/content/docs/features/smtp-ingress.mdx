@@ -40,6 +40,66 @@ api_key = "${env.POSTMARK_API_KEY}"
 
 The SMTP listener has its own `[smtp_listener.transport]` block, separate from `[[endpoints]]`. One SMTP listener has one outbound transport; per-recipient routing through different transports is a future feature.
 
+## Multiple listeners
+
+From v2.1, one process can serve several listeners, each on its own port with its own transport, credentials, and allowlists. Use the array form, `[[smtp_listeners]]`, and give each listener a `name`:
+
+```toml
+[[smtp_listeners]]
+name            = "tenant-a"
+listen          = ":2525"
+auth_required   = "smtp-auth"
+tls_cert        = "/etc/posthorn/tls/tenant-a.crt"
+tls_key         = "/etc/posthorn/tls/tenant-a.key"
+allowed_senders = ["*@tenant-a.example"]
+
+[[smtp_listeners.smtp_users]]
+username = "gitea-a"
+password = "${env.TENANT_A_SMTP_PASSWORD}"
+
+[smtp_listeners.transport]
+type = "postmark"
+
+[smtp_listeners.transport.settings]
+api_key = "${env.TENANT_A_POSTMARK_KEY}"
+
+[[smtp_listeners]]
+name            = "tenant-b"
+listen          = ":2526"
+auth_required   = "smtp-auth"
+tls_cert        = "/etc/posthorn/tls/tenant-b.crt"
+tls_key         = "/etc/posthorn/tls/tenant-b.key"
+allowed_senders = ["*@tenant-b.example"]
+
+[[smtp_listeners.smtp_users]]
+username = "gitea-b"
+password = "${env.TENANT_B_SMTP_PASSWORD}"
+
+[smtp_listeners.transport]
+type = "ses"
+
+[smtp_listeners.transport.settings]
+region            = "eu-north-1"
+access_key_id     = "${env.TENANT_B_SES_ACCESS_KEY_ID}"
+secret_access_key = "${env.TENANT_B_SES_SECRET_ACCESS_KEY}"
+```
+
+Rules, all checked at config load:
+
+- The single `[smtp_listener]` table keeps working and is the same as a one-element array. Declaring both forms is an error.
+- `name` is required when there is more than one listener. It must match `[A-Za-z0-9_-]+` and be unique. A lone listener without a name is called `smtp_listener`, which is the label single-listener deployments have always had.
+- `listen` addresses must not overlap. Two listeners on the same port conflict when they name the same host or when either binds every interface, so `:2525` next to `0.0.0.0:2525` is refused.
+- Every per-listener check applies to each listener on its own: auth mode, TLS, allowlists, connection caps, and the `trusted_network` rule for `auth_required = "none"`.
+- Each listener has exactly one transport. Posthorn never picks a transport by sender or recipient; the port a message arrived on decides.
+
+The name is how you tell listeners apart afterwards. It is the `endpoint` label on the SMTP metrics, the `endpoint` value in the submission log, a `listener` field on every log line the listener writes, and what `posthorn validate` prints.
+
+The retry queue, the suppression list, and lifecycle event ingestion are per process, not per listener. With `[storage]` configured, an address suppressed after one listener's bounce is suppressed for every listener.
+
+Mail waiting in the retry queue is tied to its listener's name. If you name a listener that used to be unnamed, keep `name = "smtp_listener"` on it until `posthorn_retry_queue_depth` is 0, then rename it. Posthorn refuses to start when it finds queued mail for `smtp_listener` and no listener by that name.
+
+One thing the config can't do for you: on a plain Docker network, a container attached to several networks is reachable on all of its ports from every one of them, so "one port per tenant" is only a real boundary if each listener binds an address that only that tenant's network can reach, or if the tenants sit behind a firewall or Kubernetes NetworkPolicy that allows one port each. Per-listener credentials and `allowed_senders` are the boundary that holds regardless. The [per-tenant listeners recipe](/recipes/multi-tenant-smtp/) walks through both.
+
 ## Open-relay prevention
 
 Posthorn refuses to relay arbitrary mail. Every accepted message must clear all of:
@@ -116,4 +176,4 @@ smtp_session_close      — connection closed
 
 Each line carries a per-session `session_id` UUID so operators can trace a single connection through the protocol exchange.
 
-The `/metrics` endpoint exposes the same `posthorn_submissions_sent_total` / `posthorn_submissions_failed_total` counters with `endpoint = "smtp_listener"` so operators can split inbound-via-HTTP from inbound-via-SMTP traffic in Prometheus.
+The `/metrics` endpoint exposes the same `posthorn_submissions_sent_total` / `posthorn_submissions_failed_total` counters with `endpoint` set to the listener's name (`"smtp_listener"` for a lone unnamed listener) so operators can split inbound-via-HTTP from inbound-via-SMTP traffic, and one listener from another, in Prometheus.

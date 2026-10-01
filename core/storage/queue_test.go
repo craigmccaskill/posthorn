@@ -207,3 +207,31 @@ func TestClaimDue_RespectsLimit(t *testing.T) {
 		t.Errorf("limit ignored: claimed %d", len(due))
 	}
 }
+
+func TestQueuedByEndpoint(t *testing.T) {
+	s := memStore(t)
+	got, err := s.QueuedByEndpoint()
+	if err != nil || len(got) != 0 {
+		t.Fatalf("empty queue = %v, %v", got, err)
+	}
+	for id, endpoint := range map[string]string{"q1": "smtp_listener", "q2": "smtp_listener", "q3": "/contact", "sent": "/contact"} {
+		sub := sampleSubmission(id, StatusSending)
+		sub.Endpoint = endpoint
+		if err := s.RecordSubmission(sub); err != nil {
+			t.Fatal(err)
+		}
+		if id == "sent" {
+			continue // recorded, never queued
+		}
+		if err := s.Enqueue(id, t0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err = s.QueuedByEndpoint()
+	if err != nil {
+		t.Fatalf("QueuedByEndpoint: %v", err)
+	}
+	if len(got) != 2 || got["smtp_listener"] != 2 || got["/contact"] != 1 {
+		t.Errorf("QueuedByEndpoint = %v, want smtp_listener:2 /contact:1", got)
+	}
+}

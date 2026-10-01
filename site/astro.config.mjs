@@ -106,6 +106,7 @@ export default defineConfig({
             { label: 'Monitoring alerts via webhook', slug: 'recipes/monitoring-alerts' },
             { label: 'Transactional email from a Cloudflare Worker', slug: 'recipes/cloudflare-worker' },
             { label: 'Internal SMTP relay (Docker Compose)', slug: 'recipes/internal-smtp-relay' },
+            { label: 'Per-tenant SMTP listeners', slug: 'recipes/multi-tenant-smtp' },
             { label: 'Hugo blog + Comentario comments', slug: 'recipes/hugo-comentario' },
             { label: 'Self-hosted Gitea', slug: 'recipes/gitea' },
             { label: 'Self-hosted Ghost', slug: 'recipes/ghost' },

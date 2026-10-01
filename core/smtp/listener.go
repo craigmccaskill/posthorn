@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/craigmccaskill/posthorn/config"
 	"github.com/craigmccaskill/posthorn/log"
 	"github.com/craigmccaskill/posthorn/metrics"
 	"github.com/craigmccaskill/posthorn/ratelimit"
@@ -31,7 +32,11 @@ var (
 // Listener is the inbound SMTP ingress. Owns a TCP listener and a
 // goroutine per accepted connection. Implements ingress.Ingress.
 type Listener struct {
-	cfg       ListenerConfig
+	cfg ListenerConfig
+	// name is cfg.Name resolved once (FR95): the metrics `endpoint` label,
+	// the submission-log endpoint, and the `listener` log field. Every
+	// call site reads this rather than re-deriving the default.
+	name      string
 	transport transport.Transport
 	maxBody   int64
 	tlsConfig *tls.Config // nil when RequireTLS is false and no client-cert
@@ -70,16 +75,24 @@ func New(cfg ListenerConfig, tp transport.Transport, maxBodySize int64, logger *
 	if logger == nil {
 		logger = log.Discard()
 	}
+	name := cfg.Name
+	if name == "" {
+		name = config.DefaultSMTPListenerName
+	}
+	// FR95: every line this listener logs names it, so two listeners in
+	// one process can be told apart.
+	logger = logger.With(slog.String("listener", name))
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
 	authFail, err := ratelimit.New(authFailureBudget, authFailureInterval, 0)
 	if err != nil {
-		return nil, fmt.Errorf("smtp_listener: auth-failure limiter: %w", err)
+		return nil, fmt.Errorf("auth-failure limiter: %w", err)
 	}
 	return &Listener{
 		cfg:        cfg,
+		name:       name,
 		transport:  tp,
 		maxBody:    maxBodySize,
 		tlsConfig:  tlsCfg,
@@ -146,7 +159,7 @@ func buildTLSConfig(cfg ListenerConfig) (*tls.Config, error) {
 	}
 	cert, err := tls.LoadX509KeyPair(cfg.TLSCert, cfg.TLSKey)
 	if err != nil {
-		return nil, fmt.Errorf("smtp_listener: load TLS cert/key: %w", err)
+		return nil, fmt.Errorf("load TLS cert/key: %w", err)
 	}
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
@@ -155,11 +168,11 @@ func buildTLSConfig(cfg ListenerConfig) (*tls.Config, error) {
 	if mode == AuthClientCert || mode == AuthEither {
 		caBytes, err := os.ReadFile(cfg.ClientCertCA)
 		if err != nil {
-			return nil, fmt.Errorf("smtp_listener: read client_cert_ca: %w", err)
+			return nil, fmt.Errorf("read client_cert_ca: %w", err)
 		}
 		pool := x509.NewCertPool()
 		if !pool.AppendCertsFromPEM(caBytes) {
-			return nil, errors.New("smtp_listener: client_cert_ca: no certificates parsed")
+			return nil, errors.New("client_cert_ca: no certificates parsed")
 		}
 		tlsCfg.ClientCAs = pool
 		// VerifyClientCertIfGiven lets AUTH-PLAIN clients without a
@@ -170,8 +183,28 @@ func buildTLSConfig(cfg ListenerConfig) (*tls.Config, error) {
 	return tlsCfg, nil
 }
 
-// Name returns "smtp" (ingress.Ingress interface).
-func (l *Listener) Name() string { return "smtp" }
+// Name identifies the ingress in startup and shutdown errors
+// (ingress.Ingress interface): "smtp" for a lone unnamed listener, and
+// the listener's own name alongside it otherwise, so a bind failure or a
+// drain timeout says which of several listeners it was.
+func (l *Listener) Name() string {
+	if l.name == config.DefaultSMTPListenerName {
+		return "smtp"
+	}
+	return fmt.Sprintf("smtp %q", l.name)
+}
+
+// Addr returns the address the listener is bound to, or nil before
+// Start has bound it. With a ":0" listen address this is the only way
+// to learn the port.
+func (l *Listener) Addr() net.Addr {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.listener == nil {
+		return nil
+	}
+	return l.listener.Addr()
+}
 
 // Start opens the TCP listener and accepts connections until Stop is
 // called. Returns nil on graceful shutdown.
@@ -181,6 +214,16 @@ func (l *Listener) Start(ctx context.Context) error {
 		return fmt.Errorf("smtp listen: %w", err)
 	}
 	l.mu.Lock()
+	select {
+	case <-l.stopped:
+		// Stop ran before the bind. It had no socket to close, so close
+		// this one here; otherwise Accept would block with nothing left
+		// to wake it.
+		l.mu.Unlock()
+		_ = ln.Close()
+		return nil
+	default:
+	}
 	l.listener = ln
 	l.mu.Unlock()
 

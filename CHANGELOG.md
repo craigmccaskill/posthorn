@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multiple SMTP listeners ([#120](https://github.com/craigmccaskill/posthorn/issues/120), ADR-26).** `[[smtp_listeners]]` runs several listeners in one process, each on its own port with its own transport, credentials, and allowlists. Each carries a `name` that becomes the metrics `endpoint` label, the submission-log endpoint, a `listener` field on its log lines, and the entry in `posthorn validate` output. The single `[smtp_listener]` table keeps working unchanged and its label stays `smtp_listener`. Names must be unique and `listen` addresses must not overlap (`:2525` next to `0.0.0.0:2525` is refused at config load); every per-listener check, including the `trusted_network` rule, applies to each listener on its own. Shutdown drains all listeners at once under one deadline.
+  - **Upgrade note, if you use `[storage]`:** mail in the retry queue is tied to its listener's name, and an unnamed listener's name is `smtp_listener`. When you name a listener that used to be unnamed (adding a second listener requires it), keep `name = "smtp_listener"` on it until `posthorn_retry_queue_depth` is 0, then rename it. Posthorn refuses to start when it finds queued mail for `smtp_listener` and no listener by that name, rather than drop mail it already accepted.
+
+### Changed
+
+- SMTP listener validation errors name the key relative to the listener (`smtp_listener: tls_cert: required ...` instead of `smtp_listener: smtp_listener.tls_cert: required ...`), so the array form is not pointed at a table it does not have.
+
+### Fixed
+
+- A shutdown signal that arrived before the SMTP listener had bound its socket could leave the process waiting on a listener nothing would close.
+
 ## [2.0.1] — 2026-09-29
 
 ### Fixed

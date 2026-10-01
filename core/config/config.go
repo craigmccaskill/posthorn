@@ -28,8 +28,15 @@ type Config struct {
 	Endpoints    []EndpointConfig    `toml:"endpoints"`
 	Logging      LoggingConfig       `toml:"logging"`
 	SMTPListener *SMTPListenerConfig `toml:"smtp_listener"`
-	Storage      *StorageConfig      `toml:"storage"`
-	Lifecycle    *LifecycleConfig    `toml:"lifecycle"`
+
+	// SMTPListeners is the array form (FR93, ADR-26): several listeners,
+	// each with its own port, auth, allowlists, and transport. The
+	// single-table SMTPListener above is shorthand for a one-element
+	// array; declaring both is a parse error. Consumers should read
+	// Listeners(), which returns whichever form was used.
+	SMTPListeners []SMTPListenerConfig `toml:"smtp_listeners"`
+	Storage       *StorageConfig       `toml:"storage"`
+	Lifecycle     *LifecycleConfig     `toml:"lifecycle"`
 }
 
 // LifecycleConfig is the optional top-level [lifecycle] block (FR82,
@@ -118,6 +125,12 @@ func (s *StorageConfig) Validate() error {
 // smtp circular dependency; the smtp package converts it to its
 // internal ListenerConfig shape.
 type SMTPListenerConfig struct {
+	// Name identifies the listener in metrics (the `endpoint` label),
+	// `posthorn validate` output, and log lines (FR94, FR95). Required
+	// when more than one listener is declared; a lone listener defaults
+	// to DefaultSMTPListenerName so existing dashboards keep working.
+	Name string `toml:"name"`
+
 	Listen string `toml:"listen"`
 
 	// RequireTLS forces STARTTLS upgrade before AUTH / MAIL / RCPT.
@@ -625,8 +638,14 @@ func (c *Config) Validate() error {
 	// Ghost/Gitea recipes run exactly this); the HTTP mux still serves
 	// /healthz and /metrics with zero endpoints. Require at least one
 	// ingress of either kind.
-	if len(c.Endpoints) == 0 && c.SMTPListener == nil {
-		return errors.New("at least one ingress required: define [[endpoints]] or [smtp_listener]")
+	if len(c.Endpoints) == 0 && c.SMTPListener == nil && len(c.SMTPListeners) == 0 {
+		return errors.New("at least one ingress required: define [[endpoints]], [smtp_listener], or [[smtp_listeners]]")
+	}
+	// FR93: one form or the other. The single table is shorthand for a
+	// one-element array; mixing them would leave the operator guessing
+	// which one is live.
+	if c.SMTPListener != nil && len(c.SMTPListeners) > 0 {
+		return errors.New("[smtp_listener] and [[smtp_listeners]] are both declared; use one form (the single table is shorthand for a one-element array)")
 	}
 
 	seenPaths := map[string]bool{}
@@ -655,6 +674,35 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("smtp_listener: %w", err)
 		}
 	}
+	if n := len(c.SMTPListeners); n > 0 {
+		seenName := map[string]int{}
+		for i := range c.SMTPListeners {
+			l := &c.SMTPListeners[i]
+			// FR94: names are what tell two listeners apart in metrics
+			// and logs, so they are mandatory once there are two.
+			if l.Name == "" && n > 1 {
+				return fmt.Errorf("smtp_listeners[%d]: name is required when more than one listener is declared", i)
+			}
+			name := l.EffectiveName()
+			if j, dup := seenName[name]; dup {
+				return fmt.Errorf("smtp_listeners[%d]: duplicate name %q (also smtp_listeners[%d])", i, name, j)
+			}
+			seenName[name] = i
+			if err := l.Validate(); err != nil {
+				return fmt.Errorf("%s: %w", c.ListenerLabel(i), err)
+			}
+			// FR94: distinct listen addresses. Compared by what they bind,
+			// not by spelling, so ":2525" and "0.0.0.0:2525" are caught
+			// here instead of as "address already in use" at serve time.
+			for j := 0; j < i; j++ {
+				other := &c.SMTPListeners[j]
+				if listenOverlap(l.Listen, other.Listen) {
+					return fmt.Errorf("%s: listen %q overlaps listener %q (listen %q); give each listener its own port, or its own address on a shared port",
+						c.ListenerLabel(i), l.Listen, other.EffectiveName(), other.Listen)
+				}
+			}
+		}
+	}
 
 	if c.Storage != nil {
 		if err := c.Storage.Validate(); err != nil {
@@ -681,6 +729,88 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// DefaultSMTPListenerName is the name a lone listener gets when the
+// operator doesn't set one (FR94). It matches the metrics label that
+// v1.x and v2.0 emitted, so single-listener dashboards are unchanged.
+const DefaultSMTPListenerName = "smtp_listener"
+
+// smtpListenerNameRe bounds listener names to what is safe in a metric
+// label and a log field (FR94, NFR33).
+var smtpListenerNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// Listeners returns the effective listener list regardless of which
+// config form was used: the single [smtp_listener] table as a
+// one-element list, or every [[smtp_listeners]] entry in declaration
+// order. Pointers alias the Config's own storage. Nil when no listener
+// is configured.
+func (c *Config) Listeners() []*SMTPListenerConfig {
+	if c.SMTPListener != nil {
+		return []*SMTPListenerConfig{c.SMTPListener}
+	}
+	if len(c.SMTPListeners) == 0 {
+		return nil
+	}
+	out := make([]*SMTPListenerConfig, len(c.SMTPListeners))
+	for i := range c.SMTPListeners {
+		out[i] = &c.SMTPListeners[i]
+	}
+	return out
+}
+
+// ListenerLabel names the i-th entry of Listeners() the way the operator
+// wrote it: "smtp_listener" for the single-table form,
+// "smtp_listeners[i] (name)" for the array form. Config errors and
+// `posthorn validate` output both use it, so they point at the same key.
+func (c *Config) ListenerLabel(i int) string {
+	if c.SMTPListener != nil {
+		return "smtp_listener"
+	}
+	return fmt.Sprintf("smtp_listeners[%d] (%s)", i, c.SMTPListeners[i].EffectiveName())
+}
+
+// listenOverlap reports whether two listen addresses would compete for
+// the same socket: the same port, and either the same host or at least
+// one of them binding every interface. Port 0 asks the kernel for a
+// free port, so it never collides. An address that doesn't split into
+// host and port falls back to string equality; the bind reports it.
+func listenOverlap(a, b string) bool {
+	hostA, portA, errA := net.SplitHostPort(a)
+	hostB, portB, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if portA != portB || portA == "0" {
+		return false
+	}
+	keyA, keyB := listenHostKey(hostA), listenHostKey(hostB)
+	return keyA == "" || keyB == "" || keyA == keyB
+}
+
+// listenHostKey canonicalizes a listen host for comparison. The empty
+// string means "every interface" (no host, 0.0.0.0, or ::). localhost
+// is treated as 127.0.0.1, which is what it binds on a default host.
+func listenHostKey(host string) string {
+	if strings.EqualFold(host, "localhost") {
+		return "127.0.0.1"
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return strings.ToLower(host)
+	}
+	if ip.IsUnspecified() {
+		return ""
+	}
+	return ip.Unmap().String()
+}
+
+// EffectiveName resolves Name to DefaultSMTPListenerName when unset.
+func (s *SMTPListenerConfig) EffectiveName() string {
+	if s.Name == "" {
+		return DefaultSMTPListenerName
+	}
+	return s.Name
+}
+
 // Validate runs structural checks on the SMTP listener block. The
 // detailed semantic checks (auth/cert combinations) live in the smtp
 // package's own Validate; here we just confirm required fields are
@@ -688,6 +818,9 @@ func (c *Config) Validate() error {
 func (s *SMTPListenerConfig) Validate() error {
 	if s.Listen == "" {
 		return errors.New("listen is required (e.g., \":2525\")")
+	}
+	if s.Name != "" && !smtpListenerNameRe.MatchString(s.Name) {
+		return fmt.Errorf("name %q: must match [A-Za-z0-9_-]+ (it becomes a metrics label and a log field)", s.Name)
 	}
 	if len(s.AllowedSenders) == 0 {
 		return errors.New("allowed_senders: at least one entry required")

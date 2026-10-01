@@ -1,0 +1,243 @@
+---
+title: Per-tenant SMTP listeners
+description: One Posthorn process, one SMTP listener per tenant, each with its own provider account. For operators running Gitea, Forgejo, or any SMTP-only app for several customers.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+You run an app like [Gitea](https://about.gitea.com) or [Forgejo](https://forgejo.org) once per customer. Each instance has one site-wide mailer setting, and each customer's mail should go out through that customer's own provider account. One Posthorn process can do this: one listener per tenant, each on its own address and port with its own sender allowlist and transport.
+
+**At the end:** tenant A's Gitea talks SMTP to Posthorn on port 2525 and mail leaves through tenant A's Postmark account; tenant B's Gitea talks to port 2526 and mail leaves through tenant B's SES account. Neither can reach the other's listener.
+
+<Aside type="note" title="Requires Posthorn 2.1 or later">
+Earlier versions reject `[[smtp_listeners]]` as an unknown field.
+</Aside>
+
+## The shape
+
+```d2
+direction: right
+
+host: Docker host {
+  gitea_a: "Gitea (tenant A)"
+  gitea_b: "Gitea (tenant B)"
+  posthorn: "Posthorn\n:2525 tenant-a\n:2526 tenant-b"
+
+  gitea_a -> posthorn: "SMTP :2525\ntenant A's network"
+  gitea_b -> posthorn: "SMTP :2526\ntenant B's network"
+}
+
+pm: "Postmark\n(tenant A account)"
+ses: "AWS SES\n(tenant B account)"
+
+host.posthorn -> pm: HTTPS
+host.posthorn -> ses: HTTPS
+```
+
+## What keeps tenants apart
+
+**The network.** Each listener binds an address that only its tenant's network can reach, so tenant A's Gitea has no route to tenant B's listener. This is the tenant boundary. Posthorn never routes by sender or recipient: the listener a message arrived on chooses the transport.
+
+How you get that depends on the platform. On Kubernetes, a NetworkPolicy admits each tenant on its own port. Behind a firewall the same rule applies. On Docker Compose it takes one extra step: a container attached to two networks answers on all of its ports from both, so binding `:2525` and `:2526` lets each tenant's network reach both ports. Give Posthorn a fixed address on each tenant network and bind each listener to that address, as in steps 2 and 3.
+
+**The sender allowlist.** Each listener has its own `allowed_senders`, so a misconfigured tenant A instance can't send as `@tenant-b.example` through its own listener. It stops mistakes, not a tenant who can reach the wrong listener, which is why the network boundary comes first.
+
+**Passwords, if you add TLS.** Each listener can also have its own `smtp_users`. Gitea refuses to send a password over an unencrypted connection to anything but localhost, so per-listener passwords need a certificate on the listener. The walkthrough runs without them on private networks, the same way the [internal relay recipe](/recipes/internal-smtp-relay/) does. [Adding passwords](#adding-passwords) covers the TLS version.
+
+## What tenants still share
+
+One process means some state is shared. With only the config below, nothing is: each message is sent once through its own listener's transport.
+
+If you add `[storage]`, the retry queue and the suppression list are shared by every listener. A hard bounce or spam complaint recorded for an address suppresses that address for all tenants, not only the one that mailed it. `[lifecycle]` event ingestion is Postmark-only and uses one set of webhook credentials, so a tenant on another provider gets no bounce events at all. If tenants must not affect each other's suppression list, run without `[storage]`, or run one Posthorn per tenant.
+
+## Prerequisites
+
+- A Docker host with `docker compose`, or a Kubernetes cluster with NetworkPolicy support
+- One provider account per tenant with a verified sending domain
+- The tenant apps already running
+
+## Walkthrough
+
+<Steps>
+
+1. **One network per tenant.**
+
+   ```yaml
+   # docker-compose.yml
+   networks:
+     tenant-a:
+       ipam:
+         config:
+           - subnet: 172.30.1.0/24
+     tenant-b:
+       ipam:
+         config:
+           - subnet: 172.30.2.0/24
+   ```
+
+   These are ordinary bridge networks, not `internal: true`. Posthorn needs outbound HTTPS to reach the providers, and an internal network has none. Docker still keeps the two bridges apart from each other, which is the isolation this recipe relies on.
+
+2. **Posthorn on both networks, with a fixed address on each.**
+
+   ```yaml
+   services:
+     posthorn:
+       image: ghcr.io/craigmccaskill/posthorn:2
+       restart: unless-stopped
+       volumes:
+         - ./posthorn.toml:/etc/posthorn/config.toml:ro
+       env_file: .env
+       networks:
+         tenant-a:
+           ipv4_address: 172.30.1.10
+         tenant-b:
+           ipv4_address: 172.30.2.10
+       # No ports: nothing outside these two networks can reach the listeners.
+
+     gitea-a:
+       image: gitea/gitea:1
+       networks: [tenant-a]
+       # ... tenant A's Gitea config ...
+
+     gitea-b:
+       image: gitea/gitea:1
+       networks: [tenant-b]
+       # ... tenant B's Gitea config ...
+   ```
+
+   The fixed addresses are what let each listener bind to one network only in the next step.
+
+3. **Write `posthorn.toml` with one listener per tenant.**
+
+   ```toml
+   [[smtp_listeners]]
+   name            = "tenant-a"
+   listen          = "172.30.1.10:2525"    # tenant A's network only
+   auth_required   = "none"                # the network is the boundary
+   require_tls     = false
+   allowed_senders = ["*@tenant-a.example"]
+   max_recipients_per_session = 20
+
+   [smtp_listeners.transport]
+   type = "postmark"
+
+   [smtp_listeners.transport.settings]
+   api_key = "${env.TENANT_A_POSTMARK_KEY}"
+
+   [[smtp_listeners]]
+   name            = "tenant-b"
+   listen          = "172.30.2.10:2526"    # tenant B's network only
+   auth_required   = "none"
+   require_tls     = false
+   allowed_senders = ["*@tenant-b.example"]
+   max_recipients_per_session = 20
+
+   [smtp_listeners.transport]
+   type = "ses"
+
+   [smtp_listeners.transport.settings]
+   region            = "eu-north-1"
+   access_key_id     = "${env.TENANT_B_SES_ACCESS_KEY_ID}"
+   secret_access_key = "${env.TENANT_B_SES_SECRET_ACCESS_KEY}"
+   ```
+
+   Each listener binds one private address rather than `:port`, so tenant A's network can't reach port 2526 at all. Posthorn accepts `auth_required = "none"` here because both addresses are private. On a bind it can't verify, such as `:2525`, it refuses to start unless you also set `trusted_network = true`.
+
+   Check it before deploying:
+
+   ```bash
+   docker run --rm --entrypoint /usr/local/bin/posthorn \
+     -v "$PWD/posthorn.toml:/etc/posthorn/config.toml:ro" --env-file .env \
+     ghcr.io/craigmccaskill/posthorn:2 validate --config /etc/posthorn/config.toml
+   ```
+
+   ```
+   config OK: 0 endpoint(s) + 2 smtp listener(s): tenant-a (172.30.1.10:2525), tenant-b (172.30.2.10:2526)
+   ```
+
+4. **Point each Gitea at its own listener.**
+
+   Tenant A's `app.ini`:
+
+   ```ini
+   [mailer]
+   ENABLED   = true
+   PROTOCOL  = smtp
+   SMTP_ADDR = 172.30.1.10
+   SMTP_PORT = 2525
+   FROM      = "Tenant A <noreply@tenant-a.example>"
+   ; USER and PASSWD intentionally omitted.
+   ```
+
+   Tenant B's is the same with its address, port, and from domain. The from address must match that listener's `allowed_senders`.
+
+5. **Send a test from each and watch the logs.**
+
+   Trigger any Gitea mail (a password reset, a test email from the admin panel) on each instance. Each Posthorn log line carries the listener's name:
+
+   ```json
+   {"msg":"smtp_submission_sent","listener":"tenant-a","transport_message_id":"...", ...}
+   {"msg":"smtp_submission_sent","listener":"tenant-b","transport_message_id":"...", ...}
+   ```
+
+   On `/metrics`, `posthorn_submissions_sent_total{endpoint="tenant-a",...}` and `{endpoint="tenant-b",...}` count separately, and so do the failure counters.
+
+</Steps>
+
+## Adding passwords
+
+To make each tenant authenticate as well, give each listener a certificate and its own users, and leave `require_tls` at its default:
+
+```toml
+[[smtp_listeners]]
+name            = "tenant-a"
+listen          = "172.30.1.10:2525"
+auth_required   = "smtp-auth"
+tls_cert        = "/etc/posthorn/tls/tenant-a.crt"
+tls_key         = "/etc/posthorn/tls/tenant-a.key"
+allowed_senders = ["*@tenant-a.example"]
+
+[[smtp_listeners.smtp_users]]
+username = "gitea-a"
+password = "${env.TENANT_A_SMTP_PASSWORD}"
+
+# transport as before
+```
+
+On the Gitea side set `PROTOCOL = smtp+starttls` and add `USER` and `PASSWD`. The certificate has to be one Gitea trusts and valid for the address in `SMTP_ADDR`. With `PROTOCOL = smtp` and no certificate, Gitea will not send the password and the login fails before Posthorn sees it.
+
+## On Kubernetes
+
+Run one Posthorn Deployment with the same listeners bound to `:2525` and `:2526`, and add a NetworkPolicy on the Posthorn pod that admits each tenant's namespace on its own port only. Posthorn can't verify that policy from a `:port` bind, so each listener with `auth_required = "none"` also needs `trusted_network = true`.
+
+## Adding a tenant
+
+Add a `[[smtp_listeners]]` block with a new name, address, port, allowlist, and transport, add the network and fixed address in Compose, restart Posthorn. Nothing about the existing tenants changes. `posthorn validate` refuses a duplicate name or an address another listener already binds.
+
+## Moving from a single listener
+
+If you start from one `[smtp_listener]` and add a second, the first now needs a name. Its metrics label changes from `smtp_listener` to that name, so update dashboards and alerts.
+
+With `[storage]` configured there is one more step. Mail waiting in the retry queue is tied to the listener's name, and the unnamed listener's name was `smtp_listener`. Keep `name = "smtp_listener"` on the original listener until `posthorn_retry_queue_depth` is 0, then rename it. Posthorn refuses to start if it finds queued mail for `smtp_listener` and no listener with that name, rather than drop it.
+
+## Gotchas
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `unknown field(s)` naming `smtp_listeners` | Posthorn older than 2.1 | Upgrade the image |
+| `name is required when more than one listener is declared` | An entry without `name` | Name every listener |
+| `listen "..." overlaps listener "..."` | Two listeners would bind the same port on the same address, or one of them binds every interface | Distinct ports, or a distinct address per listener |
+| `auth_required = "none": listen ":2525" binds all interfaces` | No-auth listener on an address Posthorn can't verify as private | Bind the tenant's fixed address, or set `trusted_network = true` if a NetworkPolicy or firewall does the isolating |
+| Startup refused with `queued submission(s) were accepted by the unnamed [smtp_listener]` | A listener was named while its mail was still in the retry queue | Set `name = "smtp_listener"` on that listener until the queue drains (see above) |
+| Every send fails with `451 4.0.0 Upstream transport failed` | Posthorn has no outbound route to the provider | Don't put Posthorn only on `internal: true` networks |
+| Tenant A can connect to tenant B's port | Listeners bound to `:port` on a container attached to both networks | Bind each listener to that tenant's fixed address, or add a NetworkPolicy |
+| `550 5.7.1 Sender not authorized` | From address outside that listener's `allowed_senders` | Fix Gitea's `FROM` or widen the allowlist for that tenant only |
+| Gitea reports an authentication error and Posthorn logs no `smtp_auth_failed` | `USER`/`PASSWD` set against a listener without TLS | Remove them, or set up TLS as in [Adding passwords](#adding-passwords) |
+| A tenant's mail to one address is answered `250` but never arrives | The address is on the shared suppression list | `posthorn suppressions list`; see [What tenants still share](#what-tenants-still-share) |
+| Metrics show everything under `smtp_listener` | Single `[smtp_listener]` form in use, or a lone listener without a name | Give it a name |
+
+## See also
+
+- [SMTP ingress](/features/smtp-ingress/#multiple-listeners) for the rules the config enforces
+- [Internal SMTP relay (Docker Compose)](/recipes/internal-smtp-relay/) for why the private hop can run without TLS
+- [Self-hosted Gitea via Posthorn](/recipes/gitea/) for the single-tenant version
