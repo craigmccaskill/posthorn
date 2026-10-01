@@ -380,11 +380,11 @@ Block F is the first minor after v2.0, scoped to the SMTP listener by two named 
 
 **FR93.** Posthorn **must** accept `[[smtp_listeners]]` (array of tables) with the same schema as `[smtp_listener]`. The single-table form remains valid and is treated as a one-element array. Declaring both forms is a config parse error naming both.
 
-**FR94.** When more than one listener is declared, each **must** carry a `name` (non-empty, unique, `[A-Za-z0-9_-]+`); a single listener defaults to `smtp_listener`. `listen` addresses **must** be distinct. Every per-listener check that exists today (FR63–FR67, the #41 public-bind refusal and `trusted_network`) applies to each listener independently.
+**FR94.** When more than one listener is declared, each **must** carry a `name` (non-empty, unique, `[A-Za-z0-9_-]+`); a single listener defaults to `smtp_listener`. `listen` addresses **must** be distinct, judged by what they bind rather than how they are spelled: two listeners on the same port conflict when their hosts are the same or either binds every interface (`:2525` and `0.0.0.0:2525`), and port `0` never conflicts. Every per-listener check that exists today (FR63–FR67, the #41 public-bind refusal and `trusted_network`) applies to each listener independently.
 
 **FR95.** The listener's `name` **must** be the `endpoint` label value on the SMTP metrics, replacing the fixed `smtp_listener` value, and **must** appear in `posthorn validate` output and the listener's log lines. Label values remain operator-configured only (NFR24).
 
-**FR96.** `cmd/posthorn serve` **must** start every declared listener, and shutdown **must** drain all of them. Lifecycle ingestion, suppression, storage, and the retry queue are process-wide and shared; each listener's sends record that listener's transport type. One listener has exactly one transport (ADR-26).
+**FR96.** `cmd/posthorn serve` **must** start every declared listener, and shutdown **must** drain all of them: every ingress is stopped at once under one shared deadline, so none keeps accepting work while another drains. A queued submission resolves its transport by the listener's name. Because adding a second listener forces a name onto a previously unnamed one, `serve` **must** refuse to start while submissions queued under `smtp_listener` exist and no listener carries that name; the operator keeps `name = "smtp_listener"` on the original listener until the queue drains. Lifecycle ingestion, suppression, storage, and the retry queue are process-wide and shared; each listener's sends record that listener's transport type. One listener has exactly one transport (ADR-26).
 
 ### Header passthrough
 

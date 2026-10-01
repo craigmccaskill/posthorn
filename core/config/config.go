@@ -683,7 +683,6 @@ func (c *Config) Validate() error {
 	}
 	if n := len(c.SMTPListeners); n > 0 {
 		seenName := map[string]int{}
-		seenListen := map[string]string{}
 		for i := range c.SMTPListeners {
 			l := &c.SMTPListeners[i]
 			// FR94: names are what tell two listeners apart in metrics
@@ -697,12 +696,18 @@ func (c *Config) Validate() error {
 			}
 			seenName[name] = i
 			if err := l.Validate(); err != nil {
-				return fmt.Errorf("smtp_listeners[%d] (%s): %w", i, name, err)
+				return fmt.Errorf("%s: %w", c.ListenerLabel(i), err)
 			}
-			if other, dup := seenListen[l.Listen]; dup {
-				return fmt.Errorf("smtp_listeners[%d] (%s): listen %q is already used by listener %q", i, name, l.Listen, other)
+			// FR94: distinct listen addresses. Compared by what they bind,
+			// not by spelling, so ":2525" and "0.0.0.0:2525" are caught
+			// here instead of as "address already in use" at serve time.
+			for j := 0; j < i; j++ {
+				other := &c.SMTPListeners[j]
+				if listenOverlap(l.Listen, other.Listen) {
+					return fmt.Errorf("%s: listen %q overlaps listener %q (listen %q); give each listener its own port, or its own address on a shared port",
+						c.ListenerLabel(i), l.Listen, other.EffectiveName(), other.Listen)
+				}
 			}
-			seenListen[l.Listen] = name
 		}
 	}
 
@@ -757,6 +762,52 @@ func (c *Config) Listeners() []*SMTPListenerConfig {
 		out[i] = &c.SMTPListeners[i]
 	}
 	return out
+}
+
+// ListenerLabel names the i-th entry of Listeners() the way the operator
+// wrote it: "smtp_listener" for the single-table form,
+// "smtp_listeners[i] (name)" for the array form. Config errors and
+// `posthorn validate` output both use it, so they point at the same key.
+func (c *Config) ListenerLabel(i int) string {
+	if c.SMTPListener != nil {
+		return "smtp_listener"
+	}
+	return fmt.Sprintf("smtp_listeners[%d] (%s)", i, c.SMTPListeners[i].EffectiveName())
+}
+
+// listenOverlap reports whether two listen addresses would compete for
+// the same socket: the same port, and either the same host or at least
+// one of them binding every interface. Port 0 asks the kernel for a
+// free port, so it never collides. An address that doesn't split into
+// host and port falls back to string equality; the bind reports it.
+func listenOverlap(a, b string) bool {
+	hostA, portA, errA := net.SplitHostPort(a)
+	hostB, portB, errB := net.SplitHostPort(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	if portA != portB || portA == "0" {
+		return false
+	}
+	keyA, keyB := listenHostKey(hostA), listenHostKey(hostB)
+	return keyA == "" || keyB == "" || keyA == keyB
+}
+
+// listenHostKey canonicalizes a listen host for comparison. The empty
+// string means "every interface" (no host, 0.0.0.0, or ::). localhost
+// is treated as 127.0.0.1, which is what it binds on a default host.
+func listenHostKey(host string) string {
+	if strings.EqualFold(host, "localhost") {
+		return "127.0.0.1"
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return strings.ToLower(host)
+	}
+	if ip.IsUnspecified() {
+		return ""
+	}
+	return ip.Unmap().String()
 }
 
 // EffectiveName resolves Name to DefaultSMTPListenerName when unset.

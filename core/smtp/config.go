@@ -54,7 +54,7 @@ type User struct {
 type ListenerConfig struct {
 	// Name identifies this listener in the metrics `endpoint` label, the
 	// submission log, and every log line it emits (FR95). Empty means
-	// DefaultListenerName, which is the label v1.x and v2.0 emitted.
+	// config.DefaultSMTPListenerName, the label v1.x and v2.0 emitted.
 	Name string `toml:"name"`
 
 	// Listen is the TCP address (e.g. ":2525"). Required.
@@ -124,19 +124,6 @@ type ListenerConfig struct {
 
 // EffectiveMaxConnections resolves the global concurrent-connection cap
 // (default 100).
-// DefaultListenerName is the name of a listener that has none: the
-// metrics label and submission-log endpoint that single-listener
-// deployments have always emitted.
-const DefaultListenerName = "smtp_listener"
-
-// EffectiveName resolves Name to DefaultListenerName when unset.
-func (c *ListenerConfig) EffectiveName() string {
-	if c.Name == "" {
-		return DefaultListenerName
-	}
-	return c.Name
-}
-
 func (c *ListenerConfig) EffectiveMaxConnections() int {
 	if c.MaxConnections <= 0 {
 		return 100
@@ -157,12 +144,17 @@ func (c *ListenerConfig) EffectiveMaxConnectionsPerIP() int {
 // first error so operators see actionable feedback. Order: listen,
 // allowed_senders (most fundamental), auth shape, TLS shape, then
 // detail checks.
+//
+// Errors name the key relative to the listener ("tls_cert: required
+// ..."). The caller prefixes the listener as the operator wrote it,
+// [smtp_listener] or smtp_listeners[i] (name), since only it knows
+// which form the config used.
 func (c *ListenerConfig) Validate() error {
 	if c.Listen == "" {
-		return errors.New("smtp_listener.listen is required (e.g., \":2525\")")
+		return errors.New("listen is required (e.g., \":2525\")")
 	}
 	if len(c.AllowedSenders) == 0 {
-		return errors.New("smtp_listener.allowed_senders: required (non-empty); open-relay prevention demands a sender allowlist")
+		return errors.New("allowed_senders: required (non-empty); open-relay prevention demands a sender allowlist")
 	}
 	mode := c.AuthRequired
 	if mode == "" {
@@ -172,21 +164,21 @@ func (c *ListenerConfig) Validate() error {
 	case AuthSMTP, AuthClientCert, AuthEither, AuthNone:
 		// ok
 	default:
-		return fmt.Errorf("smtp_listener.auth_required: must be one of %q, %q, %q, or %q; got %q — see /deployment/api-mode-deployment/ for the internal-only deployment pattern",
+		return fmt.Errorf("auth_required: must be one of %q, %q, %q, or %q; got %q — see /deployment/api-mode-deployment/ for the internal-only deployment pattern",
 			AuthSMTP, AuthClientCert, AuthEither, AuthNone, c.AuthRequired)
 	}
 
 	// AuthSMTP / AuthEither require at least one user.
 	if mode == AuthSMTP || mode == AuthEither {
 		if len(c.SMTPUsers) == 0 {
-			return fmt.Errorf("smtp_listener.smtp_users: at least one user required when auth_required = %q", mode)
+			return fmt.Errorf("smtp_users: at least one user required when auth_required = %q", mode)
 		}
 		for i, u := range c.SMTPUsers {
 			if strings.TrimSpace(u.Username) == "" {
-				return fmt.Errorf("smtp_listener.smtp_users[%d].username: required", i)
+				return fmt.Errorf("smtp_users[%d].username: required", i)
 			}
 			if u.Password == "" {
-				return fmt.Errorf("smtp_listener.smtp_users[%d].password: required", i)
+				return fmt.Errorf("smtp_users[%d].password: required", i)
 			}
 		}
 	}
@@ -194,7 +186,7 @@ func (c *ListenerConfig) Validate() error {
 	// Client-cert mode requires a CA.
 	if mode == AuthClientCert || mode == AuthEither {
 		if c.ClientCertCA == "" {
-			return fmt.Errorf("smtp_listener.client_cert_ca: required when auth_required = %q", mode)
+			return fmt.Errorf("client_cert_ca: required when auth_required = %q", mode)
 		}
 	}
 
@@ -205,10 +197,10 @@ func (c *ListenerConfig) Validate() error {
 	// network access already implies trust.
 	if c.RequireTLS || mode == AuthClientCert || mode == AuthEither {
 		if c.TLSCert == "" {
-			return errors.New("smtp_listener.tls_cert: required when require_tls=true or auth_required includes client-cert")
+			return errors.New("tls_cert: required when require_tls=true or auth_required includes client-cert")
 		}
 		if c.TLSKey == "" {
-			return errors.New("smtp_listener.tls_key: required when require_tls=true or auth_required includes client-cert")
+			return errors.New("tls_key: required when require_tls=true or auth_required includes client-cert")
 		}
 	}
 
@@ -220,11 +212,11 @@ func (c *ListenerConfig) Validate() error {
 		// an allowlist with "*".
 		// Documented default: 10.
 	} else if c.MaxRecipientsPerSession < 0 {
-		return fmt.Errorf("smtp_listener.max_recipients_per_session: must be non-negative, got %d", c.MaxRecipientsPerSession)
+		return fmt.Errorf("max_recipients_per_session: must be non-negative, got %d", c.MaxRecipientsPerSession)
 	}
 
 	if c.IdleTimeout.Std() < 0 {
-		return fmt.Errorf("smtp_listener.idle_timeout: must be non-negative, got %v", c.IdleTimeout.Std())
+		return fmt.Errorf("idle_timeout: must be non-negative, got %v", c.IdleTimeout.Std())
 	}
 
 	return nil

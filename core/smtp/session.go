@@ -416,7 +416,7 @@ func (s *session) handleDATA() {
 	var suppressedCount int
 	msg.To, suppressedCount = s.filterSuppressed(msg.To)
 	if suppressedCount > 0 && s.l.recorder != nil {
-		s.l.recorder.Suppressed(s.l.cfg.EffectiveName(), suppressedCount)
+		s.l.recorder.Suppressed(s.l.name, suppressedCount)
 	}
 	if len(msg.To) == 0 {
 		s.recordSuppressed(submissionID, msg)
@@ -445,7 +445,7 @@ func (s *session) handleDATA() {
 				s.l.gate.ReportError(qerr)
 			} else {
 				if s.l.recorder != nil {
-					s.l.recorder.Queued(s.l.cfg.EffectiveName(), s.l.cfg.Transport.Type)
+					s.l.recorder.Queued(s.l.name, s.l.cfg.Transport.Type)
 				}
 				s.logger.Warn("smtp_submission_queued",
 					slog.String("submission_id", submissionID),
@@ -504,7 +504,7 @@ func (s *session) recordSubmission(id string, msg transport.Message) (persisted,
 	}
 	sub := storage.Submission{
 		ID:        id,
-		Endpoint:  s.l.cfg.EffectiveName(),
+		Endpoint:  s.l.name,
 		Transport: s.l.cfg.Transport.Type,
 		From:      msg.From,
 		ToAddrs:   msg.To,
@@ -556,7 +556,7 @@ func (s *session) recordSuppressed(id string, msg transport.Message) {
 	}
 	err := g.Store().RecordSubmission(storage.Submission{
 		ID:        id,
-		Endpoint:  s.l.cfg.EffectiveName(),
+		Endpoint:  s.l.name,
 		Transport: s.l.cfg.Transport.Type,
 		From:      msg.From,
 		Subject:   msg.Subject,
@@ -572,9 +572,10 @@ func (s *session) recordSendOk(latency time.Duration) {
 	if s.l.recorder == nil {
 		return
 	}
-	// The "smtp_listener" endpoint label lets operators split
-	// inbound-via-HTTP from inbound-via-SMTP in metrics.
-	s.l.recorder.Sent(s.l.cfg.EffectiveName(), s.l.cfg.Transport.Type, latency)
+	// The endpoint label is the listener's name ("smtp_listener" when it
+	// has none), so operators can split inbound-via-HTTP from
+	// inbound-via-SMTP, and one listener from another, in metrics.
+	s.l.recorder.Sent(s.l.name, s.l.cfg.Transport.Type, latency)
 }
 
 func (s *session) recordSendFailed(err error) {
@@ -586,7 +587,7 @@ func (s *session) recordSendFailed(err error) {
 	if errors.As(err, &te) {
 		cls = te.Class.String()
 	}
-	s.l.recorder.Failed("smtp_listener", s.l.cfg.Transport.Type, cls)
+	s.l.recorder.Failed(s.l.name, s.l.cfg.Transport.Type, cls)
 }
 
 func (s *session) resetTransaction() {

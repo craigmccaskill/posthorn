@@ -334,7 +334,7 @@ Array form of `[smtp_listener]` for several listeners in one process, each on it
 | Use one form or the other | `[smtp_listener]` and `[[smtp_listeners]]` both declared |
 | `name` required when more than one entry | `smtp_listeners[i]: name is required when more than one listener is declared` |
 | Names unique and `[A-Za-z0-9_-]+` | `duplicate name`, or `name "...": must match ...` |
-| `listen` addresses distinct | `listen ":2525" is already used by listener "..."` |
+| `listen` addresses must not overlap (same port on the same host, or either host unspecified) | `listen ":2525" overlaps listener "..."` |
 
 A single-entry array without a `name` behaves exactly like `[smtp_listener]`. See [Multiple listeners](/features/smtp-ingress/#multiple-listeners).
 
