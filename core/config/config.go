@@ -850,18 +850,11 @@ func (s *SMTPListenerConfig) Validate() error {
 	// FR97: passthrough names come from a fixed allowlist; an unknown
 	// name is refused rather than silently skipped, and To/Cc/Bcc can
 	// never be on it (NFR22).
-	seenHdr := map[string]bool{}
-	for i, name := range s.PassthroughHeaders {
-		canon, ok := transport.PassthroughHeader(name)
-		if !ok {
-			return fmt.Errorf("passthrough_headers[%d] %q: not on the allowlist (%s)", i, name, strings.Join(transport.PassthroughHeaderAllowlist, ", "))
-		}
-		if seenHdr[canon] {
-			return fmt.Errorf("passthrough_headers[%d] %q: duplicate", i, name)
-		}
-		seenHdr[canon] = true
-		s.PassthroughHeaders[i] = canon
+	canon, err := transport.PassthroughNames(s.PassthroughHeaders)
+	if err != nil {
+		return err
 	}
+	s.PassthroughHeaders = canon
 	// FR99: a transport that can't carry headers fails here rather than
 	// dropping them at send time. Same reasoning as ADR-10: a setting the
 	// operator believes is active must not be a no-op.

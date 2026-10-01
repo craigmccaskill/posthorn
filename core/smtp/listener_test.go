@@ -1302,9 +1302,9 @@ func TestParseMIMEToMessage_PassthroughHeaders(t *testing.T) {
 	rcpt := []string{"r@example.com"}
 	parse := func(t *testing.T, data []byte, names ...string) (transport.Message, error) {
 		t.Helper()
-		canon, err := passthroughNames(names)
+		canon, err := transport.PassthroughNames(names)
 		if err != nil {
-			t.Fatalf("passthroughNames(%v): %v", names, err)
+			t.Fatalf("PassthroughNames(%v): %v", names, err)
 		}
 		return parseMIMEToMessage(data, "a@example.com", rcpt, canon)
 	}

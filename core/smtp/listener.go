@@ -85,7 +85,7 @@ func New(cfg ListenerConfig, tp transport.Transport, maxBodySize int64, logger *
 	// FR95: every line this listener logs names it, so two listeners in
 	// one process can be told apart.
 	logger = logger.With(slog.String("listener", name))
-	passthrough, err := passthroughNames(cfg.PassthroughHeaders)
+	passthrough, err := transport.PassthroughNames(cfg.PassthroughHeaders)
 	if err != nil {
 		return nil, err
 	}

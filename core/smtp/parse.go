@@ -105,33 +105,9 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 // generic malformed-message 550.
 var errPassthroughValue = errors.New("invalid passthrough header value")
 
-// passthroughNames canonicalizes a listener's passthrough_headers and
-// refuses anything off the allowlist or listed twice (FR97). The config
-// package runs the same check at load; this one makes a listener built
-// any other way fail in New instead of quietly carrying nothing.
-func passthroughNames(names []string) ([]string, error) {
-	if len(names) == 0 {
-		return nil, nil
-	}
-	out := make([]string, 0, len(names))
-	seen := make(map[string]bool, len(names))
-	for i, name := range names {
-		canon, ok := transport.PassthroughHeader(name)
-		if !ok {
-			return nil, fmt.Errorf("passthrough_headers[%d] %q: not on the allowlist (%s)", i, name, strings.Join(transport.PassthroughHeaderAllowlist, ", "))
-		}
-		if seen[canon] {
-			return nil, fmt.Errorf("passthrough_headers[%d] %q: duplicate", i, name)
-		}
-		seen[canon] = true
-		out = append(out, canon)
-	}
-	return out, nil
-}
-
 // passthroughHeaders copies the configured headers off the inbound
 // message in configuration order, as received (no RFC 2047 decoding).
-// names is the output of passthroughNames.
+// names is the output of transport.PassthroughNames.
 //
 // Each header is carried at most once: the RFCs that define these
 // headers allow one of each, so the first occurrence is taken and any

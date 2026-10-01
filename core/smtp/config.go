@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/craigmccaskill/posthorn/config"
+	"github.com/craigmccaskill/posthorn/transport"
 )
 
 // AuthMode selects which authentication shapes the listener accepts.
@@ -220,7 +221,10 @@ func (c *ListenerConfig) Validate() error {
 		return fmt.Errorf("idle_timeout: must be non-negative, got %v", c.IdleTimeout.Std())
 	}
 
-	if _, err := passthroughNames(c.PassthroughHeaders); err != nil {
+	// The config package runs the same check at load; repeating it here
+	// and in New makes a listener built any other way fail loudly instead
+	// of carrying nothing.
+	if _, err := transport.PassthroughNames(c.PassthroughHeaders); err != nil {
 		return err
 	}
 

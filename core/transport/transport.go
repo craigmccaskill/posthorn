@@ -73,6 +73,30 @@ type Header struct {
 // 996 characters, which is this line minus the ": " separator.
 const maxHeaderLine = 998
 
+// PassthroughNames canonicalizes a listener's passthrough_headers list
+// and refuses any name that is off the allowlist or listed twice (FR97).
+// The config package and the SMTP listener both call it, so the two
+// can't disagree about what a valid list is.
+func PassthroughNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for i, name := range names {
+		canon, ok := PassthroughHeader(name)
+		if !ok {
+			return nil, fmt.Errorf("passthrough_headers[%d] %q: not on the allowlist (%s)", i, name, strings.Join(PassthroughHeaderAllowlist, ", "))
+		}
+		if seen[canon] {
+			return nil, fmt.Errorf("passthrough_headers[%d] %q: duplicate", i, name)
+		}
+		seen[canon] = true
+		out = append(out, canon)
+	}
+	return out, nil
+}
+
 // CheckHeaderValue reports why value can't be carried as the value of
 // the header name, or nil. A value must be non-empty, printable ASCII
 // (0x20-0x7E), and short enough that "name: value" fits one header
