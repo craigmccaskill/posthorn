@@ -39,18 +39,10 @@ import (
 //     BodyText auto-derived from the HTML so the outbound mail always
 //     carries a readable text part (FR72 reuse).
 //
-// errPassthroughCRLF marks a passthrough header value carrying CR or LF.
-// The session answers it with 554 5.6.0 (FR98) rather than the generic
-// malformed-message 550.
-var errPassthroughCRLF = errors.New("passthrough header value contains CR or LF")
-
-func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string) (transport.Message, error) {
-	return parseMIMEToMessageWith(data, envelopeFrom, envelopeRcpts, nil)
-}
-
-// parseMIMEToMessageWith is parseMIMEToMessage plus the listener's
-// passthrough header list (FR97, FR98, ADR-27).
-func parseMIMEToMessageWith(data []byte, envelopeFrom string, envelopeRcpts []string, passthrough []string) (transport.Message, error) {
+//   - passthrough is the listener's validated passthrough header list
+//     (FR97, FR98, ADR-27); nil copies nothing. It can only ever name
+//     list-management headers, so the first invariant is untouched.
+func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string, passthrough []string) (transport.Message, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		return transport.Message{}, fmt.Errorf("parse MIME headers: %w", err)
@@ -108,27 +100,57 @@ func parseMIMEToMessageWith(data []byte, envelopeFrom string, envelopeRcpts []st
 	}, nil
 }
 
-// passthroughHeaders copies the configured, allowlisted headers off the
-// inbound message in configuration order, every occurrence of each, as
-// received (no RFC 2047 decoding). A value with CR or LF fails the whole
-// message: it could only get here through something the header parser
-// didn't normalize, and a header line is exactly where NFR1 bites.
-// Names not on the allowlist are skipped even if configured; config
-// validation refuses them first, this is the second lock (NFR22 for
-// To/Cc/Bcc by construction).
+// errPassthroughValue marks a passthrough header whose value can't be
+// carried. The session answers it with 554 5.6.0 (FR98) rather than the
+// generic malformed-message 550.
+var errPassthroughValue = errors.New("invalid passthrough header value")
+
+// passthroughNames canonicalizes a listener's passthrough_headers and
+// refuses anything off the allowlist or listed twice (FR97). The config
+// package runs the same check at load; this one makes a listener built
+// any other way fail in New instead of quietly carrying nothing.
+func passthroughNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	out := make([]string, 0, len(names))
+	seen := make(map[string]bool, len(names))
+	for i, name := range names {
+		canon, ok := transport.PassthroughHeader(name)
+		if !ok {
+			return nil, fmt.Errorf("passthrough_headers[%d] %q: not on the allowlist (%s)", i, name, strings.Join(transport.PassthroughHeaderAllowlist, ", "))
+		}
+		if seen[canon] {
+			return nil, fmt.Errorf("passthrough_headers[%d] %q: duplicate", i, name)
+		}
+		seen[canon] = true
+		out = append(out, canon)
+	}
+	return out, nil
+}
+
+// passthroughHeaders copies the configured headers off the inbound
+// message in configuration order, as received (no RFC 2047 decoding).
+// names is the output of passthroughNames.
+//
+// Each header is carried at most once: the RFCs that define these
+// headers allow one of each, so the first occurrence is taken and any
+// repeat is left behind. A header present with an empty value is not
+// carried. A value that fails transport.CheckHeaderValue (CR or LF,
+// other control or non-ASCII bytes, or too long for one header line)
+// fails the whole message: the app asked for this header to reach the
+// provider, and sending the mail without it would drop it silently.
 func passthroughHeaders(h mail.Header, names []string) ([]transport.Header, error) {
 	var out []transport.Header
 	for _, name := range names {
-		canon, ok := transport.PassthroughHeader(name)
-		if !ok {
+		values := h[name]
+		if len(values) == 0 || values[0] == "" {
 			continue
 		}
-		for _, v := range h[canon] {
-			if strings.ContainsAny(v, "\r\n") {
-				return nil, fmt.Errorf("%w: %s", errPassthroughCRLF, canon)
-			}
-			out = append(out, transport.Header{Name: canon, Value: v})
+		if err := transport.CheckHeaderValue(name, values[0]); err != nil {
+			return nil, fmt.Errorf("%w: %v", errPassthroughValue, err)
 		}
+		out = append(out, transport.Header{Name: name, Value: values[0]})
 	}
 	return out, nil
 }

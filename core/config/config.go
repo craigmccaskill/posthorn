@@ -862,6 +862,14 @@ func (s *SMTPListenerConfig) Validate() error {
 		seenHdr[canon] = true
 		s.PassthroughHeaders[i] = canon
 	}
+	// FR99: a transport that can't carry headers fails here rather than
+	// dropping them at send time. Same reasoning as ADR-10: a setting the
+	// operator believes is active must not be a no-op.
+	if len(s.PassthroughHeaders) > 0 {
+		if reg, ok := transport.Lookup(s.Transport.Type); ok && !reg.CarriesHeaders {
+			return fmt.Errorf("passthrough_headers: the %q transport does not carry mail headers; remove passthrough_headers or use a mail transport", s.Transport.Type)
+		}
+	}
 	// #41: with auth_required = "none" the sender allowlist is the only
 	// gate, so refuse a bind address we can't verify as private unless
 	// the operator explicitly asserts the network is trusted. Fail-closed

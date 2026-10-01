@@ -36,13 +36,16 @@ type Listener struct {
 	// name is cfg.Name resolved once (FR95): the metrics `endpoint` label,
 	// the submission-log endpoint, and the `listener` log field. Every
 	// call site reads this rather than re-deriving the default.
-	name      string
-	transport transport.Transport
-	maxBody   int64
-	tlsConfig *tls.Config // nil when RequireTLS is false and no client-cert
-	logger    *slog.Logger
-	recorder  *metrics.Recorder
-	gate      *storage.Gate // nil = no [storage]; v1.x behavior (FR77)
+	name string
+	// passthrough is cfg.PassthroughHeaders, canonicalized and checked
+	// against the allowlist once in New (FR97).
+	passthrough []string
+	transport   transport.Transport
+	maxBody     int64
+	tlsConfig   *tls.Config // nil when RequireTLS is false and no client-cert
+	logger      *slog.Logger
+	recorder    *metrics.Recorder
+	gate        *storage.Gate // nil = no [storage]; v1.x behavior (FR77)
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -82,6 +85,10 @@ func New(cfg ListenerConfig, tp transport.Transport, maxBodySize int64, logger *
 	// FR95: every line this listener logs names it, so two listeners in
 	// one process can be told apart.
 	logger = logger.With(slog.String("listener", name))
+	passthrough, err := passthroughNames(cfg.PassthroughHeaders)
+	if err != nil {
+		return nil, err
+	}
 	tlsCfg, err := buildTLSConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -91,16 +98,17 @@ func New(cfg ListenerConfig, tp transport.Transport, maxBodySize int64, logger *
 		return nil, fmt.Errorf("auth-failure limiter: %w", err)
 	}
 	return &Listener{
-		cfg:        cfg,
-		name:       name,
-		transport:  tp,
-		maxBody:    maxBodySize,
-		tlsConfig:  tlsCfg,
-		logger:     logger,
-		recorder:   recorder,
-		stopped:    make(chan struct{}),
-		authFail:   authFail,
-		perIPConns: make(map[string]int),
+		cfg:         cfg,
+		name:        name,
+		passthrough: passthrough,
+		transport:   tp,
+		maxBody:     maxBodySize,
+		tlsConfig:   tlsCfg,
+		logger:      logger,
+		recorder:    recorder,
+		stopped:     make(chan struct{}),
+		authFail:    authFail,
+		perIPConns:  make(map[string]int),
 	}, nil
 }
 

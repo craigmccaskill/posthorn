@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -203,5 +204,61 @@ func TestSMTP_Storage_Degraded_V1Behavior(t *testing.T) {
 	}
 	if subs, _ := gate.Store().ListSubmissions(10); len(subs) != 0 {
 		t.Errorf("degraded gate persisted rows: %d", len(subs))
+	}
+}
+
+// TestSMTP_Storage_PassthroughHeadersSurviveTheQueue: a send that is
+// queued after a provider failure must go out later with the same
+// passthrough headers (FR99). Before the submission log stored them,
+// the retry worker rebuilt the message without, and the mail left with
+// no List-Unsubscribe while the client had been told 250.
+func TestSMTP_Storage_PassthroughHeadersSurviveTheQueue(t *testing.T) {
+	shortRetryDelays(t)
+	cfg := baseTestConfig()
+	cfg.PassthroughHeaders = []string{"List-Unsubscribe", "List-Unsubscribe-Post"}
+	f := startListener(t, cfg)
+	gate := attachTestGate(t, f)
+	transient := &transport.TransportError{Class: transport.ErrTransient, Message: "upstream 503"}
+	f.mt.errQueue = []error{transient, transient} // inline attempt + FR19 retry
+
+	code := sendWithHeaderLines(t, f,
+		"List-Unsubscribe: <https://lists.example/u/abc>\r\nList-Unsubscribe-Post: List-Unsubscribe=One-Click")
+	if code != 250 {
+		t.Fatalf("DATA reply = %d, want 250 (queued)", code)
+	}
+	want := []transport.Header{
+		{Name: "List-Unsubscribe", Value: "<https://lists.example/u/abc>"},
+		{Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click"},
+	}
+
+	subs, err := gate.Store().ListSubmissions(10)
+	if err != nil || len(subs) != 1 || subs[0].Status != storage.StatusQueued {
+		t.Fatalf("row = %+v err=%v", subs, err)
+	}
+	if got := subs[0].Headers; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("stored Headers = %+v, want %+v", got, want)
+	}
+
+	// Replay it the way serve does: the worker claims the row and hands
+	// the rebuilt message to the listener's transport.
+	var replayed []transport.Message
+	worker := &storage.Worker{
+		Store:  gate.Store(),
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:    func() time.Time { return time.Now().Add(storage.RetryBackoff[0] + time.Minute) },
+		Send: func(ctx context.Context, endpoint string, msg transport.Message) (transport.SendResult, error) {
+			replayed = append(replayed, msg)
+			return transport.SendResult{MessageID: "pm-retry"}, nil
+		},
+	}
+	worker.ProcessDue(context.Background(), storage.Hooks{})
+	if len(replayed) != 1 {
+		t.Fatalf("worker replayed %d messages, want 1", len(replayed))
+	}
+	if got := replayed[0].Headers; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("replayed Headers = %+v, want %+v", got, want)
+	}
+	if err := transport.ValidateHeaders(replayed[0].Headers); err != nil {
+		t.Errorf("replayed headers must pass the transports' own check: %v", err)
 	}
 }

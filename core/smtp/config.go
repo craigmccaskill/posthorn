@@ -93,9 +93,10 @@ type ListenerConfig struct {
 	// must be set to a meaningful bound.
 	AllowedRecipients []string `toml:"allowed_recipients"`
 
-	// PassthroughHeaders is the canonicalized, allowlisted list of inbound
-	// headers to copy onto the outbound Message (FR97, FR98). Validated by
-	// the config package; the parser re-checks the allowlist anyway.
+	// PassthroughHeaders lists the inbound headers to copy onto the
+	// outbound Message (FR97, FR98). Names must be on
+	// transport.PassthroughHeaderAllowlist; Validate and New both refuse
+	// anything else.
 	PassthroughHeaders []string `toml:"passthrough_headers"`
 
 	// MaxRecipientsPerSession is the open-relay-prevention cap on
@@ -217,6 +218,10 @@ func (c *ListenerConfig) Validate() error {
 
 	if c.IdleTimeout.Std() < 0 {
 		return fmt.Errorf("idle_timeout: must be non-negative, got %v", c.IdleTimeout.Std())
+	}
+
+	if _, err := passthroughNames(c.PassthroughHeaders); err != nil {
+		return err
 	}
 
 	return nil

@@ -1,11 +1,14 @@
 package storage
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/craigmccaskill/posthorn/transport"
 )
 
 var t0 = time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
@@ -336,4 +339,87 @@ func TestMaxSize_CapsGrowthButStaysOperable(t *testing.T) {
 	if err := s.RecordSubmission(sampleSubmission("after-prune", StatusSent)); err != nil {
 		t.Fatalf("insert after prune: %v", err)
 	}
+}
+
+// TestSubmission_HeadersRoundTrip: passthrough headers are stored with
+// the row and come back in order (FR99); a row without any reads back
+// nil, like the other optional columns.
+func TestSubmission_HeadersRoundTrip(t *testing.T) {
+	s := memStore(t)
+	with := sampleSubmission("h-1", StatusSending)
+	with.Headers = []transport.Header{
+		{Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click"},
+		{Name: "List-Unsubscribe", Value: "<https://lists.example/u/abc>, <mailto:u@lists.example>"},
+	}
+	if err := s.RecordSubmission(with); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordSubmission(sampleSubmission("h-2", StatusSending)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := s.GetSubmission("h-1")
+	if err != nil || !ok {
+		t.Fatalf("get: ok=%v err=%v", ok, err)
+	}
+	if len(got.Headers) != 2 || got.Headers[0] != with.Headers[0] || got.Headers[1] != with.Headers[1] {
+		t.Errorf("Headers = %+v, want %+v", got.Headers, with.Headers)
+	}
+	none, _, _ := s.GetSubmission("h-2")
+	if none.Headers != nil {
+		t.Errorf("Headers = %+v, want nil", none.Headers)
+	}
+}
+
+// TestOpen_MigratesV1Database: a database written by v2.0 (schema 1, no
+// headers column) opens under this binary, keeps its rows, and its
+// queued mail still replays. The file is built with the v1 schema text
+// and stamp, exactly what a v2.0 process leaves on disk.
+func TestOpen_MigratesV1Database(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v1.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		schemaV1,
+		"PRAGMA user_version = 1",
+		`INSERT INTO submissions (id, endpoint, transport, from_addr, to_addrs, subject, body_text, status, created_at)
+		 VALUES ('old-1', 'smtp_listener', 'postmark', 'a@example.com', '["b@example.com"]', 'Hi', 'body', 'queued', 1700000000)`,
+		`INSERT INTO retry_queue (submission_id, attempt, next_attempt_at) VALUES ('old-1', 2, 0)`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed v1 database: %v", err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s, err := Open(Config{Path: path})
+	if err != nil {
+		t.Fatalf("Open on a v1 database: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	var version int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+		t.Errorf("user_version = %d (err %v), want %d", version, err, schemaVersion)
+	}
+	due, err := s.ClaimDue(time.Now(), 10)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("ClaimDue = %d entries, err %v", len(due), err)
+	}
+	if due[0].ID != "old-1" || due[0].Attempt != 2 || due[0].Subject != "Hi" || due[0].Headers != nil {
+		t.Errorf("migrated row = %+v", due[0])
+	}
+
+	// Reopening an already-migrated file is a no-op, not a second ALTER.
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s2, err := Open(Config{Path: path})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	_ = s2.Close()
 }

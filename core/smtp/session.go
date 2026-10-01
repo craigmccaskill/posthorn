@@ -388,10 +388,18 @@ func (s *session) handleDATA() {
 		return
 	}
 
-	msg, err := parseMIMEToMessageWith(buf.Bytes(), s.mailFrom, s.rcptTo, s.l.cfg.PassthroughHeaders)
+	msg, err := parseMIMEToMessage(buf.Bytes(), s.mailFrom, s.rcptTo, s.l.passthrough)
 	if err != nil {
-		if errors.Is(err, errPassthroughCRLF) {
-			// FR98: a passthrough value that would break a header line.
+		if errors.Is(err, errPassthroughValue) {
+			// FR98: a passthrough value that can't be carried as one clean
+			// header line. CR/LF here is a header-injection attempt or a
+			// badly broken client, so it is logged louder than the routine
+			// rejections. The error names the header and the reason, never
+			// the value.
+			s.logger.Warn("smtp_passthrough_header_rejected",
+				slog.String("from", s.mailFrom),
+				slog.String("error", err.Error()),
+			)
 			_ = s.writeReply(554, "5.6.0 Invalid header value")
 		} else {
 			_ = s.writeReply(550, "5.6.0 Malformed message: "+err.Error())
@@ -512,6 +520,7 @@ func (s *session) recordSubmission(id string, msg transport.Message) (persisted,
 		Subject:   msg.Subject,
 		BodyText:  msg.BodyText,
 		BodyHTML:  msg.BodyHTML,
+		Headers:   msg.Headers, // FR99: a queued retry sends them too
 		ClientIP:  host,
 		Status:    storage.StatusSending,
 		CreatedAt: time.Now(),
