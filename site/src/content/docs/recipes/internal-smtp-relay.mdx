@@ -158,7 +158,7 @@ All of them benefit from the same model: one Posthorn config, one set of provide
 
 This recipe is the **internal posture** — appropriate when Posthorn is on a network where you trust everyone who can reach it. The **production posture** (TLS + AUTH + signed certs) is appropriate when Posthorn is reachable from outside that trust boundary.
 
-The two postures can coexist on different listeners if you need both, but Posthorn v1.0 ships with one `[smtp_listener]` block per process. Run two Posthorn instances if you need a public + internal split, or pick the lower-friction posture (internal) when the deployment shape allows.
+The two postures can coexist in one process. From v2.1, declare one `[[smtp_listeners]]` entry per posture, each with its own port, auth mode, and TLS settings; see [Multiple listeners](/features/smtp-ingress/#multiple-listeners). On earlier versions, which have a single `[smtp_listener]` block, run two Posthorn instances for a public + internal split, or pick the lower-friction posture (internal) when the deployment shape allows.
 
 ## See also
 
