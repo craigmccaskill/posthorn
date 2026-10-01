@@ -1275,10 +1275,54 @@ func TestLoad_MultipleListeners_DistinctListen(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for duplicate listen address")
 	}
-	for _, w := range []string{"smtp_listeners[1]", ":2525", "\"a\""} {
+	for _, w := range []string{"smtp_listeners[1] (b)", ":2525", "\"a\""} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("error should contain %q: %v", w, err)
 		}
+	}
+}
+
+// TestLoad_MultipleListeners_ListenOverlap: FR94's distinct-listen rule
+// is about what two addresses bind, not how they are spelled. Before
+// this, ":2525" next to "0.0.0.0:2525" passed `validate` and failed at
+// serve time with "address already in use".
+func TestLoad_MultipleListeners_ListenOverlap(t *testing.T) {
+	cases := []struct {
+		a, b    string
+		overlap bool
+	}{
+		{":2525", "0.0.0.0:2525", true},
+		{":2525", "[::]:2525", true},
+		{":2525", "127.0.0.1:2525", true},
+		{"172.30.1.10:2525", "0.0.0.0:2525", true},
+		{"localhost:2525", "127.0.0.1:2525", true},
+		{"LOCALHOST:2525", "localhost:2525", true},
+		{"127.0.0.1:2525", "127.0.0.1:2525", true},
+		{"172.30.1.10:2525", "172.30.2.10:2525", false}, // one port, one address per tenant network
+		{"127.0.0.1:2525", "[::1]:2525", false},
+		{":2525", ":2526", false},
+		{"127.0.0.1:0", "127.0.0.1:0", false}, // port 0: the kernel picks, no collision
+	}
+	for _, tc := range cases {
+		t.Run(tc.a+" vs "+tc.b, func(t *testing.T) {
+			_, err := loadString(t, minimalTOML+
+				listenerBlock("[[smtp_listeners]]", "a", tc.a, "")+
+				listenerBlock("[[smtp_listeners]]", "b", tc.b, ""))
+			if !tc.overlap {
+				if err != nil {
+					t.Fatalf("addresses do not overlap, want no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected an overlap error")
+			}
+			for _, w := range []string{"smtp_listeners[1] (b)", "overlaps", "\"a\"", tc.a, tc.b} {
+				if !strings.Contains(err.Error(), w) {
+					t.Errorf("error should contain %q: %v", w, err)
+				}
+			}
+		})
 	}
 }
 

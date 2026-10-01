@@ -380,7 +380,7 @@ Block F is the first minor after v2.0, scoped to the SMTP listener by two named 
 
 **FR93.** Posthorn **must** accept `[[smtp_listeners]]` (array of tables) with the same schema as `[smtp_listener]`. The single-table form remains valid and is treated as a one-element array. Declaring both forms is a config parse error naming both.
 
-**FR94.** When more than one listener is declared, each **must** carry a `name` (non-empty, unique, `[A-Za-z0-9_-]+`); a single listener defaults to `smtp_listener`. `listen` addresses **must** be distinct. Every per-listener check that exists today (FR63–FR67, the #41 public-bind refusal and `trusted_network`) applies to each listener independently.
+**FR94.** When more than one listener is declared, each **must** carry a `name` (non-empty, unique, `[A-Za-z0-9_-]+`); a single listener defaults to `smtp_listener`. `listen` addresses **must** be distinct, judged by what they bind rather than how they are spelled: two listeners on the same port conflict when their hosts are the same or either binds every interface (`:2525` and `0.0.0.0:2525`), and port `0` never conflicts. Every per-listener check that exists today (FR63–FR67, the #41 public-bind refusal and `trusted_network`) applies to each listener independently.
 
 **FR95.** The listener's `name` **must** be the `endpoint` label value on the SMTP metrics, replacing the fixed `smtp_listener` value, and **must** appear in `posthorn validate` output and the listener's log lines. Label values remain operator-configured only (NFR24).
 
