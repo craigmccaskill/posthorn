@@ -48,20 +48,85 @@ type Message struct {
 	Attachments []Attachment
 
 	// Headers carries allowlisted list-management headers from the SMTP
-	// ingress (ADR-27, FR97-FR99). Only names on
-	// PassthroughHeaderAllowlist ever appear; values are CR/LF-free by the
-	// time they cross (the ingress rejects the message otherwise); mail
-	// transports emit them through the provider's structured custom-header
-	// mechanism and, where they build header lines themselves, re-check
-	// for CR/LF (NFR1, NFR32). The webhook transport ignores them. HTTP
-	// ingresses leave this nil.
+	// ingress (ADR-27, FR97-FR99): at most one per allowlisted name, each
+	// value a single line of printable ASCII. The ingress rejects a
+	// message whose value isn't, and the retry queue stores Headers and
+	// replays them. Every mail transport calls ValidateHeaders at the top
+	// of Send and refuses the message on failure, so nothing reaches a
+	// provider on the strength of an earlier layer's check (NFR1, NFR32),
+	// then emits them through the provider's structured custom-header
+	// mechanism. The webhook transport ignores them. HTTP ingresses leave
+	// this nil.
 	Headers []Header
 }
 
-// Header is one passthrough header (see Message.Headers).
+// Header is one passthrough header (see Message.Headers). The JSON names
+// are the wire form Postmark and SES take, and what the submission log
+// stores.
 type Header struct {
-	Name  string
-	Value string
+	Name  string `json:"Name"`
+	Value string `json:"Value"`
+}
+
+// maxHeaderLine is RFC 5322's limit on one header line, CRLF excluded.
+// It is also the tightest provider limit: SESv2 caps name plus value at
+// 996 characters, which is this line minus the ": " separator.
+const maxHeaderLine = 998
+
+// CheckHeaderValue reports why value can't be carried as the value of
+// the header name, or nil. A value must be non-empty, printable ASCII
+// (0x20-0x7E), and short enough that "name: value" fits one header
+// line. That excludes CR and LF, which is the header-injection check
+// (NFR1), along with other control bytes and raw 8-bit data that a
+// header may not contain unencoded. The ingress and every mail
+// transport apply the same rule, so a message is refused at the door
+// rather than by one provider and not another.
+func CheckHeaderValue(name, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s: empty value", name)
+	}
+	for i := 0; i < len(value); i++ {
+		switch c := value[i]; {
+		case c == '\r' || c == '\n':
+			return fmt.Errorf("%s: value contains CR or LF", name)
+		case c < 0x20 || c > 0x7e:
+			return fmt.Errorf("%s: value contains a byte outside printable ASCII (0x%02x)", name, c)
+		}
+	}
+	if len(name)+len(": ")+len(value) > maxHeaderLine {
+		return fmt.Errorf("%s: header line longer than %d characters", name, maxHeaderLine)
+	}
+	return nil
+}
+
+// ValidateHeaders checks Message.Headers against everything a transport
+// relies on: each name is an allowlisted name in canonical form, no name
+// repeats (RFC 2369, RFC 2919, and RFC 8058 allow one of each), and each
+// value passes CheckHeaderValue.
+func ValidateHeaders(headers []Header) error {
+	seen := make(map[string]bool, len(headers))
+	for _, h := range headers {
+		if canon, ok := PassthroughHeader(h.Name); !ok || canon != h.Name {
+			return fmt.Errorf("header %q is not on the passthrough allowlist", h.Name)
+		}
+		if seen[h.Name] {
+			return fmt.Errorf("%s: more than one value", h.Name)
+		}
+		seen[h.Name] = true
+		if err := CheckHeaderValue(h.Name, h.Value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkHeaders is ValidateHeaders shaped for the top of a transport's
+// Send: a terminal TransportError, or nil.
+func checkHeaders(msg Message) error {
+	if err := ValidateHeaders(msg.Headers); err != nil {
+		return &TransportError{Class: ErrTerminal, Cause: err, Message: "passthrough header rejected"}
+	}
+	return nil
 }
 
 // PassthroughHeaderAllowlist is the fixed set of headers a listener may

@@ -124,6 +124,14 @@ func defaultSMTPDial(ctx context.Context, addr string) (*smtp.Client, error) {
 //	MAIL/RCPT/DATA 5xx              → ErrTerminal (relay-rejected, bad address)
 //	CRLF in header value            → ErrTerminal (NFR1 reject at our edge)
 func (s *SMTPOutTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
+	// Passthrough headers become literal header lines in buildRFC5322
+	// (FR99). The ingress already refused bad values; this is the layer
+	// that must not trust that (NFR32). checkHeaders holds each name to
+	// the allowlist and each value to one line of printable ASCII within
+	// RFC 5322's line limit, so they can be written as they are.
+	if err := checkHeaders(msg); err != nil {
+		return SendResult{}, err
+	}
 	// NFR1: reject CRLF in submitter-controlled header values before we
 	// hand-write them into the DATA blob. Catches header-injection
 	// payloads at our edge with a clear error.
@@ -252,17 +260,6 @@ func validateNoHeaderCRLF(msg Message) error {
 			return fmt.Errorf("to[%d] contains CR or LF", i)
 		}
 	}
-	// Passthrough headers become literal header lines here (FR99), so
-	// the NFR1 check applies to both halves. The ingress already refused
-	// CR/LF values; this is the layer that must not trust that (NFR32).
-	for i, h := range msg.Headers {
-		if strings.ContainsAny(h.Name, "\r\n:") || h.Name == "" {
-			return fmt.Errorf("headers[%d] name %q is not a valid header name", i, h.Name)
-		}
-		if strings.ContainsAny(h.Value, "\r\n") {
-			return fmt.Errorf("headers[%d] (%s) value contains CR or LF", i, h.Name)
-		}
-	}
 	return nil
 }
 
@@ -301,7 +298,7 @@ func (s *SMTPOutTransport) buildRFC5322(msg Message) []byte {
 	}
 	writeHeader(&buf, "Subject", encodeMIMESubject(msg.Subject))
 	for _, h := range msg.Headers {
-		writeHeader(&buf, h.Name, h.Value) // validated CR/LF-free in validateNoHeaderCRLF
+		writeHeader(&buf, h.Name, h.Value) // validated by checkHeaders in Send
 	}
 	writeHeader(&buf, "Date", s.now().UTC().Format(time.RFC1123Z))
 	writeHeader(&buf, "MIME-Version", "1.0")
@@ -464,9 +461,10 @@ var _ Transport = (*SMTPOutTransport)(nil)
 // Registry registration.
 func init() {
 	Register(Registration{
-		Type:     "smtp",
-		Validate: validateSMTPOutSettings,
-		Build:    buildSMTPOutFromSettings,
+		Type:           "smtp",
+		Validate:       validateSMTPOutSettings,
+		Build:          buildSMTPOutFromSettings,
+		CarriesHeaders: true,
 	})
 }
 
