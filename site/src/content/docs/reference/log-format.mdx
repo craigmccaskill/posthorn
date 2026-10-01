@@ -398,6 +398,10 @@ AUTH PLAIN result. Carries `user` (the username, never the password).
 
 `RCPT TO:` exceeded session cap or hit the `allowed_recipients` block. Carries `to`.
 
+### `smtp_passthrough_header_rejected`
+
+A header named in `passthrough_headers` had a value that can't be carried, and the message was refused with `554 5.6.0`. Carries `from` (the envelope sender) and `error`, which names the header and the reason (CR or LF, a byte outside printable ASCII, an over-long line). The value itself is never logged. Level WARN: a CR or LF here is a header-injection attempt or a badly broken client.
+
 ### `smtp_submission_sent`
 
 Outbound transport accepted the message. Carries `transport_message_id` if the upstream returned one.

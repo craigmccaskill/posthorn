@@ -303,7 +303,7 @@ Optional inbound SMTP ingress. When this block is present, `posthorn serve` star
 | `idle_timeout` | duration | no | `"60s"` | Connection idle timeout. |
 | `max_connections` | int | no | `100` | Global concurrent-connection cap. Excess connections get `421` and close immediately. |
 | `max_connections_per_ip` | int | no | `16` | Per-remote-IP concurrent-connection cap. Same `421` behavior. |
-| `passthrough_headers` | `[]string` | no | unset | Inbound headers to carry to the transport. Allowlist only: `List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`; any other name is a parse error. Values with CR/LF are refused at the door (`554`). See [Passing list headers through](/features/smtp-ingress/#passing-list-headers-through). |
+| `passthrough_headers` | `[]string` | no | unset | Inbound headers to carry to the transport. Allowlist only: `List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`; any other name is a parse error, and so is setting this with a `webhook` transport. A value that isn't one line of printable ASCII is refused at the door (`554`). See [Passing list headers through](/features/smtp-ingress/#passing-list-headers-through). |
 
 ### Trust
 

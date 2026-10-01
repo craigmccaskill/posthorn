@@ -66,6 +66,7 @@ SMTP-ingress events (when `[smtp_listener]` is configured):
 | `smtp_auth_ok` / `smtp_auth_failed` | INFO | AUTH PLAIN result (password never logged) |
 | `smtp_sender_rejected` | INFO | `MAIL FROM:` not in `allowed_senders` |
 | `smtp_recipient_rejected` | INFO | `RCPT TO:` exceeded session cap or recipient block |
+| `smtp_passthrough_header_rejected` | WARN | A `passthrough_headers` value was refused with `554` |
 | `smtp_submission_sent` | INFO | Outbound transport accepted |
 | `smtp_submission_failed` | ERROR | Outbound transport rejected |
 | `smtp_session_close` | INFO | Session ended (`reason: "quit"` for clean QUIT) |

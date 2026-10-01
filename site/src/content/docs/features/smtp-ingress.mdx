@@ -113,9 +113,12 @@ passthrough_headers = ["List-Unsubscribe", "List-Unsubscribe-Post"]
 How it behaves:
 
 - Only three names are allowed: `List-Unsubscribe`, `List-Unsubscribe-Post`, and `List-Id`. Anything else, including `To`, `Cc`, and `Bcc`, is a config error, so recipients still come from the SMTP envelope only.
-- Values are copied as received, in the order you listed the names, every occurrence of each. No decoding is applied.
-- A value containing a carriage return or line feed fails the message with `554 5.6.0 Invalid header value`. That is the header-injection check at the door; the transports that build header lines themselves check again.
-- Every mail transport carries them through the provider's own custom-header field: Postmark, Resend, Mailgun, SES, and outbound SMTP. The webhook transport ignores them.
+- Values are copied as received, in the order you listed the names. No decoding is applied.
+- Each header is carried once. The RFCs that define these headers allow one of each per message, so if a message has the same header twice the first is carried and the rest are left behind. A header with an empty value is not carried.
+- A value has to be one line of printable ASCII that fits in a 998-character header line. Anything else fails the message with `554 5.6.0 Invalid header value` and a `smtp_passthrough_header_rejected` log line naming the header: a carriage return or line feed (the header-injection check), other control characters, raw 8-bit bytes, or an over-long value. The message is refused rather than sent without the header, so a missing unsubscribe header is never silent.
+- Every mail transport carries them through the provider's own custom-header field: Postmark, Resend, Mailgun, SES, and outbound SMTP. Each one re-checks the names and values before it sends anything.
+- The webhook transport has no mail headers to put them in. `passthrough_headers` on a listener whose transport is `webhook` is a config error.
+- With `[storage]` configured, the headers are stored with the submission, so a send that is queued and retried later goes out with them.
 - With `passthrough_headers` unset, nothing changes from v2.0.
 
 ## Open-relay prevention
@@ -187,6 +190,7 @@ smtp_auth_ok            — AUTH PLAIN succeeded (includes `user` field)
 smtp_auth_failed        — AUTH PLAIN rejected (includes `user`; password never logged)
 smtp_sender_rejected    — MAIL FROM not in allowlist
 smtp_recipient_rejected — RCPT TO not in allowlist
+smtp_passthrough_header_rejected — a passthrough header value was refused (554); names the header, never the value
 smtp_submission_sent    — DATA delivered to upstream transport (with submission_id, transport_message_id, size_bytes)
 smtp_submission_failed  — upstream transport failed
 smtp_session_close      — connection closed
