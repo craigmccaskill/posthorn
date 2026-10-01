@@ -1186,39 +1186,94 @@ func TestSMTP_AuthNone_SenderAllowlist_StillEnforced(t *testing.T) {
 }
 
 // TestSMTP_NamedListener_MetricsLabel covers FR95 (Story 19.2): a named
-// listener records under its own name, and an unnamed one keeps the
-// label single-listener deployments have always had.
+// listener records under its own name on every outcome, and an unnamed
+// one keeps the label single-listener deployments have always had. The
+// failed case is here because that call site kept the fixed label after
+// the others had moved to the name.
 func TestSMTP_NamedListener_MetricsLabel(t *testing.T) {
 	for _, tc := range []struct{ name, wantLabel string }{
 		{"tenant-a", "tenant-a"},
-		{"", DefaultListenerName},
+		{"", config.DefaultSMTPListenerName},
 	} {
-		t.Run("name="+tc.name, func(t *testing.T) {
+		t.Run("sent/name="+tc.name, func(t *testing.T) {
 			reg := metrics.New()
 			cfg := baseTestConfig()
 			cfg.Name = tc.name
 			f := startListener(t, cfg, metrics.NewRecorder(reg))
-			tp := f.dial()
-			_ = tp.PrintfLine("EHLO client.test")
-			expectMultiline(t, tp, 250)
-			_ = tp.PrintfLine("AUTH PLAIN %s", authPlainCreds("user", "pass"))
-			expect(t, tp, 235)
-			_ = tp.PrintfLine("MAIL FROM:<noreply@example.com>")
-			expect(t, tp, 250)
-			_ = tp.PrintfLine("RCPT TO:<alice@somewhere.com>")
-			expect(t, tp, 250)
-			_ = tp.PrintfLine("DATA")
-			expect(t, tp, 354)
-			_ = tp.PrintfLine("Subject: Hi\r\n\r\nBody.\r\n.")
-			expectCode(t, tp)
-			waitForSend(t, f.mt, 1, 2*time.Second)
-
-			scrape := httptest.NewRecorder()
-			reg.Handler().ServeHTTP(scrape, httptest.NewRequest("GET", "/metrics", nil))
+			if code := smtpDataFlow(t, f); code != 250 {
+				t.Fatalf("DATA response = %d, want 250", code)
+			}
 			want := `posthorn_submissions_sent_total{endpoint="` + tc.wantLabel + `",transport="postmark"} 1`
-			if !strings.Contains(scrape.Body.String(), want) {
-				t.Errorf("missing %q in metrics", want)
+			if got := scrapeMetrics(reg); !strings.Contains(got, want) {
+				t.Errorf("missing %q in metrics:\n%s", want, got)
 			}
 		})
+		t.Run("failed/name="+tc.name, func(t *testing.T) {
+			reg := metrics.New()
+			cfg := baseTestConfig()
+			cfg.Name = tc.name
+			f := startListener(t, cfg, metrics.NewRecorder(reg))
+			f.mt.errQueue = []error{
+				&transport.TransportError{Class: transport.ErrTerminal, Status: 422, Message: "bad payload"},
+			}
+			if code := smtpDataFlow(t, f); code != 451 {
+				t.Fatalf("DATA response = %d, want 451", code)
+			}
+			want := `posthorn_submissions_failed_total{endpoint="` + tc.wantLabel + `",transport="postmark",error_class="terminal"} 1`
+			if got := scrapeMetrics(reg); !strings.Contains(got, want) {
+				t.Errorf("missing %q in metrics:\n%s", want, got)
+			}
+		})
+	}
+}
+
+func scrapeMetrics(reg *metrics.Registry) string {
+	scrape := httptest.NewRecorder()
+	reg.Handler().ServeHTTP(scrape, httptest.NewRequest("GET", "/metrics", nil))
+	return scrape.Body.String()
+}
+
+// TestListener_Name covers the ingress name used in startup and
+// shutdown errors: several listeners must be told apart there too.
+func TestListener_Name(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"", "smtp"},
+		{"tenant-a", `smtp "tenant-a"`},
+	} {
+		cfg := baseTestConfig()
+		cfg.Name = tc.name
+		l, err := New(cfg, &mockTransport{}, 1<<20, nil, nil)
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if got := l.Name(); got != tc.want {
+			t.Errorf("Name() with name %q = %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestListener_StopBeforeStartBinds covers the shutdown race a signal
+// right after startup can hit: Stop finds no socket to close, and Start
+// must not then bind and sit in Accept with nothing left to wake it.
+func TestListener_StopBeforeStartBinds(t *testing.T) {
+	l, err := New(baseTestConfig(), &mockTransport{}, 1<<20, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := l.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- l.Start(context.Background()) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Start after Stop = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Start blocked after Stop had already run")
+	}
+	if l.Addr() != nil {
+		t.Errorf("Addr() = %v after a refused start, want nil", l.Addr())
 	}
 }
