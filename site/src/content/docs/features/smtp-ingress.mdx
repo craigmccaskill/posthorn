@@ -102,7 +102,7 @@ One thing the config can't do for you: on a plain Docker network, a container at
 
 ## Passing list headers through
 
-By default the listener keeps three headers from an inbound message, `Subject`, `From`, and `Reply-To`, and drops everything else. Apps that send lists, listmonk for one, set `List-Unsubscribe` and `List-Unsubscribe-Post` on every message so mailbox providers can offer one-click unsubscribe (RFC 8058); Gmail and Yahoo expect those from high-volume senders. To carry them to the provider, name them on the listener:
+By default the listener keeps three headers from an inbound message, `Subject`, `From`, and `Reply-To`, and drops everything else. Apps that send lists, listmonk for one, set `List-Unsubscribe` and `List-Unsubscribe-Post` on every message so mailbox providers can offer one-click unsubscribe (RFC 8058); Gmail and Yahoo expect those from high-volume senders. To carry them to the provider, name them on the listener. This needs Posthorn 2.1 or later; earlier versions reject the key as an unknown field:
 
 ```toml
 [smtp_listener]
