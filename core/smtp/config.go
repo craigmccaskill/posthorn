@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/craigmccaskill/posthorn/config"
+	"github.com/craigmccaskill/posthorn/transport"
 )
 
 // AuthMode selects which authentication shapes the listener accepts.
@@ -92,6 +93,12 @@ type ListenerConfig struct {
 	// syntax as AllowedSenders. EITHER this or MaxRecipientsPerSession
 	// must be set to a meaningful bound.
 	AllowedRecipients []string `toml:"allowed_recipients"`
+
+	// PassthroughHeaders lists the inbound headers to copy onto the
+	// outbound Message (FR97, FR98). Names must be on
+	// transport.PassthroughHeaderAllowlist; Validate and New both refuse
+	// anything else.
+	PassthroughHeaders []string `toml:"passthrough_headers"`
 
 	// MaxRecipientsPerSession is the open-relay-prevention cap on
 	// RCPT TO commands per session (FR65). Default 10 when unset and
@@ -212,6 +219,13 @@ func (c *ListenerConfig) Validate() error {
 
 	if c.IdleTimeout.Std() < 0 {
 		return fmt.Errorf("idle_timeout: must be non-negative, got %v", c.IdleTimeout.Std())
+	}
+
+	// The config package runs the same check at load; repeating it here
+	// and in New makes a listener built any other way fail loudly instead
+	// of carrying nothing.
+	if _, err := transport.PassthroughNames(c.PassthroughHeaders); err != nil {
+		return err
 	}
 
 	return nil

@@ -1,6 +1,7 @@
 package smtp
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -9,7 +10,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http/httptest"
@@ -73,6 +76,13 @@ type smtpFixture struct {
 
 func startListener(t *testing.T, cfg ListenerConfig, rec ...*metrics.Recorder) *smtpFixture {
 	t.Helper()
+	return startListenerLogged(t, cfg, nil, rec...)
+}
+
+// startListenerLogged is startListener with the listener's log output
+// going to logger (nil discards it).
+func startListenerLogged(t *testing.T, cfg ListenerConfig, logger *slog.Logger, rec ...*metrics.Recorder) *smtpFixture {
+	t.Helper()
 	if cfg.MaxMessageSize == "" {
 		cfg.MaxMessageSize = "1MB"
 	}
@@ -82,7 +92,7 @@ func startListener(t *testing.T, cfg ListenerConfig, rec ...*metrics.Recorder) *
 	if len(rec) > 0 {
 		recorder = rec[0]
 	}
-	l, err := New(cfg, mt, maxBody, nil, recorder)
+	l, err := New(cfg, mt, maxBody, logger, recorder)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -467,7 +477,7 @@ func TestSMTP_MessageSizeCap_552(t *testing.T) {
 
 func TestParseMIMEToMessage_PlainText(t *testing.T) {
 	data := []byte("From: a@example.com\r\nSubject: Hello\r\n\r\nBody text.\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -495,7 +505,7 @@ func TestParseMIMEToMessage_RecipientsFromEnvelopeNotMIME_NFR22(t *testing.T) {
 			"Subject: hi\r\n" +
 			"\r\n" +
 			"body\r\n")
-	msg, err := parseMIMEToMessage(data, "attacker@evil.com", []string{"intended@example.com"})
+	msg, err := parseMIMEToMessage(data, "attacker@evil.com", []string{"intended@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -520,7 +530,7 @@ func TestParseMIMEToMessage_MultipartPrefersTextPlain(t *testing.T) {
 			"\r\n" +
 			"<p>html version</p>\r\n" +
 			"--" + boundary + "--\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -545,7 +555,7 @@ func TestParseMIMEToMessage_HTMLOnly_AcceptedWithDerivedText(t *testing.T) {
 			"Content-Type: text/html; charset=utf-8\r\n" +
 			"\r\n" +
 			"<p>only html</p>\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("HTML-only message rejected: %v", err)
 	}
@@ -572,7 +582,7 @@ func TestParseMIMEToMessage_MultipartHTMLOnly_DerivesText(t *testing.T) {
 			"\r\n" +
 			"<h1>Alert</h1><p>Disk is full</p>\r\n" +
 			"--" + boundary + "--\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -596,7 +606,7 @@ func TestParseMIMEToMessage_MultipartNoTextNoHTML_Rejected(t *testing.T) {
 			"\r\n" +
 			"binarybytes\r\n" +
 			"--" + boundary + "--\r\n")
-	_, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	_, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err == nil {
 		t.Error("message with no text or html part accepted; expected rejection")
 	}
@@ -605,7 +615,7 @@ func TestParseMIMEToMessage_MultipartNoTextNoHTML_Rejected(t *testing.T) {
 func TestParseMIMEToMessage_RFC2047EncodedSubject(t *testing.T) {
 	// Base64-encoded "café" subject.
 	data := []byte("From: a@example.com\r\nSubject: =?UTF-8?B?Y2Fmw6k=?=\r\n\r\nbody\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -624,7 +634,7 @@ func TestParseMIMEToMessage_QuotedPrintableSinglePartHTML(t *testing.T) {
 			"Content-Transfer-Encoding: quoted-printable\r\n" +
 			"\r\n" +
 			"<p>caf=\r\n=C3=A9 =3D equals</p>\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -656,7 +666,7 @@ func TestParseMIMEToMessage_QuotedPrintableMultipart(t *testing.T) {
 			"\r\n" +
 			"<p>html caf=C3=A9</p>\r\n" +
 			"--" + boundary + "--\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -681,7 +691,7 @@ func TestParseMIMEToMessage_Base64SinglePart(t *testing.T) {
 			"Content-Transfer-Encoding: base64\r\n" +
 			"\r\n" +
 			encoded + "\r\n")
-	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"})
+	msg, err := parseMIMEToMessage(data, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -703,7 +713,7 @@ func TestParseMIMEToMessage_SevenBitAndAbsentEncodingUnchanged(t *testing.T) {
 			"Content-Transfer-Encoding: 7bit\r\n" +
 			"\r\n" +
 			"plain ascii body\r\n")
-	msg7bit, err := parseMIMEToMessage(data7bit, "a@example.com", []string{"r@example.com"})
+	msg7bit, err := parseMIMEToMessage(data7bit, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse (7bit): %v", err)
 	}
@@ -714,7 +724,7 @@ func TestParseMIMEToMessage_SevenBitAndAbsentEncodingUnchanged(t *testing.T) {
 			"Content-Type: text/plain; charset=utf-8\r\n" +
 			"\r\n" +
 			"plain ascii body\r\n")
-	msgAbsent, err := parseMIMEToMessage(dataAbsent, "a@example.com", []string{"r@example.com"})
+	msgAbsent, err := parseMIMEToMessage(dataAbsent, "a@example.com", []string{"r@example.com"}, nil)
 	if err != nil {
 		t.Fatalf("parse (absent): %v", err)
 	}
@@ -1275,5 +1285,227 @@ func TestListener_StopBeforeStartBinds(t *testing.T) {
 	}
 	if l.Addr() != nil {
 		t.Errorf("Addr() = %v after a refused start, want nil", l.Addr())
+	}
+}
+
+// --- Block F, Story 20.1: passthrough headers at the ingress (FR97, FR98) ---
+
+func TestParseMIMEToMessage_PassthroughHeaders(t *testing.T) {
+	data := []byte("From: a@example.com\r\n" +
+		"Subject: News\r\n" +
+		"List-Unsubscribe: <https://lists.example/u/abc>, <mailto:u@lists.example>\r\n" +
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n" +
+		"List-Id: Weekly <weekly.lists.example>\r\n" +
+		"X-Team: infra\r\n" +
+		"Bcc: victim@example.net\r\n" +
+		"\r\nbody\r\n")
+	rcpt := []string{"r@example.com"}
+	parse := func(t *testing.T, data []byte, names ...string) (transport.Message, error) {
+		t.Helper()
+		canon, err := transport.PassthroughNames(names)
+		if err != nil {
+			t.Fatalf("PassthroughNames(%v): %v", names, err)
+		}
+		return parseMIMEToMessage(data, "a@example.com", rcpt, canon)
+	}
+
+	t.Run("configured names copied in configuration order, as received", func(t *testing.T) {
+		msg, err := parse(t, data, "List-Unsubscribe-Post", "list-unsubscribe")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		want := []transport.Header{
+			{Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click"},
+			{Name: "List-Unsubscribe", Value: "<https://lists.example/u/abc>, <mailto:u@lists.example>"},
+		}
+		if len(msg.Headers) != len(want) {
+			t.Fatalf("Headers = %+v, want %+v", msg.Headers, want)
+		}
+		for i := range want {
+			if msg.Headers[i] != want[i] {
+				t.Errorf("Headers[%d] = %+v, want %+v", i, msg.Headers[i], want[i])
+			}
+		}
+		if len(msg.To) != 1 || msg.To[0] != "r@example.com" {
+			t.Errorf("recipients must stay envelope-only, got %v", msg.To)
+		}
+		if err := transport.ValidateHeaders(msg.Headers); err != nil {
+			t.Errorf("what the ingress produces must be what transports accept: %v", err)
+		}
+	})
+	t.Run("nothing configured, nothing copied", func(t *testing.T) {
+		msg, err := parse(t, data)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if msg.Headers != nil {
+			t.Errorf("Headers should be nil, got %+v", msg.Headers)
+		}
+	})
+	t.Run("a folded value is carried unfolded", func(t *testing.T) {
+		folded := []byte("From: a@example.com\r\nSubject: x\r\n" +
+			"List-Unsubscribe: <https://lists.example/u/abc>,\r\n\t<mailto:u@lists.example>\r\n" +
+			"\r\nbody\r\n")
+		msg, err := parse(t, folded, "List-Unsubscribe")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(msg.Headers) != 1 || msg.Headers[0].Value != "<https://lists.example/u/abc>, <mailto:u@lists.example>" {
+			t.Errorf("Headers = %+v", msg.Headers)
+		}
+	})
+	t.Run("a repeated header is carried once, first occurrence", func(t *testing.T) {
+		// RFC 2369, RFC 2919, and RFC 8058 allow one of each. Carrying
+		// both would leave each transport to invent its own merge.
+		twice := []byte("From: a@example.com\r\nSubject: x\r\n" +
+			"List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n" +
+			"List-Unsubscribe-Post: List-Unsubscribe=One-Click\r\n" +
+			"List-Id: one <a.example>\r\nList-Id: two <b.example>\r\n" +
+			"\r\nbody\r\n")
+		msg, err := parse(t, twice, "List-Unsubscribe-Post", "List-Id")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		want := []transport.Header{
+			{Name: "List-Unsubscribe-Post", Value: "List-Unsubscribe=One-Click"},
+			{Name: "List-Id", Value: "one <a.example>"},
+		}
+		if len(msg.Headers) != 2 || msg.Headers[0] != want[0] || msg.Headers[1] != want[1] {
+			t.Errorf("Headers = %+v, want %+v", msg.Headers, want)
+		}
+	})
+	t.Run("an empty header is not carried", func(t *testing.T) {
+		empty := []byte("From: a@example.com\r\nSubject: x\r\nList-Unsubscribe:\r\nList-Id: one <a.example>\r\n\r\nbody\r\n")
+		msg, err := parse(t, empty, "List-Unsubscribe", "List-Id")
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		if len(msg.Headers) != 1 || msg.Headers[0].Name != "List-Id" {
+			t.Errorf("Headers = %+v, want only List-Id", msg.Headers)
+		}
+	})
+	for name, value := range map[string]string{
+		"CR":               "a\rBcc: victim@example.net",
+		"NUL":              "a\x00b",
+		"8-bit byte":       "caf\xe9 <list.example>",
+		"DEL":              "a\x7fb",
+		"longer than line": "<https://lists.example/" + strings.Repeat("a", 1000) + ">",
+	} {
+		t.Run(name+" in a value fails the message", func(t *testing.T) {
+			bad := []byte("From: a@example.com\r\nSubject: x\r\nList-Id: " + value + "\r\n\r\nbody\r\n")
+			_, err := parse(t, bad, "List-Id")
+			if !errors.Is(err, errPassthroughValue) {
+				t.Fatalf("want errPassthroughValue, got %v", err)
+			}
+			if strings.Contains(err.Error(), "victim") || strings.Contains(err.Error(), "lists.example") {
+				t.Errorf("the error is logged, so it must not carry the value: %v", err)
+			}
+		})
+	}
+	t.Run("a bad value in a header that is not configured is ignored", func(t *testing.T) {
+		bad := []byte("From: a@example.com\r\nSubject: x\r\nList-Id: a\x00b\r\n\r\nbody\r\n")
+		msg, err := parse(t, bad, "List-Unsubscribe")
+		if err != nil || msg.Headers != nil {
+			t.Errorf("msg.Headers = %+v, err = %v", msg.Headers, err)
+		}
+	})
+}
+
+// TestListener_PassthroughNamesChecked: a listener built without going
+// through the config package must still refuse names off the allowlist
+// (FR97; To/Cc/Bcc are the NFR22 case) instead of carrying nothing.
+func TestListener_PassthroughNamesChecked(t *testing.T) {
+	for _, names := range [][]string{{"Bcc"}, {"X-Team"}, {"List-Id", "list-id"}, {"List-Unsubscribe", "To"}} {
+		cfg := baseTestConfig()
+		cfg.PassthroughHeaders = names
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "passthrough_headers") {
+			t.Errorf("Validate(%v) = %v, want a passthrough_headers error", names, err)
+		}
+		if _, err := New(cfg, &mockTransport{}, 1<<20, nil, nil); err == nil || !strings.Contains(err.Error(), "passthrough_headers") {
+			t.Errorf("New(%v) = %v, want a passthrough_headers error", names, err)
+		}
+	}
+	cfg := baseTestConfig()
+	cfg.PassthroughHeaders = []string{" list-unsubscribe ", "LIST-ID"}
+	l, err := New(cfg, &mockTransport{}, 1<<20, nil, nil)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if len(l.passthrough) != 2 || l.passthrough[0] != "List-Unsubscribe" || l.passthrough[1] != "List-Id" {
+		t.Errorf("passthrough = %v, want canonical names", l.passthrough)
+	}
+}
+
+// syncBuffer is a goroutine-safe log sink: the session goroutine writes,
+// the test reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// sendWithHeaderLines drives one transaction whose DATA carries the
+// given extra header lines, and returns the reply to the end of DATA.
+func sendWithHeaderLines(t *testing.T, f *smtpFixture, headerLines string) int {
+	t.Helper()
+	tp := f.dial()
+	_ = tp.PrintfLine("EHLO client.test")
+	expectMultiline(t, tp, 250)
+	_ = tp.PrintfLine("AUTH PLAIN %s", authPlainCreds("user", "pass"))
+	expect(t, tp, 235)
+	_ = tp.PrintfLine("MAIL FROM:<noreply@example.com>")
+	expect(t, tp, 250)
+	_ = tp.PrintfLine("RCPT TO:<alice@somewhere.com>")
+	expect(t, tp, 250)
+	_ = tp.PrintfLine("DATA")
+	expect(t, tp, 354)
+	_ = tp.PrintfLine("%s", "Subject: Hi\r\n"+headerLines+"\r\n\r\nBody.\r\n.")
+	code, _ := expectCode(t, tp)
+	_ = tp.PrintfLine("QUIT")
+	return code
+}
+
+func TestSMTP_PassthroughHeaders_ReachTransportOr554(t *testing.T) {
+	cfg := baseTestConfig()
+	cfg.PassthroughHeaders = []string{"List-Unsubscribe"}
+	logs := &syncBuffer{}
+	f := startListenerLogged(t, cfg, slog.New(slog.NewJSONHandler(logs, nil)))
+
+	if code := sendWithHeaderLines(t, f, "List-Unsubscribe: <mailto:u@example.com>"); code != 250 {
+		t.Fatalf("clean header: reply %d, want 250", code)
+	}
+	waitForSend(t, f.mt, 1, 2*time.Second)
+	got := f.mt.Sent()[0].Headers
+	if len(got) != 1 || got[0].Name != "List-Unsubscribe" || got[0].Value != "<mailto:u@example.com>" {
+		t.Errorf("transport received Headers = %+v", got)
+	}
+	if strings.Contains(logs.String(), "smtp_passthrough_header_rejected") {
+		t.Errorf("a clean header was logged as rejected:\n%s", logs.String())
+	}
+
+	if code := sendWithHeaderLines(t, f, "List-Unsubscribe: <mailto:u@example.com>\rBcc: victim@example.net"); code != 554 {
+		t.Errorf("CR in passthrough value: reply %d, want 554", code)
+	}
+	if n := len(f.mt.Sent()); n != 1 {
+		t.Errorf("rejected message must not reach the transport; sent = %d", n)
+	}
+	// FR98: the rejection is logged, naming the header and not its value.
+	out := logs.String()
+	if !strings.Contains(out, "smtp_passthrough_header_rejected") || !strings.Contains(out, "List-Unsubscribe") {
+		t.Errorf("554 was not logged with the header name:\n%s", out)
+	}
+	if strings.Contains(out, "victim@example.net") {
+		t.Errorf("the rejected value was logged:\n%s", out)
 	}
 }

@@ -3,6 +3,7 @@ package smtp
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -37,7 +38,11 @@ import (
 //     messages — previously rejected 554 in v1.x — are accepted, with
 //     BodyText auto-derived from the HTML so the outbound mail always
 //     carries a readable text part (FR72 reuse).
-func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string) (transport.Message, error) {
+//
+//   - passthrough is the listener's validated passthrough header list
+//     (FR97, FR98, ADR-27); nil copies nothing. It can only ever name
+//     list-management headers, so the first invariant is untouched.
+func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string, passthrough []string) (transport.Message, error) {
 	m, err := mail.ReadMessage(bytes.NewReader(data))
 	if err != nil {
 		return transport.Message{}, fmt.Errorf("parse MIME headers: %w", err)
@@ -79,6 +84,11 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 		bodyText = template.HTMLToText(bodyHTML)
 	}
 
+	headers, err := passthroughHeaders(m.Header, passthrough)
+	if err != nil {
+		return transport.Message{}, err
+	}
+
 	return transport.Message{
 		From:     fromHdr,
 		To:       append([]string(nil), envelopeRcpts...), // FR68/NFR22: envelope only
@@ -86,7 +96,39 @@ func parseMIMEToMessage(data []byte, envelopeFrom string, envelopeRcpts []string
 		Subject:  subject,
 		BodyText: bodyText,
 		BodyHTML: bodyHTML,
+		Headers:  headers,
 	}, nil
+}
+
+// errPassthroughValue marks a passthrough header whose value can't be
+// carried. The session answers it with 554 5.6.0 (FR98) rather than the
+// generic malformed-message 550.
+var errPassthroughValue = errors.New("invalid passthrough header value")
+
+// passthroughHeaders copies the configured headers off the inbound
+// message in configuration order, as received (no RFC 2047 decoding).
+// names is the output of transport.PassthroughNames.
+//
+// Each header is carried at most once: the RFCs that define these
+// headers allow one of each, so the first occurrence is taken and any
+// repeat is left behind. A header present with an empty value is not
+// carried. A value that fails transport.CheckHeaderValue (CR or LF,
+// other control or non-ASCII bytes, or too long for one header line)
+// fails the whole message: the app asked for this header to reach the
+// provider, and sending the mail without it would drop it silently.
+func passthroughHeaders(h mail.Header, names []string) ([]transport.Header, error) {
+	var out []transport.Header
+	for _, name := range names {
+		values := h[name]
+		if len(values) == 0 || values[0] == "" {
+			continue
+		}
+		if err := transport.CheckHeaderValue(name, values[0]); err != nil {
+			return nil, fmt.Errorf("%w: %v", errPassthroughValue, err)
+		}
+		out = append(out, transport.Header{Name: name, Value: values[0]})
+	}
+	return out, nil
 }
 
 // decodeTransferEncoding wraps r so reads yield decoded content, based on

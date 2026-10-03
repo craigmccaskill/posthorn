@@ -91,6 +91,13 @@ type sesSimple struct {
 	Subject     sesContentField `json:"Subject"`
 	Body        sesBody         `json:"Body"`
 	Attachments []sesAttachment `json:"Attachments,omitempty"`
+	// Headers is the allowlisted passthrough (ADR-27, FR99). SESv2 takes
+	// up to 15 structured Name/Value headers, each value 1-995 printable
+	// ASCII characters with name plus value at most 996 (API reference:
+	// Message, MessageHeader). ValidateHeaders is at least that strict:
+	// one header per allowlisted name, and the same character and length
+	// rule, so a message that passes it is one SES accepts.
+	Headers []Header `json:"Headers,omitempty"`
 }
 
 // sesAttachment is the SESv2 Simple-content attachment shape (added by
@@ -136,6 +143,9 @@ type sesErrorResponse struct {
 //	4xx (other)→ ErrTerminal
 //	network/timeout/ctx → ErrTransient (caller will retry once)
 func (s *SESTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
+	if err := checkHeaders(msg); err != nil {
+		return SendResult{}, err
+	}
 	payload := sesRequest{
 		FromEmailAddress: msg.From,
 		Destination:      sesDestination{ToAddresses: msg.To},
@@ -149,6 +159,7 @@ func (s *SESTransport) Send(ctx context.Context, msg Message) (SendResult, error
 	if msg.BodyHTML != "" {
 		payload.Content.Simple.Body.Html = &sesContentField{Data: msg.BodyHTML}
 	}
+	payload.Content.Simple.Headers = msg.Headers
 	for _, a := range msg.Attachments {
 		payload.Content.Simple.Attachments = append(payload.Content.Simple.Attachments, sesAttachment{
 			RawContent:  base64.StdEncoding.EncodeToString(a.Data),
@@ -252,9 +263,10 @@ var _ Transport = (*SESTransport)(nil)
 // Registry registration.
 func init() {
 	Register(Registration{
-		Type:     "ses",
-		Validate: validateSESSettings,
-		Build:    buildSESFromSettings,
+		Type:           "ses",
+		Validate:       validateSESSettings,
+		Build:          buildSESFromSettings,
+		CarriesHeaders: true,
 	})
 }
 

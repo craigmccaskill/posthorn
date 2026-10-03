@@ -340,6 +340,7 @@ func buildSMTPIngress(c *config.SMTPListenerConfig, logger *slog.Logger, recorde
 		MaxRecipientsPerSession: c.MaxRecipientsPerSession,
 		MaxConnections:          c.MaxConnections,
 		MaxConnectionsPerIP:     c.MaxConnectionsPerIP,
+		PassthroughHeaders:      c.PassthroughHeaders,
 		MaxMessageSize:          rawSize,
 		IdleTimeout:             c.IdleTimeout,
 		Transport:               c.Transport,

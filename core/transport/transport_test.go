@@ -213,3 +213,29 @@ func TestMessage_FieldsAreStructured(t *testing.T) {
 	_ = msg.Subject
 	_ = msg.BodyText
 }
+
+// --- Block F, Story 20.1: passthrough header allowlist (FR97) ---
+
+func TestPassthroughHeader_Allowlist(t *testing.T) {
+	cases := []struct {
+		in        string
+		wantCanon string
+		wantOK    bool
+	}{
+		{"List-Unsubscribe", "List-Unsubscribe", true},
+		{"list-unsubscribe", "List-Unsubscribe", true},
+		{" LIST-UNSUBSCRIBE-POST ", "List-Unsubscribe-Post", true},
+		{"list-id", "List-Id", true},
+		{"X-Team", "X-Team", false},
+		{"To", "To", false},
+		{"Cc", "Cc", false},
+		{"bcc", "Bcc", false},
+		{"Reply-To", "Reply-To", false},
+	}
+	for _, tc := range cases {
+		canon, ok := PassthroughHeader(tc.in)
+		if canon != tc.wantCanon || ok != tc.wantOK {
+			t.Errorf("PassthroughHeader(%q) = (%q, %v), want (%q, %v)", tc.in, canon, ok, tc.wantCanon, tc.wantOK)
+		}
+	}
+}

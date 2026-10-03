@@ -36,6 +36,12 @@ type Registration struct {
 	// Build constructs a Transport instance from validated settings.
 	// Called once per endpoint at handler-construction time.
 	Build BuildFunc
+
+	// CarriesHeaders reports that the transport emits Message.Headers
+	// (FR99). The config layer refuses passthrough_headers on a listener
+	// whose transport doesn't, rather than let them be dropped. False by
+	// default, so a new transport has to opt in.
+	CarriesHeaders bool
 }
 
 var (

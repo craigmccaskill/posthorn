@@ -44,6 +44,10 @@ Any 2xx means *terminally handled — do not retry*. Form-mode submitters see th
 
 One honest caveat: queued delivery is **at-least-once**. If Posthorn crashes in the window between the provider accepting a send and Posthorn recording that fact, recovery re-sends. Duplicates are rare and bounded to crashes, but receivers that must deduplicate can key on the message content or your own idempotency scheme.
 
+## Upgrades and the storage file
+
+Posthorn updates the file's schema when a newer version first opens it. That step is one-way: an older Posthorn refuses to open a file a newer one has updated, and fails at startup saying so. v2.1 makes one such change (it stores passthrough headers with each submission). Back the file up before upgrading if you might need to go back to v2.0.
+
 ## Failure posture: mail first
 
 Storage failure never blocks mail. A canary write probes the full disk path every 15 seconds; if it fails, Posthorn degrades to v1.x synchronous behavior — mail keeps flowing, nothing persists, no 202s are offered — and tells you loudly:
@@ -58,7 +62,7 @@ Posthorn also cannot fill your disk: `max_size` is enforced inside SQLite (`max_
 
 The storage file changes Posthorn's privacy posture, deliberately and visibly:
 
-**What's in the file.** Submitter PII: names, email addresses, message bodies (text and HTML), raw form fields, and client IPs — for up to `retention` (30 days by default). Suppression rows hold email addresses **indefinitely** by design: they're consent/deliverability memory, and forgetting a bounce defeats the feature.
+**What's in the file.** Submitter PII: names, email addresses, message bodies (text and HTML), raw form fields, client IPs, and any [passthrough headers](/features/smtp-ingress/#passing-list-headers-through) (unsubscribe links are per-recipient) — for up to `retention` (30 days by default). Suppression rows hold email addresses **indefinitely** by design: they're consent/deliverability memory, and forgetting a bounce defeats the feature.
 
 **What respects your existing flags.** `strip_client_ip = true` keeps IPs out of storage rows just as it keeps them out of logs. `log_failed_submissions = false` endpoints store metadata only (no bodies, no fields) — and consequently can't use the retry queue, since queueing *is* persisting submitter content.
 

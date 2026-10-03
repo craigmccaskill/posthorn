@@ -87,6 +87,9 @@ type postmarkRequest struct {
 	TextBody    string               `json:"TextBody"`
 	HtmlBody    string               `json:"HtmlBody,omitempty"`
 	Attachments []postmarkAttachment `json:"Attachments,omitempty"`
+	// Headers is the allowlisted passthrough (ADR-27, FR99): structured
+	// Name/Value pairs, validated by checkHeaders before this is built.
+	Headers []Header `json:"Headers,omitempty"`
 }
 
 type postmarkAttachment struct {
@@ -114,6 +117,9 @@ type postmarkResponse struct {
 //	4xx (other)→ ErrTerminal
 //	network/timeout/ctx → ErrTransient (caller will retry once)
 func (p *PostmarkTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
+	if err := checkHeaders(msg); err != nil {
+		return SendResult{}, err
+	}
 	body := postmarkRequest{
 		From:     msg.From,
 		To:       strings.Join(msg.To, ", "),
@@ -121,6 +127,7 @@ func (p *PostmarkTransport) Send(ctx context.Context, msg Message) (SendResult, 
 		Subject:  msg.Subject,
 		TextBody: msg.BodyText,
 		HtmlBody: msg.BodyHTML,
+		Headers:  msg.Headers,
 	}
 	for _, a := range msg.Attachments {
 		body.Attachments = append(body.Attachments, postmarkAttachment{
@@ -232,9 +239,10 @@ var _ Transport = (*PostmarkTransport)(nil)
 // construction without hardcoding "postmark" — see registry.go.
 func init() {
 	Register(Registration{
-		Type:     "postmark",
-		Validate: validatePostmarkSettings,
-		Build:    buildPostmarkFromSettings,
+		Type:           "postmark",
+		Validate:       validatePostmarkSettings,
+		Build:          buildPostmarkFromSettings,
+		CarriesHeaders: true,
 	})
 }
 

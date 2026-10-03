@@ -24,12 +24,19 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" database/sql driver
+
+	"github.com/craigmccaskill/posthorn/transport"
 )
 
 // schemaVersion is stamped into SQLite's user_version pragma.
 // Migrations are forward-only: Open applies every step from the file's
-// current version up to this constant.
-const schemaVersion = 1
+// current version up to this constant. A binary refuses a file stamped
+// newer than it knows, so each bump is also a one-way door for
+// downgrades and belongs in the CHANGELOG.
+//
+//	1  v2.0  initial schema
+//	2  v2.1  submissions.headers (passthrough headers survive the queue)
+const schemaVersion = 2
 
 // Submission statuses. The visible lifecycle is
 // sending → sent | queued → sent | failed, plus suppressed for sends
@@ -157,6 +164,11 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("storage: apply schema v1: %w", err)
 		}
 	}
+	if version < 2 {
+		if _, err := s.db.Exec(schemaV2); err != nil {
+			return fmt.Errorf("storage: apply schema v2: %w", err)
+		}
+	}
 	if version != schemaVersion {
 		if _, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 			return fmt.Errorf("storage: stamp user_version: %w", err)
@@ -227,6 +239,14 @@ CREATE TABLE IF NOT EXISTS lifecycle_queue (
 CREATE INDEX IF NOT EXISTS idx_lifecycle_due ON lifecycle_queue(next_attempt_at);
 `
 
+// schemaV2 adds the passthrough headers column (FR99, ADR-27). Without
+// it a queued or crash-recovered SMTP submission replayed with no
+// headers, which is the silent drop FR99 forbids. Existing rows get the
+// empty list.
+const schemaV2 = `
+ALTER TABLE submissions ADD COLUMN headers TEXT NOT NULL DEFAULT '[]';
+`
+
 // recoverInFlight moves crash-window rows ("sending" at open) into the
 // retry queue with an immediate due time. This is the deliberate
 // at-least-once choice from ADR-21: the provider may have accepted the
@@ -262,6 +282,7 @@ type Submission struct {
 	BodyHTML           string
 	Fields             map[string][]string
 	Attachments        []Attachment
+	Headers            []transport.Header // SMTP passthrough headers (ADR-27); nil otherwise
 	ClientIP           string
 	Status             string
 	TransportMessageID string
@@ -297,6 +318,14 @@ func (s *Store) RecordSubmission(sub Submission) error {
 	if err != nil {
 		return fmt.Errorf("storage: marshal attachments: %w", err)
 	}
+	headers := sub.Headers
+	if headers == nil {
+		headers = []transport.Header{}
+	}
+	headersJSON, err := json.Marshal(headers)
+	if err != nil {
+		return fmt.Errorf("storage: marshal headers: %w", err)
+	}
 	var sentAt any
 	if !sub.SentAt.IsZero() {
 		sentAt = sub.SentAt.Unix()
@@ -304,12 +333,12 @@ func (s *Store) RecordSubmission(sub Submission) error {
 	_, err = s.db.Exec(`
 		INSERT INTO submissions
 		  (id, endpoint, transport, from_addr, to_addrs, reply_to, subject,
-		   body_text, body_html, fields, attachments, client_ip, status,
+		   body_text, body_html, fields, attachments, headers, client_ip, status,
 		   transport_message_id, last_error, created_at, sent_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sub.ID, sub.Endpoint, sub.Transport, sub.From, string(toJSON), sub.ReplyTo,
 		sub.Subject, sub.BodyText, sub.BodyHTML, string(fieldsJSON), string(attJSON),
-		sub.ClientIP, sub.Status, sub.TransportMessageID, sub.LastError,
+		string(headersJSON), sub.ClientIP, sub.Status, sub.TransportMessageID, sub.LastError,
 		sub.CreatedAt.Unix(), sentAt)
 	if err != nil {
 		return fmt.Errorf("storage: record submission: %w", err)
@@ -360,17 +389,17 @@ func (s *Store) FindByMessageID(transportMessageID string) (Submission, bool, er
 func (s *Store) scanOne(where string, args ...any) (Submission, bool, error) {
 	row := s.db.QueryRow(`
 		SELECT id, endpoint, transport, from_addr, to_addrs, reply_to, subject,
-		       body_text, body_html, fields, attachments, client_ip, status,
+		       body_text, body_html, fields, attachments, headers, client_ip, status,
 		       transport_message_id, last_error, created_at, sent_at
 		FROM submissions `+where, args...)
 
 	var sub Submission
-	var toJSON, fieldsJSON, attJSON string
+	var toJSON, fieldsJSON, attJSON, headersJSON string
 	var createdAt int64
 	var sentAt sql.NullInt64
 	err := row.Scan(&sub.ID, &sub.Endpoint, &sub.Transport, &sub.From, &toJSON,
 		&sub.ReplyTo, &sub.Subject, &sub.BodyText, &sub.BodyHTML, &fieldsJSON,
-		&attJSON, &sub.ClientIP, &sub.Status, &sub.TransportMessageID, &sub.LastError,
+		&attJSON, &headersJSON, &sub.ClientIP, &sub.Status, &sub.TransportMessageID, &sub.LastError,
 		&createdAt, &sentAt)
 	if err == sql.ErrNoRows {
 		return Submission{}, false, nil
@@ -389,6 +418,12 @@ func (s *Store) scanOne(where string, args ...any) (Submission, bool, error) {
 	}
 	if len(sub.Attachments) == 0 {
 		sub.Attachments = nil
+	}
+	if err := json.Unmarshal([]byte(headersJSON), &sub.Headers); err != nil {
+		return Submission{}, false, fmt.Errorf("storage: decode headers: %w", err)
+	}
+	if len(sub.Headers) == 0 {
+		sub.Headers = nil
 	}
 	sub.CreatedAt = time.Unix(createdAt, 0).UTC()
 	if sentAt.Valid {

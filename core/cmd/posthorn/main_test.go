@@ -523,8 +523,9 @@ func boundAddr(t *testing.T, ing ingress.Ingress) string {
 
 // smtpSubmit runs one SMTP transaction and returns the reply code of
 // the step that ended it: the AUTH or MAIL rejection, or the code
-// answering the end of DATA.
-func smtpSubmit(t *testing.T, addr, user, pass, from, to string) int {
+// answering the end of DATA. headerLines are extra header lines for the
+// message.
+func smtpSubmit(t *testing.T, addr, user, pass, from, to string, headerLines ...string) int {
 	t.Helper()
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
@@ -567,7 +568,11 @@ func smtpSubmit(t *testing.T, addr, user, pass, from, to string) int {
 	if code, ok := step(354, "DATA"); !ok {
 		return code
 	}
-	code, _ := step(250, "Subject: Hi\r\n\r\nBody.\r\n.")
+	headers := "Subject: Hi\r\n"
+	for _, line := range headerLines {
+		headers += line + "\r\n"
+	}
+	code, _ := step(250, "%s", headers+"\r\nBody.\r\n.")
 	return code
 }
 
@@ -779,4 +784,116 @@ func TestCheckUnnamedListenerQueue(t *testing.T) {
 			t.Errorf("unexpected error: %v", err)
 		}
 	})
+}
+
+// --- Block F, Story 20.1: passthrough_headers from TOML to the provider ---
+
+// TestPassthroughHeaders_ConfigToProvider follows passthrough_headers
+// the whole way: TOML, config.Load, buildSMTPIngresses, a real SMTP
+// submission, and the provider request. The config tests stop at the
+// parsed struct and the SMTP tests set the field by hand, so without
+// this the one line that copies it from one to the other could be
+// deleted with every test still green (the shape of the
+// redirect_success bug and of #123).
+func TestPassthroughHeaders_ConfigToProvider(t *testing.T) {
+	postmark := newProviderStub(t, `{"MessageID":"pm-1"}`)
+	resend := newProviderStub(t, `{"id":"re-1"}`)
+
+	toml := fmt.Sprintf(twoListenersTOML, postmark.srv.URL, resend.srv.URL)
+	// tenant-a opts in; tenant-b does not.
+	const marker = "allowed_senders = [\"*@a.example\"]\n"
+	if !strings.Contains(toml, marker) {
+		t.Fatal("fixture changed: tenant-a block not found")
+	}
+	toml = strings.Replace(toml, marker, marker+"passthrough_headers = [\"list-unsubscribe\", \"List-Unsubscribe-Post\"]\n", 1)
+
+	cfg, err := config.Load(writeConfig(t, toml))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	ings, err := buildSMTPIngresses(cfg, buildLogger(config.LoggingConfig{Level: "error"}), nil, nil, map[string]transport.Transport{})
+	if err != nil {
+		t.Fatalf("buildSMTPIngresses: %v", err)
+	}
+	startErr := make(chan error, len(ings))
+	for _, ing := range ings {
+		go func(ing ingress.Ingress) { startErr <- ing.Start(context.Background()) }(ing)
+	}
+	addrA, addrB := boundAddr(t, ings[0]), boundAddr(t, ings[1])
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = stopIngresses(ctx, ings)
+	})
+
+	lines := []string{
+		"List-Unsubscribe: <https://lists.example/u/abc>",
+		"List-Unsubscribe-Post: List-Unsubscribe=One-Click",
+		"List-Id: Weekly <weekly.lists.example>", // not configured: stays behind
+	}
+
+	if code := smtpSubmit(t, addrA, "a", "pa", "noreply@a.example", "alice@example.org", lines...); code != 250 {
+		t.Fatalf("tenant-a submission = %d, want 250", code)
+	}
+	hits := postmark.Hits()
+	if len(hits) != 1 {
+		t.Fatalf("postmark hits = %d, want 1", len(hits))
+	}
+	got, _ := json.Marshal(hits[0].body["Headers"])
+	want := `[{"Name":"List-Unsubscribe","Value":"<https://lists.example/u/abc>"},{"Name":"List-Unsubscribe-Post","Value":"List-Unsubscribe=One-Click"}]`
+	var gotAny, wantAny any
+	_ = json.Unmarshal(got, &gotAny)
+	_ = json.Unmarshal([]byte(want), &wantAny)
+	if fmt.Sprint(gotAny) != fmt.Sprint(wantAny) {
+		t.Errorf("provider request Headers = %s, want %s", got, want)
+	}
+
+	// A listener that didn't opt in carries none, as in v2.0 (FR97).
+	if code := smtpSubmit(t, addrB, "b", "pb", "noreply@b.example", "bob@example.org", lines...); code != 250 {
+		t.Fatalf("tenant-b submission = %d, want 250", code)
+	}
+	hitsB := resend.Hits()
+	if len(hitsB) != 1 {
+		t.Fatalf("resend hits = %d, want 1", len(hitsB))
+	}
+	if h, present := hitsB[0].body["headers"]; present {
+		t.Errorf("tenant-b did not configure passthrough_headers but its request carries headers: %v", h)
+	}
+}
+
+func TestRunValidate_PassthroughHeadersOnWebhookTransport_Refused(t *testing.T) {
+	// FR99: a transport that can't carry headers fails validation instead
+	// of dropping them at send time.
+	cfg := `
+[smtp_listener]
+listen = "127.0.0.1:2525"
+require_tls = false
+allowed_senders = ["*@example.com"]
+passthrough_headers = ["List-Unsubscribe"]
+
+[[smtp_listener.smtp_users]]
+username = "u"
+password = "p"
+
+[smtp_listener.transport]
+type = "webhook"
+
+[smtp_listener.transport.settings]
+url = "https://hooks.example/posthorn"
+secret = "0123456789abcdef0123456789abcdef"
+`
+	err := runValidate([]string{"--config", writeConfig(t, cfg)})
+	if err == nil {
+		t.Fatal("expected passthrough_headers on a webhook transport to be refused")
+	}
+	for _, w := range []string{"smtp_listener", "passthrough_headers", "webhook"} {
+		if !strings.Contains(err.Error(), w) {
+			t.Errorf("error should contain %q: %v", w, err)
+		}
+	}
+	// The same listener without passthrough_headers is fine.
+	ok := strings.Replace(cfg, "passthrough_headers = [\"List-Unsubscribe\"]\n", "", 1)
+	if err := runValidate([]string{"--config", writeConfig(t, ok)}); err != nil {
+		t.Errorf("webhook listener without passthrough_headers: %v", err)
+	}
 }

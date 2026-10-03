@@ -91,6 +91,9 @@ type mailgunErrorResponse struct {
 //	4xx (other)→ ErrTerminal
 //	network/timeout/ctx → ErrTransient (caller will retry once)
 func (m *MailgunTransport) Send(ctx context.Context, msg Message) (SendResult, error) {
+	if err := checkHeaders(msg); err != nil {
+		return SendResult{}, err
+	}
 	// Build multipart body. mime/multipart.Writer escapes field names and
 	// values structurally — the boundary string is generated; user values
 	// are never substituted into protocol-level positions.
@@ -125,6 +128,15 @@ func (m *MailgunTransport) Send(ctx context.Context, msg Message) (SendResult, e
 	if msg.BodyHTML != "" {
 		if err := mw.WriteField("html", msg.BodyHTML); err != nil {
 			return SendResult{}, &TransportError{Class: ErrTerminal, Cause: err, Message: "encode mailgun html"}
+		}
+	}
+	// Passthrough headers ride as `h:<Name>` fields (ADR-27, FR99).
+	// checkHeaders above has held the name to the allowlist and the value
+	// to one line of printable ASCII; Mailgun builds the header line from
+	// this field, so the value must already be safe when it leaves here.
+	for _, h := range msg.Headers {
+		if err := mw.WriteField("h:"+h.Name, h.Value); err != nil {
+			return SendResult{}, &TransportError{Class: ErrTerminal, Cause: err, Message: "encode mailgun passthrough header"}
 		}
 	}
 	// Attachments ride as repeated `attachment` file parts (FR92). The
@@ -233,9 +245,10 @@ var _ Transport = (*MailgunTransport)(nil)
 // construction without hardcoding "mailgun" — see registry.go.
 func init() {
 	Register(Registration{
-		Type:     "mailgun",
-		Validate: validateMailgunSettings,
-		Build:    buildMailgunFromSettings,
+		Type:           "mailgun",
+		Validate:       validateMailgunSettings,
+		Build:          buildMailgunFromSettings,
+		CarriesHeaders: true,
 	})
 }
 

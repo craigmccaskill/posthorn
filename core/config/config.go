@@ -165,6 +165,13 @@ type SMTPListenerConfig struct {
 	// 0 = defaults (100 / 16). Excess connections get 421 and close.
 	MaxConnections      int `toml:"max_connections"`
 	MaxConnectionsPerIP int `toml:"max_connections_per_ip"`
+
+	// PassthroughHeaders names inbound headers this listener carries to
+	// its transport (FR97, ADR-27). Only names on
+	// transport.PassthroughHeaderAllowlist are accepted; anything else is
+	// a parse error. Empty keeps the v2.0 behavior: everything but
+	// Subject, From, and Reply-To is dropped. Canonicalized in Validate.
+	PassthroughHeaders []string `toml:"passthrough_headers"`
 }
 
 // SMTPUser is a single AUTH PLAIN credential pair.
@@ -839,6 +846,22 @@ func (s *SMTPListenerConfig) Validate() error {
 	}
 	if s.MaxConnectionsPerIP < 0 {
 		return fmt.Errorf("max_connections_per_ip: must be non-negative, got %d", s.MaxConnectionsPerIP)
+	}
+	// FR97: passthrough names come from a fixed allowlist; an unknown
+	// name is refused rather than silently skipped, and To/Cc/Bcc can
+	// never be on it (NFR22).
+	canon, err := transport.PassthroughNames(s.PassthroughHeaders)
+	if err != nil {
+		return err
+	}
+	s.PassthroughHeaders = canon
+	// FR99: a transport that can't carry headers fails here rather than
+	// dropping them at send time. Same reasoning as ADR-10: a setting the
+	// operator believes is active must not be a no-op.
+	if len(s.PassthroughHeaders) > 0 {
+		if reg, ok := transport.Lookup(s.Transport.Type); ok && !reg.CarriesHeaders {
+			return fmt.Errorf("passthrough_headers: the %q transport does not carry mail headers; remove passthrough_headers or use a mail transport", s.Transport.Type)
+		}
 	}
 	// #41: with auth_required = "none" the sender allowlist is the only
 	// gate, so refuse a bind address we can't verify as private unless

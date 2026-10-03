@@ -125,6 +125,7 @@ func (w *Worker) attempt(ctx context.Context, entry DueRetry, hooks Hooks) {
 		BodyHTML:     entry.BodyHTML,
 		SubmissionID: entry.ID,
 		Fields:       entry.Fields,
+		Headers:      entry.Headers,
 	}
 	for _, a := range entry.Attachments {
 		msg.Attachments = append(msg.Attachments, transport.Attachment{
