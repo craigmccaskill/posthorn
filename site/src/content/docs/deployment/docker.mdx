@@ -57,6 +57,7 @@ Bind the published port to `127.0.0.1` (or an internal Docker network) — **don
 | Detail | Value |
 |---|---|
 | Default config path | `/etc/posthorn/config.toml` |
+| Config from the environment | `POSTHORN_CONFIG` holding the TOML replaces the file mount (v2.1); see [Environment variables](/configuration/environment-variables/#the-whole-config-in-one-variable) |
 | Default listen address | `:8080` |
 | Entry point | `posthorn serve --config /etc/posthorn/config.toml` |
 | Non-root user | `nonroot` (UID 65532) from distroless — read-only mounts work without UID matching |

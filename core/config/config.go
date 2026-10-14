@@ -571,7 +571,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
+	return LoadBytes(raw)
+}
 
+// LoadBytes runs the same pipeline as Load on TOML that is already in
+// memory. The whole config handed over in the POSTHORN_CONFIG environment
+// variable (#118) comes through here, so ${env.VAR} placeholders inside it
+// resolve and the strict unknown-field check applies exactly as for a file.
+func LoadBytes(raw []byte) (*Config, error) {
 	resolved, err := resolveEnvVars(raw)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)

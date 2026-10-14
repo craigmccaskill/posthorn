@@ -99,17 +99,48 @@ func main() {
 	}
 }
 
+// configSourceEnv is the environment variable that can carry the whole TOML
+// config instead of a file (#118). Platforms that attach storage as a volume
+// hand a fresh deploy an empty volume, and Posthorn exits before it binds
+// when the config file is missing, so there is no running process to write
+// the file from. With the config in the environment it ships with the
+// deploy and the volume is only ever for the storage file.
+const configSourceEnv = "POSTHORN_CONFIG"
+
+// loadConfig returns the config and a label naming where it came from, for
+// the startup log line. When POSTHORN_CONFIG is set its value is the config
+// and --config is ignored; an empty value is an error rather than a silent
+// fall-through, because a variable created without a value is a mistake
+// the operator wants to hear about.
+func loadConfig(path string) (*config.Config, string, error) {
+	if raw, ok := os.LookupEnv(configSourceEnv); ok {
+		if strings.TrimSpace(raw) == "" {
+			return nil, "", fmt.Errorf("%s is set but empty: put the TOML config in it, or unset it to read --config", configSourceEnv)
+		}
+		cfg, err := config.LoadBytes([]byte(raw))
+		if err != nil {
+			return nil, "", fmt.Errorf("%s: %w", configSourceEnv, err)
+		}
+		return cfg, "env:" + configSourceEnv, nil
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, path, nil
+}
+
 // --- serve ---
 
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file")
+	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file (ignored when POSTHORN_CONFIG is set)")
 	listen := fs.String("listen", ":8080", "TCP listen address")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, configSource, err := loadConfig(*configPath)
 	if err != nil {
 		return err
 	}
@@ -118,7 +149,7 @@ func runServe(args []string) error {
 	logger.Info("posthorn starting",
 		slog.String("version", version),
 		slog.String("listen", *listen),
-		slog.String("config", *configPath),
+		slog.String("config", configSource),
 		slog.Int("endpoints", len(cfg.Endpoints)),
 	)
 
@@ -465,12 +496,12 @@ func stopIngresses(ctx context.Context, ingresses []ingress.Ingress) error {
 
 func runValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ContinueOnError)
-	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file")
+	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file (ignored when POSTHORN_CONFIG is set)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	cfg, err := config.Load(*configPath)
+	cfg, _, err := loadConfig(*configPath)
 	if err != nil {
 		return err
 	}

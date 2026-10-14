@@ -897,3 +897,87 @@ secret = "0123456789abcdef0123456789abcdef"
 		t.Errorf("webhook listener without passthrough_headers: %v", err)
 	}
 }
+
+// --- loadConfig (#118) ---
+
+func TestLoadConfig_EnvReplacesFile(t *testing.T) {
+	t.Setenv(configSourceEnv, validTOML)
+	cfg, source, err := loadConfig("/no/such/file.toml")
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if source != "env:"+configSourceEnv {
+		t.Errorf("source = %q", source)
+	}
+	if len(cfg.Endpoints) != 1 {
+		t.Errorf("endpoints = %d, want 1", len(cfg.Endpoints))
+	}
+}
+
+func TestLoadConfig_EnvPlaceholdersResolve(t *testing.T) {
+	t.Setenv("PH_TEST_API_KEY", "resolved-key")
+	t.Setenv(configSourceEnv, strings.Replace(validTOML, `api_key = "test-key"`, `api_key = "${env.PH_TEST_API_KEY}"`, 1))
+	cfg, _, err := loadConfig("/no/such/file.toml")
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if got, _ := cfg.Endpoints[0].Transport.Settings["api_key"].(string); got != "resolved-key" {
+		t.Errorf("api_key = %q, want the resolved placeholder", got)
+	}
+}
+
+func TestLoadConfig_EnvEmptyIsError(t *testing.T) {
+	t.Setenv(configSourceEnv, " \n")
+	_, _, err := loadConfig(writeConfig(t, validTOML))
+	if err == nil || !strings.Contains(err.Error(), configSourceEnv) {
+		t.Errorf("want an error naming %s, got %v", configSourceEnv, err)
+	}
+}
+
+func TestLoadConfig_EnvUnsetReadsFile(t *testing.T) {
+	t.Setenv(configSourceEnv, "") // registers the restore
+	if err := os.Unsetenv(configSourceEnv); err != nil {
+		t.Fatal(err)
+	}
+	path := writeConfig(t, validTOML)
+	_, source, err := loadConfig(path)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if source != path {
+		t.Errorf("source = %q, want the file path", source)
+	}
+}
+
+// NFR3: a bad config in the environment fails naming the variable, never
+// echoing its contents, which may carry secrets written inline.
+func TestLoadConfig_EnvErrorsNameSourceNotContents(t *testing.T) {
+	const sentinel = "SENTINEL-SECRET-VALUE"
+	cases := map[string]string{
+		"unknown field": "bogus_key = true\n" + strings.Replace(validTOML, `api_key = "test-key"`, `api_key = "`+sentinel+`"`, 1),
+		"syntax error":  strings.Replace(validTOML, `api_key = "test-key"`, `api_key = "`+sentinel, 1),
+		"missing field": strings.Replace(strings.Replace(validTOML, `api_key = "test-key"`, `api_key = "`+sentinel+`"`, 1), `from = "noreply@example.com"`, "", 1),
+	}
+	for name, raw := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(configSourceEnv, raw)
+			_, _, err := loadConfig("/no/such/file.toml")
+			if err == nil {
+				t.Fatal("want an error")
+			}
+			if !strings.Contains(err.Error(), configSourceEnv) {
+				t.Errorf("error should name %s: %v", configSourceEnv, err)
+			}
+			if strings.Contains(err.Error(), sentinel) {
+				t.Errorf("error echoes config contents: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunValidate_EnvConfig(t *testing.T) {
+	t.Setenv(configSourceEnv, validTOML)
+	if err := runValidate([]string{"--config", "/no/such/file.toml"}); err != nil {
+		t.Errorf("runValidate with %s set: %v", configSourceEnv, err)
+	}
+}

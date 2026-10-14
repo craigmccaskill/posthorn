@@ -7,7 +7,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/craigmccaskill/posthorn/config"
 	"github.com/craigmccaskill/posthorn/spam"
 	"github.com/craigmccaskill/posthorn/storage"
 )
@@ -35,7 +34,7 @@ func runSuppressions(args []string) error {
 	}
 
 	fs := flag.NewFlagSet("suppressions "+sub, flag.ContinueOnError)
-	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file")
+	configPath := fs.String("config", "/etc/posthorn/config.toml", "path to TOML config file (ignored when POSTHORN_CONFIG is set)")
 	reason := fs.String("reason", storage.ReasonManual, "suppression reason (add only)")
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -94,12 +93,12 @@ func runSuppressions(args []string) error {
 
 // openConfiguredStore loads the config and opens its storage file.
 func openConfiguredStore(configPath string) (*storage.Store, error) {
-	cfg, err := config.Load(configPath)
+	cfg, configSource, err := loadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
 	if cfg.Storage == nil {
-		return nil, fmt.Errorf("no [storage] block in %s — suppressions need the storage layer", configPath)
+		return nil, fmt.Errorf("no [storage] block in %s — suppressions need the storage layer", configSource)
 	}
 	maxSize, err := spam.ParseSize(cfg.Storage.EffectiveMaxSize())
 	if err != nil {

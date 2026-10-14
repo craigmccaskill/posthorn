@@ -24,6 +24,8 @@ posthorn serve --config /etc/posthorn/config.toml
 
 The SMTP listener's bind address is configured in the TOML (`smtp_listener.listen`), not via a flag.
 
+Since v2.1, the config can also arrive in the `POSTHORN_CONFIG` environment variable instead of a file. When it is set, its value is the whole TOML config and `--config` is ignored; the startup log line shows `config=env:POSTHORN_CONFIG`. See [Environment variables](/configuration/environment-variables/#the-whole-config-in-one-variable). This applies to `serve`, `validate`, and `suppressions` alike.
+
 ### Behavior
 
 1. Load and validate the config (same checks `validate` runs).
@@ -71,7 +73,7 @@ posthorn validate --config /etc/posthorn/config.toml
 
 | Flag | Default | Description |
 |---|---|---|
-| `--config <path>` | `/etc/posthorn/config.toml` | Path to TOML config file |
+| `--config <path>` | `/etc/posthorn/config.toml` | Path to TOML config file. Ignored when `POSTHORN_CONFIG` is set (v2.1). |
 
 ### What it checks
 
