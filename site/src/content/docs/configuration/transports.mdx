@@ -1,15 +1,15 @@
 ---
 title: Transports
-description: Per-endpoint transport configuration. Posthorn ships five — Postmark, Resend, Mailgun, AWS SES, and outbound SMTP.
+description: Per-endpoint transport configuration. Posthorn ships six — Postmark, Resend, Mailgun, AWS SES, outbound SMTP, and MailChannels.
 ---
 
 import { Aside, CardGrid, LinkCard } from '@astrojs/starlight/components';
 
-A **transport** is the egress side — the thing that turns a parsed submission into a delivered email. Posthorn ships five transports out of the box; each endpoint picks exactly one.
+A **transport** is the egress side — the thing that turns a parsed submission into a delivered email. Posthorn ships six transports out of the box; each endpoint picks exactly one.
 
 ```toml
 [endpoints.transport]
-type = "postmark"  # or "resend", "mailgun", "ses", "smtp"
+type = "postmark"  # or "resend", "mailgun", "ses", "smtp", "mailchannels"
 
 [endpoints.transport.settings]
 # Per-transport settings, see the matching page below.
@@ -26,18 +26,19 @@ Different endpoints in one Posthorn instance can use different transports, or di
 | **Mailgun** | Higher-volume transactional. EU region available. | HTTP Basic (`api:<key>`) | multipart/form-data |
 | **AWS SES** | AWS-native deployments. Cheapest per-message at volume. Operator owns deliverability. | AWS SigV4 | JSON |
 | **Outbound SMTP** | Operator-controlled relay (self-hosted Postfix, Mailgun's SMTP gateway, Mailtrap for testing). The "I want SMTP" fallback. | SMTP AUTH PLAIN | SMTP DATA |
+| **MailChannels** | MailChannels Email API accounts (managed DKIM, Domain Lockdown). | `X-Api-Key` header | JSON |
 | **Webhook** (v2.0) | Non-mail sink: deliver the structured submission as a signed JSON POST to a receiver you run. | HMAC signature (+ your own static headers) | JSON |
 
 ### Capability matrix (v2.0)
 
 Sending capabilities are uniform; [lifecycle event](/features/lifecycle/) ingestion is not — it's built per provider dialect, Postmark first.
 
-| Capability | Postmark | Resend | Mailgun | SES | SMTP out | Webhook |
-|---|---|---|---|---|---|---|
-| Text / HTML body | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (both in payload) |
-| Attachments | ✓ | ✓ | ✓ | ✓ | ✓ | — |
-| Retry queue eligible | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Lifecycle events in | ✓ | on demand | on demand | on demand | n/a | n/a |
+| Capability | Postmark | Resend | Mailgun | SES | SMTP out | MailChannels | Webhook |
+|---|---|---|---|---|---|---|---|
+| Text / HTML body | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ (both in payload) |
+| Attachments | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| Retry queue eligible | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Lifecycle events in | ✓ | on demand | on demand | on demand | n/a | on demand | n/a |
 
 <CardGrid>
   <LinkCard title="Postmark" href="/configuration/transports/postmark/" description="X-Postmark-Server-Token, JSON, recommended default." />
@@ -45,6 +46,7 @@ Sending capabilities are uniform; [lifecycle event](/features/lifecycle/) ingest
   <LinkCard title="Mailgun" href="/configuration/transports/mailgun/" description="HTTP Basic, multipart, US + EU regions." />
   <LinkCard title="AWS SES" href="/configuration/transports/ses/" description="SigV4, JSON, region-scoped endpoints." />
   <LinkCard title="Outbound SMTP" href="/configuration/transports/smtp/" description="STARTTLS + AUTH PLAIN against any SMTP relay." />
+  <LinkCard title="MailChannels" href="/configuration/transports/mailchannels/" description="X-Api-Key, JSON, managed DKIM + Domain Lockdown." />
   <LinkCard title="Webhook" href="/configuration/transports/webhook/" description="Signed JSON POST to your own receiver. (v2.0)" />
 </CardGrid>
 

@@ -1,0 +1,75 @@
+---
+title: MailChannels
+description: MailChannels Email API transport — X-Api-Key auth, SendGrid-shaped JSON, managed DKIM.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+```toml
+[endpoints.transport]
+type = "mailchannels"
+
+[endpoints.transport.settings]
+api_key = "${env.MAILCHANNELS_API_KEY}"
+```
+
+## Settings
+
+| Setting | Required | Description |
+|---|---|---|
+| `api_key` | yes | MailChannels API key. Found at [dash.mailchannels.com/account/api-keys](https://dash.mailchannels.com/account/api-keys), scope `api`. |
+| `base_url` | no | Override the API endpoint. Test-only escape hatch. |
+
+## Behavior
+
+| Aspect | Behavior |
+|---|---|
+| API endpoint | `POST https://api.mailchannels.net/tx/v1/send` |
+| Authentication | `X-Api-Key: <api_key>` header |
+| Body format | JSON (MailChannels' structured fields: `personalizations`, `from`, `subject`, `content`) |
+| Per-request timeout | 5s (transport-level) |
+| Connection reuse | Shared `*http.Client` per process |
+| `transport_message_id` | Parsed from response `results[0].message_id` |
+| DKIM | Managed on the MailChannels side — no signing key in Posthorn config |
+
+## Error classification
+
+| MailChannels response | Error class | Retry? |
+|---|---|---|
+| `202 Accepted` | (success) | no |
+| `429 Too Many Requests` | `ErrRateLimited` | yes, after 5s |
+| `5xx` server error | `ErrTransient` | yes, after 1s |
+| Network timeout / connection refused | `ErrTransient` | yes, after 1s |
+| `4xx` other than 429 (`400`, `403`, `413`) | `ErrTerminal` | no |
+
+MailChannels' error body shape is `{"errors": ["...", ...]}`. Posthorn surfaces the messages in the terminal-failure log line and in 502 response detail (operator-visible) when the operator's logging level surfaces it.
+
+## DNS prerequisites
+
+- **Domain Lockdown** — a TXT record on the `_mailchannels` subdomain authorizing your account to send from the domain:
+  ```
+  _mailchannels.example.com  TXT  "v=mc1 auth=<your-account-id>"
+  ```
+  The account ID is in the dashboard footer. See MailChannels' [Domain Lockdown guide](https://docs.mailchannels.com/email-api/domain-lockdown.md).
+- **SPF** — add MailChannels to the sending domain's SPF record (merge into an existing record; a domain must have only one):
+  ```
+  example.com  TXT  "v=spf1 include:relay.mailchannels.net ~all"
+  ```
+- **DKIM** — MailChannels manages the keys: create a key pair in the dashboard (or via the DKIM API), publish the suggested `selector._domainkey` TXT record, and MailChannels signs with it. The private key never leaves MailChannels.
+- Optional **DMARC** alignment.
+
+Your sending domain must resolve (`A` or `MX`) or mail is rejected with `550 5.1.2 [SDNF] Sender Domain Not Found`.
+
+## Common gotchas
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `HTTP 403` early in adoption | Missing Domain Lockdown TXT, or the API key is scoped to another account | Check the `_mailchannels` TXT record names your account ID |
+| `HTTP 403` after config changes | Sender domain not authorized for the account | Re-check Domain Lockdown; keys are per-account |
+| `550 5.1.2 [SDNF]` on send | The `from` domain has no `A` or `MX` record | Point the sending domain at a real host |
+| `HTTP 413` | Message plus attachments exceed 30MB | Reduce attachment size or count |
+| Sends accepted but nothing arrives (free tier) | Until a payment method is added, MailChannels delivers only to verified users on your own account | Verify the recipient as a user on the account, or add a payment method |
+
+<Aside type="note">
+List-management headers (`List-Unsubscribe`, `List-Unsubscribe-Post`, `List-Id`) pass through to MailChannels' `headers` object, so `passthrough_headers` works on this transport.
+</Aside>
