@@ -394,6 +394,10 @@ Block F is the first minor after v2.0, scoped to the SMTP listener by two named 
 
 **FR99.** Mail transports **must** emit `Message.Headers` structurally through the provider's custom-header mechanism (Postmark `Headers`, Resend `headers`, Mailgun `h:` prefix, outbound SMTP as header lines). Every mail transport **must** validate `Message.Headers` itself before sending anything (allowlisted canonical names, no repeated name, the FR98 value rule) and refuse the message otherwise, so nothing reaches a provider on the strength of the ingress check alone. The submission log **must** store `Message.Headers`, so queued and crash-recovered sends replay with them (storage schema 2). A transport that cannot carry custom headers **must** fail config validation when `passthrough_headers` is configured against it, never drop them silently; transports declare the capability in the registry and it defaults to off. The webhook transport is the one such transport today: the combination is a config error, and the transport ignores the field at send time. The header-injection suite (NFR2) extends to passthrough values on every transport.
 
+## Functional requirements — transport additions (post-v2.1)
+
+**FR100.** Posthorn **must** ship a MailChannels Email API transport (`type = "mailchannels"`) ([#133](https://github.com/craigmccaskill/posthorn/issues/133)). API key supplied via the `X-Api-Key` header; request body is JSON to `https://api.mailchannels.net/tx/v1/send` with MailChannels' `personalizations`/`from`/`content` shape. Required config: `api_key`. DKIM is managed on the MailChannels side, so no signing key material appears in Posthorn config. `Message.Headers` **must** be emitted through the request's `headers` object (FR99 applies; `List-Unsubscribe` and `List-Unsubscribe-Post` are accepted there). Same `ErrorClass` + `MessageID` contract as FR47: `202`/`200` success with `SendResult.MessageID` from `results[0].message_id`, `429` → `ErrRateLimited`, `5xx` → `ErrTransient`, other `4xx` → `ErrTerminal`. FR51–FR53 apply in full (structured request body, header-injection suite, NFR3 sentinel-key test).
+
 ## Non-functional requirements — block F (added 2026-09-29)
 
 **NFR32.** Passthrough header values are the first submitter-adjacent data that becomes a header by design. NFR1/NFR2 apply at both layers: the ingress rejects CR/LF before the value crosses the boundary, and every transport's injection test includes a passthrough value with an embedded CRLF proving it never reaches the wire.
@@ -741,3 +745,4 @@ Every FR and NFR maps back to a brief commitment. Quick reference:
 | Post-MVP > v1.0 block D (SMTP ingress) | FR60–FR68, NFR22, NFR23, Epic 11 |
 | Post-MVP > v2.0 (recut 2026-08-02) | FR71–FR92, NFR25–NFR31, Epics 13–18, ADRs 19–25 |
 | Post-MVP > v2.1 listener minor (2026-09-29) | FR93–FR99, NFR32–NFR33, Epics 19–20, ADRs 26–27 |
+| Post-MVP > transport additions (post-v2.1) | FR100 ([#133](https://github.com/craigmccaskill/posthorn/issues/133)) |
