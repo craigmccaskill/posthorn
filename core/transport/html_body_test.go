@@ -230,6 +230,54 @@ func parseDATAMultipart(t *testing.T, data []byte) []struct{ ContentType, Body s
 	return parts
 }
 
+func TestMailChannels_HTMLBody(t *testing.T) {
+	cs := newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+	tp := NewMailChannelsTransport("k", cs.URL)
+
+	if _, err := tp.Send(context.Background(), htmlMessage()); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var body struct {
+		Content []struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(cs.body, &body); err != nil {
+		t.Fatalf("body is not JSON: %v", err)
+	}
+	if len(body.Content) != 2 {
+		t.Fatalf("content = %+v, want text/plain then text/html", body.Content)
+	}
+	if body.Content[0].Type != "text/plain" || body.Content[0].Value != "Fallback text." {
+		t.Errorf("content[0] = %+v, want the text part first", body.Content[0])
+	}
+	if body.Content[1].Type != "text/html" || body.Content[1].Value != "<p>Hello <b>there</b></p>" {
+		t.Errorf("content[1] = %+v, want the HTML part", body.Content[1])
+	}
+}
+
+func TestMailChannels_TextOnly_OmitsHTMLPart(t *testing.T) {
+	cs := newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+	tp := NewMailChannelsTransport("k", cs.URL)
+
+	msg := htmlMessage()
+	msg.BodyHTML = ""
+	if _, err := tp.Send(context.Background(), msg); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var body struct {
+		Content []struct {
+			Type  string `json:"type"`
+			Value string `json:"value"`
+		} `json:"content"`
+	}
+	_ = json.Unmarshal(cs.body, &body)
+	if len(body.Content) != 1 || body.Content[0].Type != "text/plain" {
+		t.Errorf("content = %+v, want a single text/plain part", body.Content)
+	}
+}
+
 func TestSMTPOut_HTMLBody_MultipartAlternative(t *testing.T) {
 	srv := startFakeSMTPServer(t)
 	tp := newSMTPTestTransport(t, srv, TLSNone)

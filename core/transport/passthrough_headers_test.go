@@ -96,7 +96,8 @@ func TestValidateHeaders(t *testing.T) {
 func TestRegistry_CarriesHeaders(t *testing.T) {
 	want := map[string]bool{
 		"postmark": true, "resend": true, "mailgun": true, "ses": true, "smtp": true,
-		"webhook": false,
+		"mailchannels": true,
+		"webhook":      false,
 	}
 	for _, typ := range KnownTypes() {
 		reg, _ := Lookup(typ)
@@ -286,6 +287,48 @@ func TestSMTPOut_PassthroughHeaders(t *testing.T) {
 			assertTerminal(t, err)
 			if len(srv.Sessions) > 0 {
 				t.Errorf("the relay was dialed despite a refused header")
+			}
+		})
+	}
+}
+
+func TestMailChannels_PassthroughHeaders(t *testing.T) {
+	cs := newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+	tp := NewMailChannelsTransport("k", cs.URL)
+	if _, err := tp.Send(context.Background(), passthroughMessage(passthroughHeaders)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	var body struct {
+		Headers map[string]string `json:"headers"`
+	}
+	if err := json.Unmarshal(cs.body, &body); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(body.Headers) != 2 ||
+		body.Headers["List-Unsubscribe"] != passthroughHeaders[0].Value ||
+		body.Headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+		t.Errorf("headers = %v", body.Headers)
+	}
+
+	// No Headers key at all when there is nothing to carry.
+	cs = newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+	tp = NewMailChannelsTransport("k", cs.URL)
+	if _, err := tp.Send(context.Background(), passthroughMessage(nil)); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if strings.Contains(string(cs.body), `"headers"`) {
+		t.Errorf("request carries a headers key with no passthrough headers: %s", cs.body)
+	}
+
+	// MailChannels' headers object has one slot per name, so a repeat is
+	// refused, not merged (same reasoning as Resend).
+	for name, bad := range badHeaderSets {
+		t.Run(name, func(t *testing.T) {
+			cs := newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+			_, err := NewMailChannelsTransport("k", cs.URL).Send(context.Background(), passthroughMessage(bad))
+			assertTerminal(t, err)
+			if cs.hits != 0 {
+				t.Errorf("request reached the provider: %s", cs.body)
 			}
 		})
 	}
