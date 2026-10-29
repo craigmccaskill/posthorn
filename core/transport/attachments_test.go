@@ -134,6 +134,34 @@ func TestSES_Attachments(t *testing.T) {
 	}
 }
 
+func TestMailChannels_Attachments(t *testing.T) {
+	cs := newCaptureServer(t, http.StatusAccepted, `{"results":[{"index":0,"message_id":"x"}]}`)
+	tp := NewMailChannelsTransport("k", cs.URL)
+	if _, err := tp.Send(context.Background(), attachedMessage()); err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Attachments []struct {
+			Content  string `json:"content"`
+			Filename string `json:"filename"`
+			Type     string `json:"type"`
+		} `json:"attachments"`
+	}
+	if err := json.Unmarshal(cs.body, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Attachments) != 2 || body.Attachments[1].Filename != "photo.png" || body.Attachments[1].Type != "image/png" {
+		t.Fatalf("attachments = %+v", body.Attachments)
+	}
+	raw, err := base64.StdEncoding.DecodeString(body.Attachments[0].Content)
+	if err != nil || string(raw) != "%PDF-1.4 fake" {
+		t.Errorf("content round-trip: %q err=%v", raw, err)
+	}
+	if body.Attachments[0].Filename != "license.pdf" || body.Attachments[0].Type != "application/pdf" {
+		t.Errorf("attachment meta = %+v", body.Attachments[0])
+	}
+}
+
 func TestSMTPOut_Attachments_MultipartMixed(t *testing.T) {
 	srv := startFakeSMTPServer(t)
 	tp := newSMTPTestTransport(t, srv, TLSNone)

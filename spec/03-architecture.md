@@ -77,6 +77,7 @@ posthorn/
     │   ├── retry.go              # SendWithRetry: FR19-22 policy, shared by both ingresses (#59)
     │   ├── postmark.go           # Postmark HTTP API implementation
     │   ├── resend.go             # v1.0 block C: Resend HTTP API (FR47)
+    │   ├── mailchannels.go       # MailChannels Email API (FR100, #133)
     │   ├── mailgun.go            # v1.0 block C: Mailgun HTTP API (FR48)
     │   ├── awssigv4.go           # v1.0 block C: AWS SigV4 signing primitive (ADR-14)
     │   ├── ses.go                # v1.0 block C: AWS SES via SigV4 (FR49)
@@ -84,6 +85,7 @@ posthorn/
     │   ├── transport_test.go
     │   ├── postmark_test.go
     │   ├── resend_test.go
+    │   ├── mailchannels_test.go
     │   ├── mailgun_test.go
     │   ├── awssigv4_test.go
     │   ├── ses_test.go

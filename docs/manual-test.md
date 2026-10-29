@@ -288,7 +288,7 @@ rm -rf posthorn-manual
 
 ## Non-Postmark transports
 
-The procedure above uses the Postmark transport. The other four transports (Resend, Mailgun, AWS SES, outbound SMTP) ship as alternatives in the same Posthorn binary. To validate each, swap the `[endpoints.transport]` block in the test config and re-run the procedure. Everything outside the transport block — curl invocations, expected response shape, log line shape, validation behavior — is unchanged.
+The procedure above uses the Postmark transport. The other five transports (Resend, Mailgun, AWS SES, outbound SMTP, MailChannels) ship as alternatives in the same Posthorn binary. To validate each, swap the `[endpoints.transport]` block in the test config and re-run the procedure. Everything outside the transport block — curl invocations, expected response shape, log line shape, validation behavior — is unchanged.
 
 Each requires its own provider account, API credentials, and DNS setup. The sentinel-key NFR3 invariant applies to every transport: a failed-auth path must not surface the configured key value in captured logs.
 
@@ -303,6 +303,7 @@ The record, as of 2026-10-22. The weekly CI live tier (`integration-live.yml`, s
 | Mailgun | None. CI test skips: no `MAILGUN_API_KEY` / `MAILGUN_DOMAIN` | Procedure below, unrun |
 | AWS SES | None. CI test skips: no `AWS_ROLE_ARN` | Procedure below, unrun |
 | Outbound SMTP | Manual, 2026-10-14, by an outside operator (mstdlm, [#132](https://github.com/craigmccaskill/posthorn/issues/132)): `v2.1.0-rc.1` from their contact form to their own Stalwart v0.16.19, port 465 with `tls = "implicit"` and port 587 with `tls = "starttls"`, both delivered with DKIM and SPF pass. Both mode-mismatch cases failed with the documented errors; the `starttls`-against-465 case failed at the HTTP handler's 10s cap. No CI live test: `live-providers` holds no relay credentials | Procedure below; the operator's redacted log lines are on #132 |
+| MailChannels | None. No CI live test: `live-providers` holds no `MAILCHANNELS_API_KEY` | Procedure below, unrun |
 | SMTP listener | No recorded validation run. In production use by an outside operator since 2026-09 (listmonk relaying to Resend, #113) | SMTP ingress procedure below |
 
 Adding a provider's credentials to the `live-providers` Environment turns its row into "weekly CI". Update this table when that happens or when a manual run is recorded.
@@ -377,6 +378,27 @@ hello_hostname = "mail.yourdomain.com"
 Expected `transport_message_id`: **empty** — stdlib `net/smtp` doesn't expose the upstream's `queued as <id>` response. Correlate by submission_id timestamp + recipient against the relay's own logs.
 
 **Specific NFR1 check:** trigger header injection by attempting to send with `subject = "Hello\r\nBcc: victim@target.com"` (via a JSON request body that includes the CRLF). Expected: HTTP 502 from Posthorn, terminal-failure log line `smtp: header injection attempt rejected`, **no SMTP connection ever opened** (no entry in the relay's logs).
+
+### MailChannels
+
+```toml
+[endpoints.transport]
+type = "mailchannels"
+
+[endpoints.transport.settings]
+api_key = "${env.MAILCHANNELS_API_KEY}"
+```
+
+**Pre-test checklist:**
+- API key created at `dash.mailchannels.com/account/api-keys` with scope `api`
+- Domain Lockdown TXT published: `_mailchannels.example.com TXT "v=mc1 auth=<account-id>"`
+- SPF includes `relay.mailchannels.net`; DKIM key pair created and its TXT record published (MailChannels manages the signing key)
+- Sending domain resolves (`A` or `MX`)
+- Free tier without a payment method delivers only to verified users on your own account — verify the recipient as a user, or add a payment method
+
+Expected `submission_sent` log line: `transport_message_id` populated from `results[0].message_id` in the `202 Accepted` response.
+
+**Specific NFR3 check:** trigger a `403` by deliberately using a wrong key. Expected: 502 from Posthorn, terminal-failure log line carrying MailChannels' `errors` message, and the sentinel key string does not appear in any log line.
 
 ### Cross-transport pass criteria
 
