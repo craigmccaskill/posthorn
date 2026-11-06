@@ -1399,3 +1399,24 @@ func TestLoad_PassthroughHeaders(t *testing.T) {
 		})
 	}
 }
+
+// --- LoadBytes (#118) ---
+
+func TestLoadBytes_SamePipelineAsLoad(t *testing.T) {
+	t.Setenv("PH_TEST_API_KEY", "resolved-key")
+	raw := strings.Replace(minimalTOML, `api_key = "test-key"`, `api_key = "${env.PH_TEST_API_KEY}"`, 1)
+	cfg, err := config.LoadBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("LoadBytes: %v", err)
+	}
+	if got, _ := cfg.Endpoints[0].Transport.Settings["api_key"].(string); got != "resolved-key" {
+		t.Errorf("api_key = %q, want the resolved placeholder", got)
+	}
+}
+
+func TestLoadBytes_UnknownFieldRejected(t *testing.T) {
+	_, err := config.LoadBytes([]byte("bogus_key = true\n" + minimalTOML))
+	if err == nil || !strings.Contains(err.Error(), "bogus_key") {
+		t.Errorf("want the unknown-field error naming bogus_key, got %v", err)
+	}
+}

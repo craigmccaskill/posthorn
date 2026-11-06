@@ -98,7 +98,7 @@ Each FR is atomic, testable, and traceable to a section of the brief. FRs are gr
 
 ### Standalone deployment
 
-**FR24.** The standalone binary **must** load configuration from a TOML file specified via `--config <path>` CLI flag. The config file **must** support `${env.VAR}` placeholder resolution for secrets.
+**FR24.** The standalone binary **must** load configuration from a TOML file specified via `--config <path>` CLI flag. The config file **must** support `${env.VAR}` placeholder resolution for secrets. **2026-10-14 amendment ([#118](https://github.com/craigmccaskill/posthorn/issues/118), v2.1):** the binary **must** also accept the whole TOML config in the `POSTHORN_CONFIG` environment variable. When the variable is set its value is the config and `--config` is ignored, for every subcommand that loads config; the same placeholder resolution and strict unknown-field check apply. A set-but-empty variable is a config error, not a fall-through. Errors **must** name the variable and **must not** echo its contents (NFR3: the value may carry inline secrets).
 
 **FR25.** The standalone binary **must** expose a single primary CLI subcommand: `posthorn serve --config <path>`. A `validate` subcommand (`posthorn validate --config <path>`) **must** parse and validate the config without starting the listener.
 
@@ -374,7 +374,7 @@ The brief commits to test coverage for header injection (NFR2) and to a 30-day p
 
 ## Functional requirements — block F: v2.1 listener minor (added 2026-09-29)
 
-Block F is the first minor after v2.0, scoped to the SMTP listener by two named users rather than a milestone: per-tenant listeners (#30 → #120) and list-header passthrough (#113 → #115). No storage-shape change; everything is opt-in (NFR25). **2026-10-14 addition:** implicit TLS on the outbound SMTP transport (#132) rides in the same minor as an amendment to FR50, requested by an operator relaying to their own Stalwart server on port 465.
+Block F is the first minor after v2.0, scoped to the SMTP listener by two named users rather than a milestone: per-tenant listeners (#30 → #120) and list-header passthrough (#113 → #115). No storage-shape change; everything is opt-in (NFR25). **2026-10-14 addition:** implicit TLS on the outbound SMTP transport (#132) rides in the same minor as an amendment to FR50, requested by an operator relaying to their own Stalwart server on port 465. Also 2026-10-14: config from the `POSTHORN_CONFIG` environment variable (#118) as an amendment to FR24, the answer to a PaaS first-deploy crash loop raised by a listmonk-on-Railway operator; chosen over a wait-for-config mode so Posthorn never has a running-but-unconfigured state.
 
 ### Multiple listeners
 
@@ -425,6 +425,7 @@ Seven epics, sized for implementation in sequence. Each story is intended to be 
 
 - **Story 2.1:** Implement TOML config loader in `core/config/`. Schema mirrors the architecture doc's config sketch: top-level `[[endpoints]]` array of tables, each with `path`, `to`, `from`, `[endpoints.transport]`, etc. Support `${env.VAR}` placeholder resolution.
   - Acceptance: Tests cover successful parse, missing required fields (returns clear error), env-var resolution, invalid TOML.
+  - **2026-10-14 amendment (#118, v2.1):** `config.LoadBytes` runs the file pipeline on in-memory TOML; the CLI's `loadConfig` prefers `POSTHORN_CONFIG` over `--config`. Tests cover env-over-file precedence, placeholders inside the variable, set-but-empty as an error, unset reading the file, and that errors from a bad env config name the variable without echoing a sentinel secret in it.
 
 - **Story 2.2:** Implement HTTP form handler in `core/gateway/`. Accepts POST submissions on configured paths, parses the body, hands off to the configured transport. Standalone struct implements `http.Handler`.
   - Acceptance: Tests cover successful POST, non-POST methods (405), wrong content-type (400), unknown path (404 falls through).

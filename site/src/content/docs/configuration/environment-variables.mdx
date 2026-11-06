@@ -39,7 +39,7 @@ Transports that need specific header formats (Postmark's `X-Postmark-Server-Toke
 
 ## Resolution order
 
-1. Posthorn reads the raw TOML file from disk.
+1. Posthorn reads the raw TOML from the `--config` file, or from the `POSTHORN_CONFIG` variable when that is set (v2.1, below).
 2. Every `${env.VAR}` placeholder is replaced with `os.LookupEnv("VAR")` — this happens *before* TOML parsing, so the parser only ever sees resolved values.
 3. TOML is parsed and validated.
 
@@ -65,6 +65,39 @@ API keys configured via `${env.VAR}` placeholders **never appear in any log outp
 - Tests trigger transport failures and assert that the resolved key string does not appear in captured log output.
 
 See [API keys](/security/api-keys/) for the full guarantee.
+
+## The whole config in one variable
+
+Since v2.1, `POSTHORN_CONFIG` can hold the entire TOML config. When it is set, its value is the config and `--config` is ignored, for `serve`, `validate`, and `suppressions` alike. The startup log line records the source as `config=env:POSTHORN_CONFIG`.
+
+This exists for platforms where the only writable storage is a volume attached at deploy time (Railway is the one that surfaced it, [#118](https://github.com/craigmccaskill/posthorn/issues/118)). A fresh volume is empty, Posthorn exits before it binds when the config file is missing, and there is no running process to write the file from. With the config in the environment it ships with the deploy, and the volume is only ever for the [storage](/features/storage/) file, which Posthorn creates itself.
+
+```yaml
+services:
+  posthorn:
+    image: ghcr.io/craigmccaskill/posthorn:2
+    environment:
+      POSTMARK_API_KEY: ${POSTMARK_API_KEY}
+      POSTHORN_CONFIG: |
+        [[endpoints]]
+        path = "/api/contact"
+        to   = ["you@example.com"]
+        from = "noreply@example.com"
+        subject = "Contact form"
+        body = "{{.message}}"
+
+        [endpoints.transport]
+        type = "postmark"
+
+        [endpoints.transport.settings]
+        api_key = "${env.POSTMARK_API_KEY}"
+```
+
+Three things to know:
+
+- `${env.VAR}` placeholders inside the variable resolve the same way they do in a file, so secrets can stay in their own variables, as above. Anything written inline is visible to whoever can read the container's environment, which is the same exposure as a placeholder's target variable, not a new one.
+- A `POSTHORN_CONFIG` that is set but empty is an error, not a fall-through to the file. A variable created without a value is a mistake the operator wants to hear about.
+- Errors name the variable (`POSTHORN_CONFIG: config: ...`) and never echo its contents.
 
 ## Docker examples
 

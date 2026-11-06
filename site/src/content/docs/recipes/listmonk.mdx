@@ -94,7 +94,7 @@ Railway encrypts service-to-service traffic on the private network with WireGuar
    Don't add a public domain to this service. Nothing outside the project needs to reach it. Railway's private networking needs no port configuration.
 
    <Aside type="note">
-   Deploying the public image directly instead of building the repo also works on Railway, but then there's no way to get `posthorn.toml` into the container without a volume, and a fresh volume is empty on the first deploy, so the container exits before anything can write to it. Building from the two-file repo avoids the whole problem.
+   Deploying the public image directly instead of building the repo also works on Railway. On Posthorn v2.1 and later, put the whole TOML in a `POSTHORN_CONFIG` service variable and skip the repo; see [Environment variables](/configuration/environment-variables/#the-whole-config-in-one-variable). On earlier versions there's no way to get `posthorn.toml` into the container without a volume, and a fresh volume is empty on the first deploy, so the container exits before anything can write to it. Building from the two-file repo works on every version.
    </Aside>
 
 3. **Point listmonk at Posthorn.**

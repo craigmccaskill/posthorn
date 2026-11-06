@@ -139,7 +139,8 @@ Sub-packages are organized one-per-concern. The original `caddy-formward` design
 
 ```
 1. main.go: parse CLI flags (subcommand: serve | validate)
-2. config.Load(path): read TOML, resolve ${env.VAR}, validate schema
+2. config.Load(path) or, when POSTHORN_CONFIG is set, config.LoadBytes(env value):
+   resolve ${env.VAR}, parse TOML, reject unknown fields, validate schema
 3. For each endpoint in config:
      a. Construct transport (Postmark client with API key)
      b. Compile templates (subject, body)
@@ -183,7 +184,7 @@ Ordering rationale carries over from the prior architecture (cheaper-first, head
 
 ### Configuration model (`core/config`)
 
-A single top-level `Config` struct holds the parsed configuration, loaded from the TOML file.
+A single top-level `Config` struct holds the parsed configuration, loaded from the TOML file, or from the `POSTHORN_CONFIG` environment variable when it is set (FR24 amendment, #118, 2026-10-14): `Load(path)` is `os.ReadFile` plus `LoadBytes`, and the CLI decides which source wins, not the package.
 
 ```go
 type Config struct {
